@@ -103,5 +103,119 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(browser_tools.status(), {"connected": False})
 
 
+# Ausschnitt einer echten html.duckduckgo.com-Ergebnisseite (gekuerzt):
+# uddg-Redirect, HTML im Titel, ein nicht-http-Treffer (wird verworfen).
+_DDG_FIXTURE = """
+<div class="result results_links results_links_deep web-result ">
+  <h2 class="result__title">
+    <a rel="nofollow" class="result__a"
+       href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fssd%2Dtest&amp;rut=abc123">
+       Beste <b>SSD</b> 2026 im Test</a>
+  </h2>
+</div>
+<div class="result">
+  <a rel="nofollow" class="result__a" href="https://example.org/direkt">Direkter Treffer &amp; mehr</a>
+</div>
+<div class="result">
+  <a rel="nofollow" class="result__a" href="javascript:alert(1)">Boese</a>
+</div>
+<div class="result">
+  <a rel="nofollow" class="result__a"
+     href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.net%2Fdritte">Dritte Quelle</a>
+</div>
+"""
+
+
+class ParseDdgHtmlTests(unittest.TestCase):
+    def test_parses_titles_and_decodes_redirects(self):
+        results = browser_tools.parse_ddg_html(_DDG_FIXTURE, limit=4)
+        self.assertEqual(len(results), 3)  # javascript:-Treffer verworfen
+        self.assertEqual(results[0]["url"], "https://example.com/ssd-test")
+        self.assertEqual(results[0]["title"], "Beste SSD 2026 im Test")
+        self.assertEqual(results[1]["url"], "https://example.org/direkt")
+        self.assertEqual(results[1]["title"], "Direkter Treffer & mehr")
+        self.assertEqual(results[2]["url"], "https://example.net/dritte")
+
+    def test_limit_respected(self):
+        results = browser_tools.parse_ddg_html(_DDG_FIXTURE, limit=1)
+        self.assertEqual(len(results), 1)
+
+    def test_empty_html(self):
+        self.assertEqual(browser_tools.parse_ddg_html("", limit=4), [])
+        self.assertEqual(browser_tools.parse_ddg_html("<html>nichts</html>", limit=4), [])
+
+
+class SearchLinksFallbackTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._orig_new_page = browser_tools._new_page_capped
+        self._orig_fallback = browser_tools._search_links_fallback
+
+    def tearDown(self):
+        browser_tools._new_page_capped = self._orig_new_page
+        browser_tools._search_links_fallback = self._orig_fallback
+
+    async def test_fallback_used_when_browser_fails(self):
+        async def broken_page():
+            raise RuntimeError("Playwright ist nicht installiert.")
+
+        fallback_result = [{"title": "Fallback", "url": "https://example.com"}]
+        calls = []
+
+        async def fake_fallback(query, limit):
+            calls.append((query, limit))
+            return fallback_result
+
+        browser_tools._new_page_capped = broken_page
+        browser_tools._search_links_fallback = fake_fallback
+
+        results = await browser_tools.search_links("ssd test", limit=3)
+        self.assertEqual(results, fallback_result)
+        self.assertEqual(calls, [("ssd test", 3)])
+
+    async def test_no_fallback_when_browser_delivers(self):
+        class FakeLink:
+            async def get_attribute(self, name):
+                return "https://example.com/browser"
+
+            async def inner_text(self):
+                return "Browser-Treffer"
+
+        class FakeLocator:
+            async def count(self):
+                return 1
+
+            def nth(self, i):
+                return FakeLink()
+
+        class FakePage:
+            url = "about:blank"
+
+            async def goto(self, *a, **kw):
+                pass
+
+            async def wait_for_timeout(self, ms):
+                pass
+
+            def locator(self, sel):
+                return FakeLocator()
+
+        async def fake_page():
+            return FakePage()
+
+        async def fail_fallback(query, limit):
+            raise AssertionError("Fallback darf nicht laufen, wenn der Browser liefert")
+
+        browser_tools._new_page_capped = fake_page
+        browser_tools._search_links_fallback = fail_fallback
+        # _bring_chromium_to_front startet PowerShell — im Test ueberspringen.
+        orig_front = browser_tools._bring_chromium_to_front
+        browser_tools._bring_chromium_to_front = lambda: None
+        try:
+            results = await browser_tools.search_links("ssd test", limit=3)
+        finally:
+            browser_tools._bring_chromium_to_front = orig_front
+        self.assertEqual(results, [{"title": "Browser-Treffer", "url": "https://example.com/browser"}])
+
+
 if __name__ == "__main__":
     unittest.main()

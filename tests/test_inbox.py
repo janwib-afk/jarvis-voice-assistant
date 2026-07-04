@@ -106,6 +106,56 @@ class FinishResearchTests(unittest.TestCase):
 
 
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
+class RunResearchThinSourcesTests(unittest.TestCase):
+    """Duenne Quellenlage wird ehrlich an den Summary-Schritt gemeldet."""
+
+    def setUp(self):
+        import browser_tools
+        self._orig = (browser_tools.search_links, browser_tools.visit)
+        self.browser_tools = browser_tools
+
+    def tearDown(self):
+        self.browser_tools.search_links, self.browser_tools.visit = self._orig
+
+    def _stub(self, links, readable_urls):
+        async def fake_search_links(query, limit=4):
+            return links
+
+        async def fake_visit(url, max_chars=1500):
+            if url in readable_urls:
+                return {"title": f"Titel {url}", "url": url, "content": "Inhalt"}
+            return {"error": "timeout", "url": url}
+
+        self.browser_tools.search_links = fake_search_links
+        self.browser_tools.visit = fake_visit
+
+    def test_single_readable_source_adds_hint(self):
+        self._stub(
+            links=[{"title": "A", "url": "https://a.example"}, {"title": "B", "url": "https://b.example"}],
+            readable_urls={"https://a.example"},
+        )
+        result = asyncio.run(assistant_core.run_research("ssd"))
+        self.assertIn("QUELLE: ", result)
+        self.assertIn("Nur 1 Quelle(n)", result)
+        self.assertIn("duenn", result)
+
+    def test_three_sources_no_hint(self):
+        links = [{"title": t, "url": f"https://{t}.example"} for t in ("a", "b", "c")]
+        self._stub(links=links, readable_urls={l["url"] for l in links})
+        result = asyncio.run(assistant_core.run_research("ssd"))
+        self.assertEqual(result.count("QUELLE: "), 3)
+        self.assertNotIn("HINWEIS AN JARVIS", result)
+
+    def test_no_readable_sources_fails_honestly(self):
+        self._stub(
+            links=[{"title": "A", "url": "https://a.example"}],
+            readable_urls=set(),
+        )
+        result = asyncio.run(assistant_core.run_research("ssd"))
+        self.assertIn("keine der Quellen war lesbar", result)
+
+
+@unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class SessionSummaryActionTests(unittest.TestCase):
     def test_session_protocol_from_history(self):
         sid = "test-session-summary"

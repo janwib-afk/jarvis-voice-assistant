@@ -3,6 +3,7 @@ Jarvis V2 — Browser Tools
 Web search via DuckDuckGo Lite, page visits via Playwright, URL opening.
 """
 
+import html as html_module
 import logging
 import re
 import webbrowser
@@ -124,14 +125,80 @@ async def search_and_read(query: str) -> dict:
         pass
 
 
+# DuckDuckGos HTML-Endpoint: Treffer-Links tragen die Klasse result__a und
+# verlinken meist ueber einen /l/?uddg=…-Redirect auf die eigentliche URL.
+_DDG_RESULT_RE = re.compile(
+    r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+    re.DOTALL,
+)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _decode_ddg_href(href: str) -> str | None:
+    """Loest den uddg-Redirect auf; laesst direkte http(s)-URLs unveraendert."""
+    href = html_module.unescape(href.strip())
+    if href.startswith("//"):
+        href = "https:" + href
+    try:
+        parsed = urlparse(href)
+    except ValueError:
+        return None
+    if "duckduckgo.com" in (parsed.netloc or "") and parsed.path.startswith("/l/"):
+        uddg = parse_qs(parsed.query).get("uddg", [""])[0]
+        href = unquote(uddg)
+    if href.startswith("http://") or href.startswith("https://"):
+        return href
+    return None
+
+
+def parse_ddg_html(html: str, limit: int = 4) -> list[dict]:
+    """Extrahiert {title, url} aus einer html.duckduckgo.com-Ergebnisseite."""
+    results = []
+    for href, raw_title in _DDG_RESULT_RE.findall(html):
+        url = _decode_ddg_href(href)
+        if not url:
+            continue
+        title = html_module.unescape(_TAG_RE.sub("", raw_title)).strip()
+        results.append({"title": title or url, "url": url})
+        if len(results) >= limit:
+            break
+    return results
+
+
+async def _search_links_fallback(query: str, limit: int) -> list[dict]:
+    """Quellensuche ohne Browser: DuckDuckGos HTML-Endpoint via httpx.
+
+    Greift, wenn Playwright/Chromium fehlt oder die Selektoren der
+    JS-Suchseite nichts liefern — die Recherche bleibt damit nutzbar.
+    """
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+    try:
+        async with httpx.AsyncClient(
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(url)
+    except Exception:
+        logger.warning("HTML-Fallback-Suche fehlgeschlagen", exc_info=True)
+        return []
+    if resp.status_code != 200:
+        logger.warning("HTML-Fallback-Suche: Status %s", resp.status_code)
+        return []
+    return parse_ddg_html(resp.text, limit)
+
+
 async def search_links(query: str, limit: int = 4) -> list[dict]:
     """Sammelt die ersten organischen DuckDuckGo-Treffer als {title, url}.
 
     Grundlage des Recherche-Modus: statt den ersten Treffer zu klicken
     (``search_and_read``) werden mehrere Quellen-Links eingesammelt.
+    Liefert der sichtbare Browser nichts (fehlendes Chromium, geaenderte
+    Selektoren), springt der HTML-Fallback ohne Browser ein.
     """
-    page = await _new_page_capped()
+    results: list[dict] = []
     try:
+        page = await _new_page_capped()
         search_url = f"https://duckduckgo.com/?q={quote_plus(query)}"
         await page.goto(search_url, timeout=15000)
         _bring_chromium_to_front()
@@ -139,17 +206,19 @@ async def search_links(query: str, limit: int = 4) -> list[dict]:
 
         links = page.locator('[data-testid="result-title-a"]')
         count = min(await links.count(), limit)
-        results = []
         for i in range(count):
             link = links.nth(i)
             href = await link.get_attribute("href")
             title = (await link.inner_text()).strip()
             if href and href.startswith("http"):
                 results.append({"title": title or href, "url": href})
-        return results
     except Exception:
-        logger.warning("Suche nach Quellen-Links fehlgeschlagen", exc_info=True)
-        return []
+        logger.warning("Browser-Suche nach Quellen-Links fehlgeschlagen", exc_info=True)
+
+    if results:
+        return results
+    logger.info("Quellensuche: Browser lieferte nichts — nutze HTML-Fallback")
+    return await _search_links_fallback(query, limit)
 
 
 async def visit(url: str, max_chars: int = 5000) -> dict:

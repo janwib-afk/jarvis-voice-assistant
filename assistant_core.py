@@ -293,6 +293,12 @@ async def run_research(topic: str) -> str:
         parts.append(f"{RESEARCH_SOURCE_PREFIX}{title} — {link['url']}\n{result.get('content', '')}")
     if gelesen == 0:
         return "Recherche fehlgeschlagen: keine der Quellen war lesbar."
+    if gelesen < 3:
+        # Duenne Quellenlage ehrlich benennen statt Scheinsicherheit vorzulesen.
+        parts.append(
+            f"HINWEIS AN JARVIS: Nur {gelesen} Quelle(n) waren lesbar — sag ehrlich dazu, "
+            "dass die Quellenlage duenn ist und die Antwort entsprechend vorsichtig zu werten ist."
+        )
     return "\n\n".join(parts)
 
 
