@@ -1,7 +1,7 @@
 """
 Tests fuer den Bestaetigungs-Flow riskanter Aktionen (process_message +
-pending_confirm). Ausfuehrung und Sprachausgabe werden gestubbt — kein
-LLM-/TTS-/Browser-Aufruf.
+pending_confirm in assistant_core). Ausfuehrung und Sprachausgabe werden
+gestubbt — kein LLM-/TTS-/Browser-Aufruf.
 
     python -m unittest discover -s tests
 """
@@ -14,10 +14,12 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    import server
+    import server  # verdrahtet assistant_core (configure/init_clients)
+    import assistant_core
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     server = None
+    assistant_core = None
     _IMPORT_ERROR = e
 
 import actions
@@ -47,8 +49,8 @@ class ConfirmFlowTests(unittest.TestCase):
     def setUp(self):
         self.ws = _StubWS()
         self.pending = actions.Action("SEARCH", "riskanter test")
-        server.conversations[self.SID] = []
-        server.pending_confirm[self.SID] = self.pending
+        assistant_core.conversations[self.SID] = []
+        assistant_core.pending_confirm[self.SID] = self.pending
         self.spoken = []
         self.executed = []
 
@@ -59,9 +61,9 @@ class ConfirmFlowTests(unittest.TestCase):
             self.executed.append(action)
 
         self._patches = [
-            mock.patch.object(server, "send_spoken_response", fake_spoken),
-            mock.patch.object(server, "run_action_and_respond", fake_run),
-            mock.patch.object(server, "ai", _FailingAI()),
+            mock.patch.object(assistant_core, "send_spoken_response", fake_spoken),
+            mock.patch.object(assistant_core, "run_action_and_respond", fake_run),
+            mock.patch.object(assistant_core, "ai", _FailingAI()),
         ]
         for p in self._patches:
             p.start()
@@ -69,26 +71,25 @@ class ConfirmFlowTests(unittest.TestCase):
     def tearDown(self):
         for p in self._patches:
             p.stop()
-        server.conversations.pop(self.SID, None)
-        server.pending_confirm.pop(self.SID, None)
+        assistant_core.end_session(self.SID)
 
     def test_yes_executes_pending_action(self):
-        asyncio.run(server.process_message(self.SID, "Ja bitte", self.ws))
+        asyncio.run(assistant_core.process_message(self.SID, "Ja bitte", self.ws))
         self.assertEqual(self.executed, [self.pending])
-        self.assertNotIn(self.SID, server.pending_confirm)
+        self.assertNotIn(self.SID, assistant_core.pending_confirm)
 
     def test_no_discards_pending_action(self):
-        asyncio.run(server.process_message(self.SID, "Nein, lieber nicht", self.ws))
+        asyncio.run(assistant_core.process_message(self.SID, "Nein, lieber nicht", self.ws))
         self.assertEqual(self.executed, [])
-        self.assertNotIn(self.SID, server.pending_confirm)
+        self.assertNotIn(self.SID, assistant_core.pending_confirm)
         self.assertTrue(any("lasse es bleiben" in t for t in self.spoken))
 
     def test_unrelated_text_discards_pending_and_processes_normally(self):
         # Weder Ja noch Nein: Aktion verfaellt, die Nachricht geht den normalen
         # Weg (hier: der gestubbte LLM-Call schlaegt fehl => error-Frame).
-        asyncio.run(server.process_message(self.SID, "Wie ist das Wetter morgen in Hamburg?", self.ws))
+        asyncio.run(assistant_core.process_message(self.SID, "Wie ist das Wetter morgen in Hamburg?", self.ws))
         self.assertEqual(self.executed, [])
-        self.assertNotIn(self.SID, server.pending_confirm)
+        self.assertNotIn(self.SID, assistant_core.pending_confirm)
         self.assertTrue(any(f.get("type") == "error" for f in self.ws.sent))
 
 

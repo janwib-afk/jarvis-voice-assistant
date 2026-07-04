@@ -21,11 +21,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     import server
+    import assistant_core
     from fastapi.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     server = None
+    assistant_core = None
     TestClient = None
     WebSocketDisconnect = Exception
     _IMPORT_ERROR = e
@@ -123,7 +125,7 @@ class _StubWS:
 class FrameShapeTests(unittest.TestCase):
     def test_send_error_shape(self):
         stub = _StubWS()
-        asyncio.run(server.send_error(stub, "tts", "Sprachausgabe fehlgeschlagen.", "Status 401"))
+        asyncio.run(assistant_core.send_error(stub, "tts", "Sprachausgabe fehlgeschlagen.", "Status 401"))
         self.assertEqual(stub.sent, [{
             "type": "error",
             "component": "tts",
@@ -133,7 +135,7 @@ class FrameShapeTests(unittest.TestCase):
 
     def test_send_action_event_shape(self):
         stub = _StubWS()
-        asyncio.run(server.send_action_event(stub, "start", "SEARCH", "wetter hamburg"))
+        asyncio.run(assistant_core.send_action_event(stub, "start", "SEARCH", "wetter hamburg"))
         (frame,) = stub.sent
         self.assertEqual(frame["type"], "action")
         self.assertEqual(frame["phase"], "start")

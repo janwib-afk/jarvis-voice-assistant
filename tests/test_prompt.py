@@ -11,10 +11,12 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    import server
+    import server  # verdrahtet assistant_core (configure/init_clients)
+    import assistant_core
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     server = None
+    assistant_core = None
     _IMPORT_ERROR = e
 
 
@@ -22,36 +24,36 @@ except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
 class SystemPromptTests(unittest.TestCase):
     def setUp(self):
         self._saved = {
-            name: getattr(server, name)
+            name: getattr(assistant_core, name)
             for name in ("USER_NAME", "USER_ADDRESS", "USER_ROLE")
         }
 
     def tearDown(self):
         for name, value in self._saved.items():
-            setattr(server, name, value)
+            setattr(assistant_core, name, value)
 
     def test_persona_uses_config_values(self):
-        server.USER_NAME = "Unit-Tester"
-        server.USER_ADDRESS = "Mylady"
-        server.USER_ROLE = "Qualitätssicherung"
-        prompt = server.build_system_prompt()
+        assistant_core.USER_NAME = "Unit-Tester"
+        assistant_core.USER_ADDRESS = "Mylady"
+        assistant_core.USER_ROLE = "Qualitätssicherung"
+        prompt = assistant_core.build_system_prompt()
         self.assertIn("der persoenliche KI-Assistent von Unit-Tester, Qualitätssicherung.", prompt)
         self.assertIn('mit "Mylady" angesprochen', prompt)
         self.assertIn('WENN Unit-Tester "Jarvis activate" sagt', prompt)
 
     def test_no_hardcoded_persona_remains(self):
-        server.USER_NAME = "Unit-Tester"
-        server.USER_ADDRESS = "Mylady"
-        server.USER_ROLE = ""
-        prompt = server.build_system_prompt()
+        assistant_core.USER_NAME = "Unit-Tester"
+        assistant_core.USER_ADDRESS = "Mylady"
+        assistant_core.USER_ROLE = ""
+        prompt = assistant_core.build_system_prompt()
         self.assertNotIn("Dienstherr ist Jan", prompt)
         self.assertNotIn('"Sir"', prompt)
         self.assertNotIn("Softwareentwickler", prompt)
 
     def test_empty_role_renders_cleanly(self):
-        server.USER_NAME = "Unit-Tester"
-        server.USER_ROLE = ""
-        prompt = server.build_system_prompt()
+        assistant_core.USER_NAME = "Unit-Tester"
+        assistant_core.USER_ROLE = ""
+        prompt = assistant_core.build_system_prompt()
         self.assertIn("der persoenliche KI-Assistent von Unit-Tester.", prompt)
 
 

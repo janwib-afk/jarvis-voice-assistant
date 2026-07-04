@@ -2,8 +2,8 @@
 Tests fuer die Settings-API (GET/POST /settings) gegen die echte App.
 
 WICHTIG: ``server.CONFIG_PATH`` wird auf eine Temp-Kopie gepatcht und
-``server.refresh_data`` auf einen No-Op — die Tests duerfen NIEMALS die echte
-config.json beschreiben oder Netzaufrufe (wttr.in) ausloesen.
+``assistant_core.refresh_data`` auf einen No-Op — die Tests duerfen NIEMALS
+die echte config.json beschreiben oder Netzaufrufe (wttr.in) ausloesen.
 
     python -m unittest discover -s tests
 """
@@ -17,12 +17,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     import server
+    import assistant_core
     import config_loader
     import memory
     from fastapi.testclient import TestClient
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     server = None
+    assistant_core = None
     TestClient = None
     _IMPORT_ERROR = e
 
@@ -40,12 +42,13 @@ _TEST_CONFIG = {
     "apps": ["obsidian://open"],
 }
 
-# Server-Globals, die apply_settings veraendert — werden pro Test gesichert.
-# (Die Obsidian-Pfade leben inzwischen als Modul-State in memory.py.)
-_PATCHED_GLOBALS = (
-    "config", "USER_NAME", "USER_ADDRESS", "USER_ROLE", "CITY",
-    "ELEVENLABS_VOICE_ID", "STARTUP_WARNINGS",
-    "CONFIG_PATH", "refresh_data",
+# Globals, die apply_settings veraendert — werden pro Test gesichert.
+# Persona/City/Voice und refresh_data leben in assistant_core, die
+# Obsidian-Pfade in memory; server behaelt config/Warnings/CONFIG_PATH.
+_SERVER_GLOBALS = ("config", "STARTUP_WARNINGS", "CONFIG_PATH")
+_CORE_GLOBALS = (
+    "USER_NAME", "USER_ADDRESS", "USER_ROLE", "CITY",
+    "ELEVENLABS_VOICE_ID", "refresh_data",
 )
 
 
@@ -61,18 +64,21 @@ class SettingsApiTests(unittest.TestCase):
         with open(self.cfg_path, "w", encoding="utf-8") as f:
             json.dump(_TEST_CONFIG, f, ensure_ascii=False)
 
-        self._saved = {name: getattr(server, name) for name in _PATCHED_GLOBALS}
+        self._saved = {name: getattr(server, name) for name in _SERVER_GLOBALS}
+        self._saved_core = {name: getattr(assistant_core, name) for name in _CORE_GLOBALS}
         self._saved_memory = (memory.VAULT_PATH, memory.INBOX_PATH)
         server.CONFIG_PATH = self.cfg_path
-        server.refresh_data = lambda: None  # kein wttr.in/Vault-Scan im Test
+        assistant_core.refresh_data = lambda: None  # kein wttr.in/Vault-Scan im Test
         server.config = dict(_TEST_CONFIG)
-        server.CITY = _TEST_CONFIG["city"]
-        server.USER_NAME = _TEST_CONFIG["user_name"]
+        assistant_core.CITY = _TEST_CONFIG["city"]
+        assistant_core.USER_NAME = _TEST_CONFIG["user_name"]
         memory.configure(vault_path="", inbox_path="")
 
     def tearDown(self):
         for name, value in self._saved.items():
             setattr(server, name, value)
+        for name, value in self._saved_core.items():
+            setattr(assistant_core, name, value)
         memory.configure(*self._saved_memory)
         if os.path.exists(self.cfg_path):
             os.remove(self.cfg_path)
@@ -132,9 +138,9 @@ class SettingsApiTests(unittest.TestCase):
             "/settings", headers=self.headers,
             json={"city": "Berlin", "user_address": "Madame", "elevenlabs_voice_id": "voice-neu"},
         )
-        self.assertEqual(server.CITY, "Berlin")
-        self.assertEqual(server.USER_ADDRESS, "Madame")
-        self.assertEqual(server.ELEVENLABS_VOICE_ID, "voice-neu")
+        self.assertEqual(assistant_core.CITY, "Berlin")
+        self.assertEqual(assistant_core.USER_ADDRESS, "Madame")
+        self.assertEqual(assistant_core.ELEVENLABS_VOICE_ID, "voice-neu")
 
     # ── Validierung ─────────────────────────────────────────────────────────
     def test_post_unknown_key_400(self):

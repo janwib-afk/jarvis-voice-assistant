@@ -59,7 +59,10 @@ def check_config():
 
 
 def check_imports():
-    for name in ("actions", "config_loader", "browser_tools", "screen_capture", "server"):
+    for name in (
+        "actions", "config_loader", "browser_tools", "screen_capture",
+        "tts", "memory", "health", "assistant_core", "server",
+    ):
         try:
             __import__(name)
             report(True, f"Import {name}")

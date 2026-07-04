@@ -18,10 +18,12 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    import server
+    import server  # verdrahtet assistant_core (configure/init_clients)
+    import assistant_core
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     server = None
+    assistant_core = None
     _IMPORT_ERROR = e
 
 import actions
@@ -88,7 +90,7 @@ class FinishResearchTests(unittest.TestCase):
             "QUELLE: Test-Seite — https://example.com/a\nInhalt A\n\n"
             "QUELLE: Andere Seite — https://example.org/b\nInhalt B"
         )
-        display = asyncio.run(server._finish_research("Kurzes Fazit.", action_result))
+        display = asyncio.run(assistant_core._finish_research("Kurzes Fazit.", action_result))
         self.assertIn("Kurzes Fazit.", display)
         self.assertIn("Quellen:", display)
         self.assertIn("- Test-Seite — https://example.com/a", display)
@@ -100,27 +102,27 @@ class FinishResearchTests(unittest.TestCase):
         self.assertIn("https://example.org/b", content)
 
     def test_no_sources_returns_none(self):
-        self.assertIsNone(asyncio.run(server._finish_research("Fazit.", "kein quellenformat")))
+        self.assertIsNone(asyncio.run(assistant_core._finish_research("Fazit.", "kein quellenformat")))
 
 
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class SessionSummaryActionTests(unittest.TestCase):
     def test_session_protocol_from_history(self):
         sid = "test-session-summary"
-        server.conversations[sid] = [
+        assistant_core.conversations[sid] = [
             {"role": "user", "content": "Recherchiere zu SSDs"},
             {"role": "assistant", "content": "Erledigt, Sir."},
         ]
         try:
-            result = asyncio.run(server.execute_action(actions.Action("SESSION_SUMMARY"), sid))
+            result = asyncio.run(assistant_core.execute_action(actions.Action("SESSION_SUMMARY"), sid))
         finally:
-            server.conversations.pop(sid, None)
+            assistant_core.conversations.pop(sid, None)
         self.assertIn("Sitzungsprotokoll:", result)
         self.assertIn("Du: Recherchiere zu SSDs", result)
         self.assertIn("Jarvis: Erledigt, Sir.", result)
 
     def test_empty_session(self):
-        result = asyncio.run(server.execute_action(actions.Action("SESSION_SUMMARY"), "unbekannt"))
+        result = asyncio.run(assistant_core.execute_action(actions.Action("SESSION_SUMMARY"), "unbekannt"))
         self.assertIn("keinen nennenswerten Verlauf", result)
 
 

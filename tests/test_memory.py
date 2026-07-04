@@ -17,10 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import memory
 
 try:
-    import server
+    import server  # verdrahtet assistant_core (configure/init_clients)
+    import assistant_core
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     server = None
+    assistant_core = None
     _IMPORT_ERROR = e
 
 
@@ -102,17 +104,17 @@ class MemoryInPromptTests(unittest.TestCase):
 
     def test_prompt_contains_memory_block_when_present(self):
         memory.append_memory("Lieblingseditor ist VS Code.")
-        prompt = server.build_system_prompt()
+        prompt = assistant_core.build_system_prompt()
         self.assertIn("Langzeit-Gedaechtnis (aus", prompt)
         self.assertIn("Lieblingseditor ist VS Code.", prompt)
 
     def test_prompt_without_memory_has_no_block(self):
         # Die MEMORY_WRITE-Anleitung bleibt, aber der Daten-Block fehlt.
-        prompt = server.build_system_prompt()
+        prompt = assistant_core.build_system_prompt()
         self.assertNotIn("Langzeit-Gedaechtnis (aus", prompt)
 
     def test_prompt_documents_memory_write_action(self):
-        prompt = server.build_system_prompt()
+        prompt = assistant_core.build_system_prompt()
         self.assertIn("[ACTION:MEMORY_WRITE]", prompt)
 
 
