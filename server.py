@@ -637,7 +637,7 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws: We
 
     # Quick voice feedback for SCREEN so user knows Jarvis is working
     if action.type == "SCREEN":
-        await send_spoken_response(ws, "Lassen Sie mich einen Blick auf Ihren Bildschirm werfen.")
+        await send_spoken_response(ws, "Ich werfe kurz einen Blick auf deinen Bildschirm.")
 
     await send_action_event(ws, "start", action.type, (action.payload or "")[:80])
     try:
