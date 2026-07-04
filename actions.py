@@ -56,6 +56,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
         ),
     ),
     ActionSpec("INBOX_WRITE", "Inbox-Eintrag"),
+    ActionSpec("MEMORY_WRITE", "Merken"),
     ActionSpec(
         "RESEARCH", "Recherche", is_browser=True, timeout=180, summary_max_tokens=350,
         summary_task=(

@@ -1,5 +1,5 @@
 """
-Tests fuer die Inbox-Helfer in server.py: kategorisierte Eintraege,
+Tests fuer die Inbox-Helfer in memory.py: kategorisierte Eintraege,
 Tages-Inbox lesen, Recherche-Nachbereitung und Sitzungsprotokoll.
 
 Alle Tests arbeiten mit einem Temp-Ordner als Inbox — kein LLM-/TTS-Aufruf
@@ -25,24 +25,24 @@ except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     _IMPORT_ERROR = e
 
 import actions
+import memory
 
 
-@unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class WriteInboxEntryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="jarvis-inbox-")
-        self._saved_inbox = server.INBOX_PATH
-        server.INBOX_PATH = self.tmp
+        self._saved = (memory.VAULT_PATH, memory.INBOX_PATH)
+        memory.configure(vault_path="", inbox_path=self.tmp)
 
     def tearDown(self):
-        server.INBOX_PATH = self._saved_inbox
+        memory.configure(*self._saved)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _today_file(self):
         return os.path.join(self.tmp, f"{time.strftime('%Y-%m-%d')} Brain Dump.md")
 
     def test_entry_has_category_heading_and_tag(self):
-        result = asyncio.run(server.write_inbox_entry("Zahnarzt Dienstag 9 Uhr", "Termin", dedup=False))
+        result = asyncio.run(memory.write_inbox_entry("Zahnarzt Dienstag 9 Uhr", "Termin", dedup=False))
         self.assertIn("Eintrag gespeichert", result)
         with open(self._today_file(), "r", encoding="utf-8") as f:
             content = f.read()
@@ -51,23 +51,23 @@ class WriteInboxEntryTests(unittest.TestCase):
         self.assertIn("Zahnarzt Dienstag 9 Uhr", content)
 
     def test_first_entry_with_dedup_skips_llm(self):
-        # Leere Bestandsdatei => kein Dedup-Call, auch mit dedup=True.
-        result = asyncio.run(server.write_inbox_entry("Milch kaufen", "Aufgabe"))
+        # Leere Bestandsdatei => kein Dedup-Call, auch mit dedup=True (ai=None).
+        result = asyncio.run(memory.write_inbox_entry("Milch kaufen", "Aufgabe"))
         self.assertIn("Eintrag gespeichert", result)
         self.assertIn("Kategorie: Aufgabe", result)
 
     def test_read_today_inbox_roundtrip(self):
-        asyncio.run(server.write_inbox_entry("Podcast starten", "Idee", dedup=False))
-        content = server.read_today_inbox_sync()
+        asyncio.run(memory.write_inbox_entry("Podcast starten", "Idee", dedup=False))
+        content = memory.read_today_inbox_sync()
         self.assertIsNotNone(content)
         self.assertIn("Podcast starten", content)
 
     def test_read_today_inbox_none_when_empty(self):
-        self.assertIsNone(server.read_today_inbox_sync())
+        self.assertIsNone(memory.read_today_inbox_sync())
 
     def test_unconfigured_inbox_returns_message(self):
-        server.INBOX_PATH = ""
-        result = asyncio.run(server.write_inbox_entry("x", "Notiz", dedup=False))
+        memory.configure(vault_path="", inbox_path="")
+        result = asyncio.run(memory.write_inbox_entry("x", "Notiz", dedup=False))
         self.assertIn("nicht konfiguriert", result)
 
 
@@ -75,11 +75,11 @@ class WriteInboxEntryTests(unittest.TestCase):
 class FinishResearchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="jarvis-research-")
-        self._saved_inbox = server.INBOX_PATH
-        server.INBOX_PATH = self.tmp
+        self._saved = (memory.VAULT_PATH, memory.INBOX_PATH)
+        memory.configure(vault_path="", inbox_path=self.tmp)
 
     def tearDown(self):
-        server.INBOX_PATH = self._saved_inbox
+        memory.configure(*self._saved)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_sources_appended_and_autosaved(self):
@@ -124,15 +124,14 @@ class SessionSummaryActionTests(unittest.TestCase):
         self.assertIn("keinen nennenswerten Verlauf", result)
 
 
-@unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class RecentNotesTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="jarvis-vault-")
-        self._saved = server.config.get("obsidian_inbox_path", "")
-        server.config["obsidian_inbox_path"] = self.tmp
+        self._saved = (memory.VAULT_PATH, memory.INBOX_PATH)
+        memory.configure(vault_path=self.tmp, inbox_path="")
 
     def tearDown(self):
-        server.config["obsidian_inbox_path"] = self._saved
+        memory.configure(*self._saved)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_reads_recent_notes_with_names(self):
@@ -142,12 +141,13 @@ class RecentNotesTests(unittest.TestCase):
             f.write("Inhalt Alpha")
         with open(os.path.join(self.tmp, "Beta.md"), "w", encoding="utf-8") as f:
             f.write("Inhalt Beta")
-        result = server.read_recent_notes_sync(n=5)
+        result = memory.read_recent_notes_sync(n=5)
         self.assertIn("Notiz: Alpha", result)
         self.assertIn("Inhalt Beta", result)
 
     def test_empty_vault_returns_empty(self):
-        self.assertEqual(server.read_recent_notes_sync(), "")
+        memory.configure(vault_path="", inbox_path="")
+        self.assertEqual(memory.read_recent_notes_sync(), "")
 
 
 if __name__ == "__main__":

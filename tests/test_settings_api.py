@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     import server
     import config_loader
+    import memory
     from fastapi.testclient import TestClient
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
@@ -40,9 +41,10 @@ _TEST_CONFIG = {
 }
 
 # Server-Globals, die apply_settings veraendert — werden pro Test gesichert.
+# (Die Obsidian-Pfade leben inzwischen als Modul-State in memory.py.)
 _PATCHED_GLOBALS = (
     "config", "USER_NAME", "USER_ADDRESS", "USER_ROLE", "CITY",
-    "TASKS_FILE", "INBOX_PATH", "ELEVENLABS_VOICE_ID", "STARTUP_WARNINGS",
+    "ELEVENLABS_VOICE_ID", "STARTUP_WARNINGS",
     "CONFIG_PATH", "refresh_data",
 )
 
@@ -60,17 +62,18 @@ class SettingsApiTests(unittest.TestCase):
             json.dump(_TEST_CONFIG, f, ensure_ascii=False)
 
         self._saved = {name: getattr(server, name) for name in _PATCHED_GLOBALS}
+        self._saved_memory = (memory.VAULT_PATH, memory.INBOX_PATH)
         server.CONFIG_PATH = self.cfg_path
         server.refresh_data = lambda: None  # kein wttr.in/Vault-Scan im Test
         server.config = dict(_TEST_CONFIG)
         server.CITY = _TEST_CONFIG["city"]
         server.USER_NAME = _TEST_CONFIG["user_name"]
-        server.TASKS_FILE = ""
-        server.INBOX_PATH = ""
+        memory.configure(vault_path="", inbox_path="")
 
     def tearDown(self):
         for name, value in self._saved.items():
             setattr(server, name, value)
+        memory.configure(*self._saved_memory)
         if os.path.exists(self.cfg_path):
             os.remove(self.cfg_path)
 

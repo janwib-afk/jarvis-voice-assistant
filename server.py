@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import actions
 import config_loader
+import memory
 import tts
 
 # Logging: Betriebs-Logs auf INFO, private Inhalte nur auf DEBUG (Default aus).
@@ -59,12 +60,16 @@ USER_NAME = config.get("user_name", "Jan")
 USER_ADDRESS = config.get("user_address", USER_NAME)
 USER_ROLE = config.get("user_role", "")
 CITY = config.get("city", "Hamburg")
-TASKS_FILE = config.get("obsidian_inbox_path", "")
-INBOX_PATH = config.get("obsidian_inbox_folder", "")
 
 # Timeout + Retries SDK-nativ — gilt fuer alle Claude-Calls inkl. Vision.
 ai = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, timeout=30.0, max_retries=2)
 http = httpx.AsyncClient(timeout=30)
+
+# Obsidian-Pfade an das Memory-Modul geben (Vault + Brain-Dump-Ordner).
+memory.configure(
+    vault_path=config.get("obsidian_inbox_path", ""),
+    inbox_path=config.get("obsidian_inbox_folder", ""),
+)
 
 app = FastAPI()
 
@@ -101,105 +106,13 @@ def get_weather_sync():
     return None
 
 
-def get_tasks_sync():
-    """Read open tasks from Obsidian (sync)."""
-    if not TASKS_FILE:
-        return []
-    try:
-        tasks_path = os.path.join(TASKS_FILE, "Tasks.md")
-        with open(tasks_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        return [l.strip().replace("- [ ]", "").strip() for l in lines if l.strip().startswith("- [ ]")]
-    except Exception:
-        logger.warning("Tasks konnten nicht gelesen werden", exc_info=True)
-        return []
-
-
-def _today_inbox_file() -> str:
-    """Pfad der heutigen Brain-Dump-Datei (Inbox)."""
-    return os.path.join(INBOX_PATH, f"{time.strftime('%Y-%m-%d')} Brain Dump.md")
-
-
-def read_today_inbox_sync(max_chars: int = 3000) -> str | None:
-    """Heutige Inbox-Einträge lesen; None wenn nicht konfiguriert oder noch leer."""
-    if not INBOX_PATH or not os.path.isdir(INBOX_PATH):
-        return None
-    file_path = _today_inbox_file()
-    if not os.path.exists(file_path):
-        return None
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()[:max_chars]
-    except OSError:
-        logger.warning("Inbox konnte nicht gelesen werden", exc_info=True)
-        return None
-
-
-def _walk_vault_md(vault_path: str) -> list[tuple[float, str, str]]:
-    """Alle .md-Dateien im Vault als (mtime, pfad, name) — versteckte Ordner ausgenommen."""
-    results = []
-    for root, dirs, files in os.walk(vault_path):
-        dirs[:] = [d for d in dirs if not d.startswith('.')]
-        for f in files:
-            if f.endswith('.md'):
-                path = os.path.join(root, f)
-                results.append((os.path.getmtime(path), path, f[:-3]))
-    return results
-
-
-def get_vault_summary_sync():
-    """Scan Obsidian vault: note count by folder + recently modified notes."""
-    vault_path = config.get("obsidian_inbox_path", "")
-    if not vault_path or not os.path.isdir(vault_path):
-        return None
-    try:
-        entries = _walk_vault_md(vault_path)
-        folder_counts = {}
-        for _, path, _ in entries:
-            parts = os.path.relpath(path, vault_path).split(os.sep)
-            if len(parts) > 1:
-                folder_counts[parts[0]] = folder_counts.get(parts[0], 0) + 1
-        entries.sort(reverse=True)
-        return {
-            "total": sum(folder_counts.values()),
-            "by_folder": dict(sorted(folder_counts.items(), key=lambda x: x[1], reverse=True)),
-            "recent": [name for _, _, name in entries[:5]],
-        }
-    except Exception:
-        logger.warning("Vault-Zusammenfassung fehlgeschlagen", exc_info=True)
-        return None
-
-
-def read_recent_notes_sync(n: int = 5, chars_per_note: int = 1500) -> str:
-    """Inhalt der zuletzt geänderten Notizen — Grundlage für 'Fasse meine letzten Notizen zusammen'."""
-    vault_path = config.get("obsidian_inbox_path", "")
-    if not vault_path or not os.path.isdir(vault_path):
-        return ""
-    try:
-        entries = _walk_vault_md(vault_path)
-    except Exception:
-        logger.warning("Vault-Scan fehlgeschlagen", exc_info=True)
-        return ""
-    entries.sort(reverse=True)
-    parts = []
-    for mtime, path, name in entries[:n]:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()[:chars_per_note]
-        except OSError:
-            continue
-        datum = time.strftime("%d.%m.%Y %H:%M", time.localtime(mtime))
-        parts.append(f"Notiz: {name} (geändert {datum})\n{content}")
-    return "\n\n---\n\n".join(parts)
-
-
 def refresh_data():
     """Refresh weather, tasks, vault summary and today's inbox."""
     global WEATHER_INFO, TASKS_INFO, VAULT_SUMMARY, TODAY_INBOX, DATA_LOADED, LAST_REFRESH
     WEATHER_INFO = get_weather_sync()
-    TASKS_INFO = get_tasks_sync()
-    VAULT_SUMMARY = get_vault_summary_sync()
-    TODAY_INBOX = read_today_inbox_sync(max_chars=800)
+    TASKS_INFO = memory.get_tasks_sync()
+    VAULT_SUMMARY = memory.get_vault_summary_sync()
+    TODAY_INBOX = memory.read_today_inbox_sync(max_chars=800)
     DATA_LOADED = True
     LAST_REFRESH = time.time()
     logger.info("Wetter geladen: %s", "ja" if WEATHER_INFO else "nein")
@@ -255,6 +168,14 @@ def build_system_prompt():
     if TODAY_INBOX:
         inbox_block = f"\nHeutige Inbox-Eintraege:\n{TODAY_INBOX}"
 
+    memory_block = ""
+    memory_content = memory.read_memory_sync()
+    if memory_content:
+        memory_block = (
+            f"\nLangzeit-Gedaechtnis (aus '{memory.MEMORY_FILENAME}', vom Nutzer editierbar):\n"
+            f"{memory_content}"
+        )
+
     role_part = f", {USER_ROLE}" if USER_ROLE else ""
     return f"""Du bist Jarvis, der persoenliche KI-Assistent von {USER_NAME}{role_part}. Du sprichst ausschliesslich Deutsch. {USER_NAME} moechte geduzt und mit "{USER_ADDRESS}" angesprochen werden — nutze "du" als Pronomen (z.B. "Klar, {USER_ADDRESS}, ich schau mir das an."). Du bist ein kompetenter Kollege und Gespraechspartner auf Augenhoehe: freundlich, direkt, professionell und assistenzorientiert — wie ein smarter Arbeitskollege oder persoenlicher Mitarbeiter. Du redest klar und ohne Umschweife, denkst mit und bringst eigene Vorschlaege ein, ohne belehrend zu wirken. Kein Sarkasmus, keine Butler-Attituede, keine gekuenstelte Foermlichkeit. Du bist effizient und einen Schritt voraus, aber immer auf Augenhoehe. Halte deine Antworten kurz — maximal 3 Saetze (einzige Ausnahme: der Tagesueberblick bei "Jarvis activate"). Wiederhole NIEMALS etwas, das bereits in diesem Gespraech gesagt wurde, es sei denn, {USER_ADDRESS} fragt explizit danach. Vault-Inhalte oder fruehere Antworten fasst du NUR zusammen wenn {USER_ADDRESS} ausdruecklich danach fragt.
 
@@ -270,6 +191,7 @@ AKTIONEN - Schreibe die passende Aktion ans ENDE deiner Antwort. Der Text VOR de
 [ACTION:NEWS] - Aktuelle Weltnachrichten abrufen. Nutze diese Aktion wenn nach News, Nachrichten, was in der Welt passiert, aktuelle Lage oder Weltgeschehen gefragt wird. Schreibe einen kurzen Satz davor wie "Ich schaue nach den aktuellen Nachrichten."
 [ACTION:INBOX_READ] - Liest die heutigen Eintraege aus der Obsidian-Inbox. Nutze wenn {USER_ADDRESS} fragt was heute notiert wurde oder einen Tagesrueckblick moechte.
 [ACTION:INBOX_WRITE] [Kategorie] text - Schreibt einen Eintrag in die heutige Inbox-Datei. Kategorie ist GENAU EINE von: Idee, Aufgabe, Termin, Recherche, Erinnerung — waehle die passendste. Beispiel: [ACTION:INBOX_WRITE] [Termin] Zahnarzt Dienstag 9 Uhr. Nutze IMMER wenn {USER_ADDRESS} etwas festhalten, notieren, aufschreiben oder merken moechte. Frag nicht ob, tu es einfach. Formuliere den Text klar und strukturiert.
+[ACTION:MEMORY_WRITE] text - Speichert eine Information DAUERHAFT im Langzeit-Gedaechtnis (Praeferenzen, laufende Projekte, offene Loops). Nutze NUR wenn {USER_ADDRESS} ausdruecklich sagt, dass du dir etwas dauerhaft/fuer die Zukunft merken sollst (z.B. "merk dir dauerhaft", "vergiss nie"). Tagesnotizen gehoeren in INBOX_WRITE. Speichere NIEMALS sensible Inhalte (Passwoerter, Gesundheit, Finanzen) ohne ausdrueckliche Aufforderung.
 [ACTION:NOTES_RECENT] - Fasst die zuletzt bearbeiteten Notizen aus dem Vault zusammen. Nutze wenn {USER_ADDRESS} z.B. "Fasse meine letzten Notizen zusammen" sagt oder wissen will woran er zuletzt gearbeitet hat.
 [ACTION:CLIPBOARD] auftrag - Verarbeitet den Text in der Zwischenablage (auftrag z.B. "zusammenfassen", "uebersetzen", "erklaeren"). Nutze wenn {USER_ADDRESS} von Zwischenablage, Clipboard oder "das Kopierte" spricht.
 [ACTION:CLIPBOARD_NOTE] - Speichert den Text aus der Zwischenablage als Inbox-Notiz. Nutze wenn {USER_ADDRESS} aus der Zwischenablage eine Notiz machen moechte.
@@ -282,7 +204,7 @@ WENN {USER_NAME} "Jarvis activate" sagt, liefere den Tagesueberblick (maximal 6 
 - Fasse die offenen Aufgaben als Ueberblick in einem Satz zusammen, ohne jede einzelne vorzulesen.
 - Nenne in einem Satz die zuletzt bearbeiteten Notizen als Hinweis, woran {USER_ADDRESS} zuletzt gearbeitet hat.
 
-=== AKTUELLE DATEN ==={weather_block}{task_block}{vault_block}{inbox_block}
+=== AKTUELLE DATEN ==={weather_block}{task_block}{vault_block}{inbox_block}{memory_block}
 ==="""
 
 
@@ -361,39 +283,6 @@ def _llm_error_hint(e: Exception) -> str:
     return ""
 
 
-async def write_inbox_entry(text: str, kategorie: str, dedup: bool = True) -> str:
-    """Hängt einen kategorisierten Eintrag an die heutige Brain-Dump-Datei an.
-
-    ``dedup=True`` prüft vorher per Haiku auf semantische Duplikate (wie bisher
-    bei INBOX_WRITE); Autosaves (z.B. Recherche) überspringen das.
-    """
-    if not INBOX_PATH:
-        return "Inbox-Ordner nicht konfiguriert."
-    os.makedirs(INBOX_PATH, exist_ok=True)
-    file_path = _today_inbox_file()
-    existing = ""
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            existing = f.read()
-    if dedup and existing.strip():
-        dedup_resp = await ai.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=60,
-            system="Antworte NUR mit 'DUPLIKAT: [kurzer Ausschnitt des Originals]' oder 'NEU'. Pruefe ob der neue Eintrag semantisch das Gleiche aussagt wie ein bereits vorhandener Eintrag.",
-            messages=[{"role": "user", "content": f"Vorhandene Eintraege:\n{existing[:2000]}\n\nNeuer Eintrag:\n{text.strip()}"}],
-        )
-        verdict = dedup_resp.content[0].text.strip()
-        if verdict.upper().startswith("DUPLIKAT"):
-            excerpt = verdict[9:].strip(": ").strip()
-            return f"Aehnlicher Eintrag existiert bereits: {excerpt}. Nicht neu gespeichert. Bisherige heutige Eintraege:\n{existing[:1500]}"
-    tag = "#" + kategorie.lower()
-    entry = f"\n## {time.strftime('%H:%M')} · {kategorie}\n{tag}\n{text.strip()}\n"
-    with open(file_path, "a", encoding="utf-8") as f:
-        f.write(entry)
-    updated = existing + entry
-    return f"Eintrag gespeichert (Kategorie: {kategorie}). Bisherige heutige Eintraege:\n{updated[:1500]}"
-
-
 # Erfolgreiche Recherche-Ergebnisse enthalten pro Quelle eine solche Zeile —
 # daraus baut process_message die Quellenliste fürs Transcript und den Autosave.
 RESEARCH_SOURCE_PREFIX = "QUELLE: "
@@ -452,19 +341,22 @@ async def execute_action(action: actions.Action, session_id: str) -> str:
         return await run_research(p)
 
     elif t == "INBOX_READ":
-        if not INBOX_PATH or not os.path.isdir(INBOX_PATH):
+        if not memory.inbox_available():
             return "Inbox-Ordner nicht konfiguriert oder nicht gefunden."
-        content = await asyncio.to_thread(read_today_inbox_sync)
+        content = await asyncio.to_thread(memory.read_today_inbox_sync)
         if content is None:
             return f"Noch keine Eintraege fuer heute ({time.strftime('%Y-%m-%d')})."
         return content
 
     elif t == "INBOX_WRITE":
         kategorie, text = actions.split_inbox_category(p)
-        return await write_inbox_entry(text, kategorie)
+        return await memory.write_inbox_entry(text, kategorie, ai=ai)
+
+    elif t == "MEMORY_WRITE":
+        return await asyncio.to_thread(memory.append_memory, p)
 
     elif t == "NOTES_RECENT":
-        notes = await asyncio.to_thread(read_recent_notes_sync)
+        notes = await asyncio.to_thread(memory.read_recent_notes_sync)
         if not notes:
             return "Keine Notizen gefunden — Vault nicht konfiguriert oder leer."
         return notes
@@ -480,7 +372,7 @@ async def execute_action(action: actions.Action, session_id: str) -> str:
         clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
         if not clip:
             return "Die Zwischenablage ist leer oder enthaelt keinen Text."
-        return await write_inbox_entry(clip, actions.INBOX_FALLBACK_CATEGORY)
+        return await memory.write_inbox_entry(clip, actions.INBOX_FALLBACK_CATEGORY, ai=ai)
 
     elif t == "SESSION_SUMMARY":
         history = conversations.get(session_id, [])
@@ -508,7 +400,7 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
     quellen_block = "Quellen:\n" + "\n".join(f"- {s}" for s in sources)
     # Autosave: Obsidian sortiert die Inbox am Tagesende selbst ein.
     try:
-        await write_inbox_entry(f"{summary}\n\n{quellen_block}", "Recherche", dedup=False)
+        await memory.write_inbox_entry(f"{summary}\n\n{quellen_block}", "Recherche", dedup=False)
     except Exception:
         logger.warning("Recherche-Autosave in die Inbox fehlgeschlagen", exc_info=True)
     return f"{summary}\n\n{quellen_block}"
@@ -764,21 +656,23 @@ async def broadcast_health():
 async def apply_settings(merged: dict):
     """Gespeicherte Settings ohne Neustart uebernehmen. System-Prompt und
     Voice-ID werden pro Anfrage gelesen und greifen damit sofort."""
-    global config, USER_NAME, USER_ADDRESS, USER_ROLE, CITY, TASKS_FILE, INBOX_PATH
+    global config, USER_NAME, USER_ADDRESS, USER_ROLE, CITY
     global ELEVENLABS_VOICE_ID, STARTUP_WARNINGS
 
     needs_refresh = (
         merged.get("city", CITY) != CITY
-        or merged.get("obsidian_inbox_path", TASKS_FILE) != TASKS_FILE
-        or merged.get("obsidian_inbox_folder", INBOX_PATH) != INBOX_PATH
+        or merged.get("obsidian_inbox_path", memory.VAULT_PATH) != memory.VAULT_PATH
+        or merged.get("obsidian_inbox_folder", memory.INBOX_PATH) != memory.INBOX_PATH
     )
     config = merged
     USER_NAME = config.get("user_name", "Jan")
     USER_ADDRESS = config.get("user_address", USER_NAME)
     USER_ROLE = config.get("user_role", "")
     CITY = config.get("city", "Hamburg")
-    TASKS_FILE = config.get("obsidian_inbox_path", "")
-    INBOX_PATH = config.get("obsidian_inbox_folder", "")
+    memory.configure(
+        vault_path=config.get("obsidian_inbox_path", ""),
+        inbox_path=config.get("obsidian_inbox_folder", ""),
+    )
     ELEVENLABS_VOICE_ID = config.get("elevenlabs_voice_id", "rDmv3mOhK6TnhYWckFaD")
     STARTUP_WARNINGS = config_loader.check_runtime_environment(config)
     if needs_refresh:
