@@ -75,6 +75,7 @@ app = FastAPI()
 
 import browser_tools
 import clipboard_tools
+import health
 import screen_capture
 
 # Chromium beim Server-Stopp mit beenden.
@@ -580,52 +581,14 @@ app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__
 INDEX_PATH = os.path.join(os.path.dirname(__file__), "frontend", "index.html")
 
 
-def _key_status(value: str) -> dict:
-    """Passiver Key-Check: vorhanden und kein Platzhalter (kein API-Aufruf)."""
-    if not value or not value.strip():
-        return {"ok": False, "detail": "API-Key fehlt in config.json."}
-    if config_loader._looks_like_placeholder(value):
-        return {"ok": False, "detail": "API-Key ist noch der Platzhalterwert."}
-    return {"ok": True, "detail": "API-Key vorhanden"}
-
-
-def _browser_status() -> dict:
-    state = browser_tools.status()
-    if state["connected"]:
-        return {"ok": True, "detail": "Browser läuft"}
-    if config_loader.find_chromium_executable() is not None:
-        return {"ok": True, "detail": "Chromium gefunden, nicht gestartet"}
-    return {"ok": False, "detail": "Chromium nicht gefunden — python -m playwright install chromium"}
-
-
-def _vault_status() -> dict:
-    vault_path = config.get("obsidian_inbox_path", "")
-    if not vault_path:
-        return {"ok": False, "detail": "Kein Vault-Pfad konfiguriert (obsidian_inbox_path)."}
-    if not os.path.isdir(vault_path):
-        return {"ok": False, "detail": f"Pfad nicht erreichbar: {vault_path}"}
-    return {"ok": True, "detail": "Vault erreichbar"}
-
-
 @app.get("/health")
-async def health():
+async def health_endpoint():
     """Passive Statusuebersicht fuer Launcher, Tests und Smoke-Test.
 
     'ok' heisst: der Server nimmt Verbindungen an. Einzeldienste stehen in
     'services'; es werden keine bezahlten APIs angefragt (kein Quota-Verbrauch).
     """
-    return {
-        "ok": True,
-        "warnings": STARTUP_WARNINGS,
-        "services": {
-            "config": {"ok": True},
-            "llm": _key_status(config.get("anthropic_api_key", "")),
-            "tts": _key_status(config.get("elevenlabs_api_key", "")),
-            "browser": _browser_status(),
-            "vault": _vault_status(),
-        },
-        "startup": {"data_loaded": DATA_LOADED, "last_refresh": LAST_REFRESH},
-    }
+    return health.build_report(config, STARTUP_WARNINGS, DATA_LOADED, LAST_REFRESH)
 
 
 # ── Settings-API ─────────────────────────────────────────────────────────────
