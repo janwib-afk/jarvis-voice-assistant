@@ -13,7 +13,6 @@ import base64
 import json
 import logging
 import os
-import re
 import secrets
 import time
 
@@ -25,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import actions
 import config_loader
+import tts
 
 # Logging: Betriebs-Logs auf INFO, private Inhalte nur auf DEBUG (Default aus).
 # Level per Umgebungsvariable JARVIS_LOG_LEVEL ueberschreibbar.
@@ -297,77 +297,10 @@ def strip_action(text: str) -> str:
 
 
 async def synthesize_speech(text: str) -> tuple[bytes, str | None]:
-    """Erzeugt TTS-Audio. Gibt (audio, fehlergrund) zurück — fehlergrund ist ein
-    kurzer, nutzertauglicher Hinweis wenn KEIN Audio erzeugt werden konnte."""
-    if not text.strip():
-        return b"", None
-
-    # Split long text into chunks at sentence boundaries to avoid ElevenLabs cutoff
-    chunks = []
-    if len(text) > 250:
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        current = ""
-        for s in sentences:
-            if len(current) + len(s) > 250 and current:
-                chunks.append(current.strip())
-                current = s
-            else:
-                current = (current + " " + s).strip()
-        if current:
-            chunks.append(current.strip())
-    else:
-        chunks = [text]
-
-    audio_parts = []
-    error: str | None = None
-    # Eigener Timeout pro Request (statt Client-Default 30s); 1 Retry pro Chunk,
-    # aber nur bei Netzwerkfehlern/5xx — 4xx (Key/Voice/Quota) ist nicht transient.
-    tts_timeout = httpx.Timeout(20.0, connect=5.0)
-    for chunk in chunks:
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
-        for attempt in range(2):
-            try:
-                resp = await http.post(url, headers={
-                    "xi-api-key": ELEVENLABS_API_KEY,
-                    "Content-Type": "application/json",
-                    "Accept": "audio/mpeg",
-                }, json={
-                    "text": chunk,
-                    "model_id": "eleven_turbo_v2_5",
-                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.85},
-                }, timeout=tts_timeout)
-            except Exception:
-                logger.warning("TTS-Aufruf fehlgeschlagen (Versuch %d)", attempt + 1, exc_info=True)
-                error = "Netzwerkfehler zu ElevenLabs."
-                if attempt == 0:
-                    await asyncio.sleep(0.5)
-                    continue
-                break
-            logger.debug("TTS chunk status: %s, size: %d", resp.status_code, len(resp.content))
-            if resp.status_code == 200:
-                audio_parts.append(resp.content)
-                break
-            logger.warning("TTS-Fehler (Status %s): %s", resp.status_code, resp.text[:200])
-            if resp.status_code in (401, 403):
-                error = f"ElevenLabs-Status {resp.status_code} — API-Key prüfen."
-                break
-            elif resp.status_code == 404:
-                error = "ElevenLabs-Status 404 — Voice-ID prüfen."
-                break
-            elif resp.status_code == 429:
-                error = "ElevenLabs-Kontingent oder Rate-Limit erreicht."
-                break
-            else:
-                error = f"ElevenLabs-Status {resp.status_code}."
-                if attempt == 0 and resp.status_code >= 500:
-                    await asyncio.sleep(0.5)
-                    continue
-                break
-
-    audio = b"".join(audio_parts)
-    if audio:
-        error = None  # Teil-Erfolg reicht — kein Fehler melden
-    return audio, error
+    """TTS mit den aktuellen Config-Werten — Logik liegt in tts.py."""
+    return await tts.synthesize_speech(
+        text, api_key=ELEVENLABS_API_KEY, voice_id=ELEVENLABS_VOICE_ID, client=http
+    )
 
 
 async def send_error(ws: WebSocket, component: str, text: str, hint: str = ""):
