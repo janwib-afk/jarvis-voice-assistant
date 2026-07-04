@@ -1,6 +1,6 @@
 # J.A.R.V.I.S. — Personal AI Voice Assistant
 
-> Double-clap. Jarvis wakes up, greets you with the weather and your tasks, answers your questions with dry British wit, controls your browser, and sees your screen.
+> Double-clap. Jarvis wakes up, greets you with the weather and your tasks, answers your questions like a sharp, friendly colleague, controls your browser, and sees your screen.
 
 Built entirely with [Claude Code](https://claude.ai/code) — no code written manually.
 
@@ -14,10 +14,10 @@ Built entirely with [Claude Code](https://claude.ai/code) — no code written ma
 
 ## Features
 
-- **Double-Clap Trigger** — Clap twice and your entire workspace launches: Spotify, VS Code, Obsidian, Chrome with Jarvis UI
+- **Double-Clap Trigger** — Clap twice and your entire workspace launches: VS Code, Obsidian, Chrome with Jarvis UI
 - **Voice Conversation** — Speak freely with Jarvis through your microphone. He listens, thinks, and responds with voice
-- **Sarcastic British Butler** — Jarvis speaks German with the personality of Tony Stark's AI: dry, witty, and always one step ahead
-- **Weather & Tasks** — On startup, Jarvis greets you with the current weather and a humorous summary of your open tasks from Obsidian
+- **Smart Colleague** — Jarvis speaks German like a competent coworker: friendly, direct, professional, and always one step ahead
+- **Weather & Tasks** — On startup, Jarvis greets you with the current weather and a quick summary of your open tasks from Obsidian
 - **Browser Automation** — "Search for MiroFish" → Jarvis opens a real browser, navigates to the page, reads the content, and summarizes it for you
 - **Screen Vision** — "What's on my screen?" → Jarvis takes a screenshot, analyzes it with Claude Vision, and describes what he sees
 - **World News** — "What's happening in the world?" → Jarvis opens worldmonitor.app and summarizes current global events
@@ -108,10 +108,9 @@ You (speak) → Chrome Browser (Web Speech API) → FastAPI Server (local)
      "elevenlabs_api_key": "sk_...",
      "elevenlabs_voice_id": "YOUR_VOICE_ID",
      "user_name": "Your Name",
-     "user_address": "Sir",
+     "user_address": "Your Name",
      "city": "Hamburg",
      "workspace_path": "C:\\path\\to\\jarvis-voice-assistant",
-     "spotify_track": "spotify:track:YOUR_TRACK_ID",
      "browser_url": "https://your-website.com",
      "obsidian_inbox_path": "C:\\path\\to\\obsidian\\inbox",
      "apps": ["obsidian://open"]
@@ -141,7 +140,7 @@ Then open `http://localhost:8340` in Chrome.
 ```bash
 python scripts/clap-trigger.py
 ```
-Clap twice → Spotify plays your song, VS Code opens, Obsidian opens, Chrome opens with Jarvis. All windows snap into quadrants.
+Clap twice → VS Code opens, Obsidian opens, Chrome opens with Jarvis. All windows snap into quadrants.
 
 ### Auto-start on Windows login
 1. Open Task Scheduler (`Win + R` → `taskschd.msc`)
@@ -162,7 +161,7 @@ Clap twice → Spotify plays your song, VS Code opens, Obsidian opens, Chrome op
 | *"Open skool.com"* | Opens the URL in your browser |
 | *"What's on my screen?"* | Takes screenshot, describes what he sees |
 | *"What's happening in the world?"* | Opens worldmonitor.app, summarizes global news |
-| *Any question* | Jarvis answers in his sarcastic butler style |
+| *Any question* | Jarvis answers like a friendly, direct colleague |
 
 ---
 
@@ -198,7 +197,6 @@ Edit the system prompt in `server.py` → `build_system_prompt()`. The personali
 Edit `config.json`:
 ```json
 {
-  "spotify_track": "spotify:track:YOUR_TRACK_ID",
   "browser_url": "https://your-website.com",
   "apps": ["obsidian://open", "slack://"]
 }
@@ -237,7 +235,7 @@ MAX_GAP = 1.2     # Seconds between claps
 | Clap not detected | Lower `THRESHOLD` in `clap-trigger.py` (try 0.10) |
 | Browser search fails | Run `playwright install chromium` |
 | No audio in Chrome | Click anywhere on the page first (Chrome autoplay policy) |
-| Jarvis says "Sir planen" instead of "Sie planen" | Update the system prompt grammar rules in `server.py` |
+| Jarvis uses the wrong name or tone | Adjust `user_address` in `config.json` or the persona in `server.py` (`build_system_prompt`) |
 
 ---
 
@@ -268,7 +266,7 @@ Claude Code will adapt the PowerShell scripts to shell scripts, adjust paths, an
 
 Built by [Julian](https://skool.com/ki-automatisierung) with [Claude Code](https://claude.ai/code).
 
-Inspired by Iron Man's J.A.R.V.I.S. — *"At your service, Sir."*
+Inspired by Iron Man's J.A.R.V.I.S. — *"Ready when you are."*
 
 ---
 

@@ -11,6 +11,7 @@ import subprocess
 import time
 import os
 import json
+import ctypes
 
 # Load config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.json")
@@ -49,6 +50,7 @@ def audio_callback(indata, frames, time_info, status):
                 triggered = True
                 last_clap_time = 0.0
                 subprocess.Popen(["powershell", "-ExecutionPolicy", "Bypass", "-File", SCRIPT_PATH])
+                ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
             else:
                 # First clap
                 print(f"[jarvis] First clap detected (rms={rms:.3f})", flush=True)

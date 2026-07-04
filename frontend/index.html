@@ -5,15 +5,103 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>J.A.R.V.I.S.</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script>
+        // UI-Modus vor dem ersten Paint setzen — verhindert Layout-Flackern.
+        document.documentElement.className =
+            'mode-' + (localStorage.getItem('jarvis.uiMode') === 'panel' ? 'panel' : 'focus');
+    </script>
 </head>
 <body>
-    <div id="app">
-        <div id="orb-container">
-            <div id="orb" class="idle"></div>
+    <!-- Titelleiste zum Ziehen des rahmenlosen Fensters -->
+    <div id="win-bar">
+        <div id="drag-region"></div>
+        <div id="win-buttons">
+            <button id="btn-mode" title="Panel-Modus"></button>
+            <button id="btn-settings" title="Einstellungen">&#9881;</button>
+            <button id="btn-min" title="Minimieren">&#8722;</button>
+            <button id="btn-close" title="Ausblenden">&#215;</button>
         </div>
-        <div id="status">Klicke den Orb um zu sprechen</div>
-        <div id="transcript"></div>
     </div>
+
+    <!-- Dismissible Fehler-Banner (max. 3 gestapelt) -->
+    <div id="error-stack" aria-live="polite"></div>
+
+    <div id="app">
+        <div id="main-col">
+            <div id="orb-container">
+                <div id="orb" class="idle"></div>
+            </div>
+            <div id="status"></div>
+            <!-- Letzte Jarvis-Antwort — nur im Panel-Modus sichtbar -->
+            <div id="panel-answer"></div>
+            <div id="transcript-toolbar">
+                <input id="transcript-search" type="search"
+                       placeholder="Verlauf durchsuchen…"
+                       aria-label="Verlauf durchsuchen">
+                <button id="btn-copy-all" title="Sichtbaren Verlauf kopieren">Alles kopieren</button>
+            </div>
+            <div id="transcript"></div>
+            <form id="text-form" autocomplete="off">
+                <input id="text-input" type="text"
+                       placeholder="Nachricht tippen — Strg+Enter zum Senden"
+                       aria-label="Textnachricht an Jarvis">
+            </form>
+        </div>
+        <!-- Aktionshistorie — nur im Fokus-Modus sichtbar -->
+        <aside id="action-history">
+            <h3>Aktionen</h3>
+            <ul id="action-list"></ul>
+        </aside>
+    </div>
+    <button id="mute-btn" title="Mikrofon stumm schalten"></button>
+
+    <!-- Status-Center: Verbindung, Mikro, Jarvis-Zustand, letzter Fehler -->
+    <div id="status-center">
+        <span class="sc-item"><span id="sc-conn" class="sc-dot"></span>Server</span>
+        <span class="sc-item"><span id="sc-mic" class="sc-dot"></span>Mikro</span>
+        <span class="sc-item" id="sc-state">Bereit</span>
+        <div id="sc-error" title=""></div>
+    </div>
+
+    <!-- Einstellungen (API-Keys bleiben bewusst in config.json) -->
+    <div id="settings-view" class="hidden" role="dialog" aria-modal="true" aria-label="Einstellungen">
+        <div id="settings-card">
+            <h2>Einstellungen</h2>
+            <form id="settings-form">
+                <label>Name<input name="user_name" type="text"></label>
+                <label>Anrede<input name="user_address" type="text" placeholder="Sir"></label>
+                <label>Tätigkeit<input name="user_role" type="text" placeholder="Softwareentwickler"></label>
+                <label>Stadt<input name="city" type="text"></label>
+                <label>ElevenLabs Voice-ID<input name="elevenlabs_voice_id" type="text"></label>
+                <label>Obsidian-Vault<input name="obsidian_inbox_path" type="text"></label>
+                <label>Inbox-Ordner<input name="obsidian_inbox_folder" type="text"></label>
+                <label>Start-Apps (eine pro Zeile)<textarea name="apps" rows="3"></textarea></label>
+                <fieldset id="mic-mode">
+                    <legend>Mikrofonmodus</legend>
+                    <label><input type="radio" name="micMode" value="auto">Immer zuhören</label>
+                    <label><input type="radio" name="micMode" value="ptt">Push-to-Talk (Leertaste halten)</label>
+                    <label><input type="radio" name="micMode" value="off">Beim Start stumm</label>
+                </fieldset>
+                <p class="settings-note">API-Keys werden aus Sicherheitsgründen nur in config.json verwaltet.</p>
+                <div id="settings-msg" aria-live="polite"></div>
+                <div class="settings-actions">
+                    <button type="submit" id="btn-settings-save">Speichern</button>
+                    <button type="button" id="btn-settings-cancel">Abbrechen</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="/static/main.js"></script>
+    <script src="/static/settings.js"></script>
+    <script>
+        // Fenster-Buttons via pywebview API (nur im nativen Fenster aktiv)
+        document.getElementById('btn-min').addEventListener('click', () => {
+            if (window.pywebview) window.pywebview.api.minimize();
+        });
+        document.getElementById('btn-close').addEventListener('click', () => {
+            if (window.pywebview) window.pywebview.api.hide();
+        });
+    </script>
 </body>
 </html>

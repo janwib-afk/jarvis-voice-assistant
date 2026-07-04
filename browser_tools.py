@@ -3,13 +3,19 @@ Jarvis V2 — Browser Tools
 Web search via DuckDuckGo Lite, page visits via Playwright, URL opening.
 """
 
+import logging
 import re
 import webbrowser
 import subprocess
-from urllib.parse import unquote, parse_qs, urlparse
+from urllib.parse import unquote, parse_qs, urlparse, quote_plus
 import httpx
-from playwright.async_api import async_playwright
 
+logger = logging.getLogger("jarvis.browser")
+
+# Maximal so viele Tabs gleichzeitig — der aelteste wird automatisch geschlossen.
+MAX_TABS = 5
+
+_pw = None
 _browser = None
 _context = None
 
@@ -26,14 +32,27 @@ def _bring_chromium_to_front():
             '[W]::SetForegroundWindow($_) }'
         ], capture_output=True, timeout=3)
     except Exception:
-        pass
+        logger.debug("Chromium-Fenster konnte nicht in den Vordergrund geholt werden", exc_info=True)
 
 
 async def _get_browser():
-    global _browser, _context
-    if _browser is None:
-        pw = await async_playwright().start()
-        _browser = await pw.chromium.launch(headless=False, args=["--start-maximized"])
+    global _pw, _browser, _context
+    # Auch relaunchen, wenn der Nutzer das Chromium-Fenster geschlossen hat.
+    if _browser is None or not _browser.is_connected():
+        # Lazy import: fehlendes Playwright darf den Server-Start nicht crashen,
+        # sondern erst die Browser-Aktion mit klarer Meldung scheitern lassen.
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            raise RuntimeError(
+                "Playwright ist nicht installiert. "
+                "Installiere es mit: pip install -r requirements.txt"
+            )
+        _browser = None
+        _context = None
+        if _pw is None:
+            _pw = await async_playwright().start()
+        _browser = await _pw.chromium.launch(headless=False, args=["--start-maximized"])
         _context = await _browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             no_viewport=True,
@@ -41,13 +60,36 @@ async def _get_browser():
     return _context
 
 
+async def _new_page_capped():
+    """Neuer Tab; schliesst vorher die aeltesten, wenn MAX_TABS erreicht ist.
+
+    Aktionen laufen sequenziell pro WS-Session, daher kein Lock noetig.
+    """
+    global _browser, _context
+    for attempt in range(2):
+        ctx = await _get_browser()
+        try:
+            # ctx.pages enthaelt nur offene Tabs in Erstellungsreihenfolge —
+            # vom Nutzer manuell geschlossene zaehlen nicht mit.
+            while len(ctx.pages) >= MAX_TABS:
+                await ctx.pages[0].close()
+            return await ctx.new_page()
+        except Exception:
+            # Fenster wurde zwischen Check und Nutzung geschlossen: einmal neu starten.
+            if attempt == 0:
+                logger.warning("Browser nicht mehr erreichbar, starte neu", exc_info=True)
+                _browser = None
+                _context = None
+            else:
+                raise
+
+
 async def search_and_read(query: str) -> dict:
     """Search DuckDuckGo in visible browser, click first result, read the page."""
-    ctx = await _get_browser()
-    page = await ctx.new_page()
+    page = await _new_page_capped()
     try:
         # DuckDuckGo search (no cookie banner, no reCAPTCHA)
-        search_url = f"https://duckduckgo.com/?q={query}"
+        search_url = f"https://duckduckgo.com/?q={quote_plus(query)}"
         await page.goto(search_url, timeout=15000)
         _bring_chromium_to_front()
         await page.wait_for_timeout(2000)
@@ -82,10 +124,37 @@ async def search_and_read(query: str) -> dict:
         pass
 
 
+async def search_links(query: str, limit: int = 4) -> list[dict]:
+    """Sammelt die ersten organischen DuckDuckGo-Treffer als {title, url}.
+
+    Grundlage des Recherche-Modus: statt den ersten Treffer zu klicken
+    (``search_and_read``) werden mehrere Quellen-Links eingesammelt.
+    """
+    page = await _new_page_capped()
+    try:
+        search_url = f"https://duckduckgo.com/?q={quote_plus(query)}"
+        await page.goto(search_url, timeout=15000)
+        _bring_chromium_to_front()
+        await page.wait_for_timeout(2000)
+
+        links = page.locator('[data-testid="result-title-a"]')
+        count = min(await links.count(), limit)
+        results = []
+        for i in range(count):
+            link = links.nth(i)
+            href = await link.get_attribute("href")
+            title = (await link.inner_text()).strip()
+            if href and href.startswith("http"):
+                results.append({"title": title or href, "url": href})
+        return results
+    except Exception:
+        logger.warning("Suche nach Quellen-Links fehlgeschlagen", exc_info=True)
+        return []
+
+
 async def visit(url: str, max_chars: int = 5000) -> dict:
     """Visit a URL and extract main text content."""
-    ctx = await _get_browser()
-    page = await ctx.new_page()
+    page = await _new_page_capped()
     try:
         await page.goto(url, timeout=15000, wait_until="domcontentloaded")
         text = await page.evaluate("""
@@ -110,8 +179,7 @@ async def visit(url: str, max_chars: int = 5000) -> dict:
 
 async def fetch_news() -> str:
     """Fetch current world news from worldmonitor.app in visible browser."""
-    ctx = await _get_browser()
-    page = await ctx.new_page()
+    page = await _new_page_capped()
     try:
         await page.goto("https://www.worldmonitor.app/", timeout=20000)
         _bring_chromium_to_front()
@@ -127,16 +195,24 @@ async def fetch_news() -> str:
 
 
 async def open_url(url: str):
-    """Open URL in user's default browser (non-blocking)."""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, webbrowser.open, url)
+    """Open URL in the Playwright browser and bring it to front."""
+    page = await _new_page_capped()
+    await page.goto(url, timeout=15000, wait_until="domcontentloaded")
+    _bring_chromium_to_front()
     return {"success": True, "url": url}
 
 
+def status() -> dict:
+    """Passiver Zustand fuer /health — startet nichts, fragt nur Globals ab."""
+    return {"connected": _browser is not None and _browser.is_connected()}
+
+
 async def close():
-    global _browser, _context
+    global _pw, _browser, _context
     if _browser:
         await _browser.close()
         _browser = None
         _context = None
+    if _pw:
+        await _pw.stop()
+        _pw = None

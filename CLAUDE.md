@@ -6,7 +6,7 @@ Dieses Workspace ist **Jarvis** — ein persoenlicher KI-Assistent mit Sprachste
 
 ## Fuer Claude Code: Setup-Modus
 
-Wenn der Nutzer nach dem Setup fragt oder "Richte Jarvis ein" sagt, folge den Anweisungen in `SETUP.md`. Frage den Nutzer nach seinem Namen, seiner Taetigkeit, und wie er angesprochen werden moechte — diese Infos muessen in den Systemprompt in `server.py` eingetragen werden (ersetze die aktuellen Platzhalter "Julian", "KI-Berater und Automatisierungsexperte", "Sir").
+Wenn der Nutzer nach dem Setup fragt oder "Richte Jarvis ein" sagt, folge den Anweisungen in `SETUP.md`. Frage den Nutzer nach seinem Namen, seiner Taetigkeit, und wie er angesprochen werden moechte — diese Infos gehoeren in `config.json` (`user_name`, `user_role`, `user_address`). Der Systemprompt in `server.py` liest sie automatisch aus der Config; im Code muss nichts ersetzt werden. Spaeter sind sie auch im Jarvis-UI ueber die Einstellungen (Zahnrad-Symbol) aenderbar.
 
 **WICHTIG — Pruefe und installiere zuerst alle Voraussetzungen:**
 
@@ -33,13 +33,19 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 ├── config.json            # Persoenliche Config (gitignored)
 ├── config.example.json    # Template mit Platzhaltern
 ├── requirements.txt       # Python Dependencies
-├── server.py              # FastAPI Backend (Claude Haiku + ElevenLabs TTS)
-├── browser_tools.py       # Playwright Browser-Steuerung
-├── screen_capture.py      # Screenshot + Claude Vision
+├── server.py              # FastAPI Backend (Claude Haiku + ElevenLabs TTS + Settings-API)
+├── config_loader.py       # Config laden/validieren/speichern (Settings-Whitelist)
+├── actions.py             # Action-Tag-Parsing + URL/Origin-Policies + Inbox-Kategorien
+├── browser_tools.py       # Playwright Browser-Steuerung (Suche, Recherche-Quellen)
+├── screen_capture.py      # Screenshot + Claude Vision (optionale Kontextfrage)
+├── clipboard_tools.py     # Windows-Zwischenablage lesen (PowerShell Get-Clipboard)
+├── jarvis-launcher.pyw    # Natives pywebview-Fenster + Tray + Panel-/Fokus-Modus
 ├── frontend/
 │   ├── index.html         # Jarvis Web-UI
-│   ├── main.js            # Speech Recognition + WebSocket + Audio
-│   └── style.css          # Dark Theme mit Orb-Animation
+│   ├── main.js            # Speech Recognition + WebSocket + Audio + Orb-Zustaende
+│   ├── settings.js        # Einstellungen-Overlay (GET/POST /settings)
+│   └── style.css          # Dark Theme mit Orb-Animation, Panel-/Fokus-Layouts
+├── tests/                 # unittest-Suite (python -m unittest discover -s tests)
 └── scripts/
     ├── clap-trigger.py    # Doppelklatschen-Erkennung
     └── launch-session.ps1 # Startet alle Apps + Jarvis

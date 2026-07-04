@@ -29,14 +29,13 @@ Oeffne diesen Ordner in VS Code, starte Claude Code, und sag:
 
 Claude Code fragt dich dann nach:
 
-1. **Dein Name** und wie du angesprochen werden willst (z.B. "Sir")
+1. **Dein Name** und wie du angesprochen werden willst (z.B. dein Vorname)
 2. **Anthropic API Key** — von https://console.anthropic.com (fuer Claude Haiku, das Gehirn)
 3. **ElevenLabs API Key** — von https://elevenlabs.io (fuer die Stimme)
-4. **Spotify-Song** — Link zum Song der beim Start spielen soll
-5. **Programme** — welche Apps sollen beim Doppelklatschen starten?
-6. **Website** — welche Seite soll im Browser aufgehen?
-7. **Stadt fuers Wetter** — z.B. Hamburg
-8. **Obsidian Vault** — optional, welcher Ordner soll Jarvis kennen?
+4. **Programme** — welche Apps sollen beim Doppelklatschen starten?
+5. **Website** — welche Seite soll im Browser aufgehen?
+6. **Stadt fuers Wetter** — z.B. Hamburg
+7. **Obsidian Vault** — optional, welcher Ordner soll Jarvis kennen?
 
 ---
 
@@ -56,10 +55,9 @@ Claude Code erstellt `config.json` aus `config.example.json` mit deinen echten D
   "elevenlabs_api_key": "sk_...",
   "elevenlabs_voice_id": "VOICE_ID",
   "user_name": "Dein Name",
-  "user_address": "Sir",
+  "user_address": "Dein Name",
   "city": "Hamburg",
   "workspace_path": "C:\\pfad\\zum\\jarvis_template",
-  "spotify_track": "spotify:track:DEIN_TRACK_ID",
   "browser_url": "https://deine-website.com",
   "obsidian_inbox_path": "C:\\pfad\\zum\\obsidian\\inbox",
   "apps": ["obsidian://open"]
@@ -71,8 +69,8 @@ Eine deutsche Stimme auswaehlen und die Voice ID in die Config eintragen. Empfeh
 
 ### 4. Systemprompt
 Der Systemprompt wird in `server.py` automatisch aus der Config generiert. Er enthaelt:
-- Jarvis-Persoenlichkeit (trocken, sarkastisch, britisch-hoeflich)
-- Siezen mit gewaehlter Anrede
+- Jarvis-Persoenlichkeit (kompetenter Kollege auf Augenhoehe: freundlich, direkt, professionell)
+- Duzen mit gewaehlter Anrede
 - Wetter- und Aufgaben-Integration
 - Browser-Steuerung via Action-Tags
 - Screen-Capture-Faehigkeit
@@ -108,7 +106,7 @@ Dann http://localhost:8340 in Chrome oeffnen.
 ```
 python scripts\clap-trigger.py
 ```
-Zweimal klatschen → Spotify, VS Code, Obsidian, Chrome mit Jarvis starten automatisch.
+Zweimal klatschen → VS Code, Obsidian, Chrome mit Jarvis starten automatisch.
 
 ### Clap Trigger beim Windows-Start
 1. `Win + R` → `taskschd.msc`
@@ -155,10 +153,9 @@ Wenn ein Nutzer "Richte Jarvis ein" sagt, fuehre folgende Schritte aus:
 Frage nach:
 - Name (z.B. "Julian")
 - Taetigkeit/Rolle (z.B. "KI-Berater und Automatisierungsexperte") — wird in den Systemprompt eingebaut
-- Gewuenschte Anrede (z.B. "Sir", "Chef", oder einfach Vorname)
+- Gewuenschte Anrede (z.B. Vorname oder "Chef")
 - Anthropic API Key (von https://console.anthropic.com)
 - ElevenLabs API Key (von https://elevenlabs.io)
-- Spotify-Song (Link zum Song der beim Start spielen soll)
 - Programme die beim Doppelklatschen starten sollen (z.B. Obsidian, Notion)
 - Website die im Browser aufgehen soll
 - Stadt fuers Wetter (z.B. Hamburg)
@@ -172,18 +169,14 @@ Erstelle `config.json` aus `config.example.json` mit den Nutzerdaten. Setze den 
 - Empfehle eine deutsche Stimme
 - Trage die Voice ID in die Config ein
 
-**Schritt 4 — Systemprompt anpassen:**
-Oeffne `server.py` und finde die Funktion `build_system_prompt()`. Dort steht der komplette Systemprompt als f-String. Ersetze ALLE Vorkommen der folgenden Werte im gesamten Prompt-Text:
-- Jedes "Julian" → Name des Nutzers (kommt mehrfach vor im Prompt!)
-- "KI-Berater und Automatisierungsexperte" → Taetigkeit/Rolle des Nutzers
-- Jedes "Sir" als Anrede → gewuenschte Anrede des Nutzers
-- "Hamburg" → Stadt des Nutzers
+**Schritt 4 — Persona konfigurieren:**
+Der Systemprompt in `server.py` liest Name, Taetigkeit, Anrede und Stadt automatisch aus der Config — es muss NICHTS mehr im Code ersetzt werden. Trage stattdessen in `config.json` ein:
+- `user_name` → Name des Nutzers
+- `user_role` → Taetigkeit/Rolle des Nutzers (z.B. "KI-Berater und Automatisierungsexperte")
+- `user_address` → gewuenschte Anrede (z.B. Vorname oder "Chef")
+- `city` → Stadt fuers Wetter
 
-Ausserdem oben in `server.py` bei den Config-Defaults:
-- `USER_NAME = config.get("user_name", "Julian")` → Default-Name anpassen
-- `CITY = config.get("city", "Hamburg")` → Default-Stadt anpassen
-
-WICHTIG: Pruefe den Prompt sorgfaeltig — "Julian" und "Sir" kommen an mehreren Stellen vor. Alle muessen ersetzt werden.
+Diese Werte lassen sich spaeter auch jederzeit im Jarvis-UI ueber das Zahnrad-Symbol (Einstellungen) aendern — Aenderungen wirken sofort, ohne Neustart.
 
 **Schritt 5 — Testen:**
 - Starte den Server: `python server.py`
