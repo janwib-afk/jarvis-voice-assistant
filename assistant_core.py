@@ -409,6 +409,11 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws):
         logger.info("Action %s lieferte %d Zeichen", action.type, len(action_result))
         logger.debug("Action-Ergebnis: %s", action_result)
         await send_action_event(ws, "done", action.type)
+    except asyncio.CancelledError:
+        # Nutzer hat "Stopp" gesagt: Historie markieren, Abbruch weiterreichen.
+        logger.info("Action %s abgebrochen (Stopp)", action.type)
+        await send_action_event(ws, "error", action.type, "abgebrochen")
+        raise
     except Exception as e:
         logger.warning("Action %s fehlgeschlagen", action.type, exc_info=True)
         component = "browser" if spec.is_browser else "action"

@@ -27,6 +27,8 @@ let audioUnlocked = false;
 let isMuted = false;
 let hasGreeted = false;
 let reconnectAttempts = 0;
+let currentAudio = null;   // laufendes Audio-Element — fuer den Stopp-Pfad
+let currentAudioUrl = null;
 
 // Mikrofonmodus: 'auto' (immer zuhoeren), 'ptt' (Leertaste halten), 'off' (Start stumm)
 let micMode = localStorage.getItem('jarvis.micMode') || 'auto';
@@ -208,6 +210,9 @@ function connect() {
         } else if (data.type === 'health') {
             uiState.warnings = (data.warnings || []).join(' · ');
             renderStatusCenter();
+        } else if (data.type === 'stop') {
+            // Server bestaetigt Stopp (auch wenn er von anderswo ausgeloest wurde).
+            stopPlaybackLocal();
         } else if (data.type === 'action') {
             addActionEntry(data);
         } else if (data.type === 'error') {
@@ -266,8 +271,10 @@ function playNext() {
     const blob = new Blob([bytes], { type: 'audio/mpeg' });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => { URL.revokeObjectURL(url); playNext(); };
-    audio.onerror = () => { URL.revokeObjectURL(url); playNext(); };
+    currentAudio = audio;
+    currentAudioUrl = url;
+    audio.onended = () => { URL.revokeObjectURL(url); currentAudio = null; playNext(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); currentAudio = null; playNext(); };
     audio.play().catch(err => {
         console.warn('[jarvis] Autoplay blocked, waiting for click...');
         status.textContent = 'Klicke irgendwo damit Jarvis sprechen kann.';
@@ -285,6 +292,42 @@ function playNext() {
     });
 }
 
+// ── Stopp: Wiedergabe sofort beenden + laufende Server-Aktion abbrechen ─────
+function stopPlaybackLocal() {
+    audioQueue = [];
+    if (currentAudio) {
+        currentAudio.onended = null;
+        currentAudio.onerror = null;
+        currentAudio.pause();
+        if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+        currentAudio = null;
+        currentAudioUrl = null;
+    }
+    isPlaying = false;
+    setOrbState('idle');
+    status.textContent = 'Gestoppt.';
+    resumeListening(300);
+}
+
+function requestStop() {
+    stopPlaybackLocal();
+    // Server bricht eine laufende Aktion (z.B. Recherche) ab und leert die Queue.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop' }));
+    }
+}
+
+// Reine Stopp-Aeusserung per Sprache — Details entscheidet der Server nochmal.
+const STOP_RE = /^\s*(jarvis[,!\s]+)?(bitte\s+)?(stopp?|halt|abbruch|abbrechen|aufhören|ruhe|sei still|sei ruhig|hör auf)[\s.!]*$/i;
+
+document.getElementById('stop-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    requestStop();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') requestStop();
+});
+
 // Speech Recognition
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition;
@@ -301,6 +344,8 @@ if (SpeechRecognition) {
         if (last.isFinal) {
             const text = last[0].transcript.trim();
             if (!text) return;
+            // Stopp geht immer — auch stummgeschaltet, und ohne LLM-Umweg.
+            if (STOP_RE.test(text)) { requestStop(); return; }
             const muteOff = /\b(mikro(fon)? (an|ein)|entstummen|stummschaltung (aufheben|aus))\b/i;
             const muteOn  = /\b(stumm|mikro(fon)? aus|stummschalten)\b/i;
             if (muteOff.test(text)) { isMuted = false; updateMuteButton(); if (!isPlaying && micMode === 'auto') startListening(); return; }

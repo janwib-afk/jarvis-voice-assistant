@@ -263,6 +263,37 @@ def is_confirmation(text: str) -> bool | None:
     return None
 
 
+# Stopp-Erkennung: Woerter, die fuer sich genommen "hoer auf" bedeuten …
+_STOP_WORDS = frozenset({
+    "stopp", "stop", "stoppe", "stoppen", "halt", "abbrechen", "abbruch",
+    "aufhoeren", "aufhören", "still", "ruhe", "leise", "cancel",
+})
+# … plus Fuellwoerter, die eine Stopp-Aeusserung nicht entkraeften ("Jarvis, bitte stopp!").
+_STOP_FILLER = frozenset({
+    "jarvis", "bitte", "mal", "jetzt", "sofort", "das", "es", "sei", "hoer",
+    "hör", "auf", "damit", "ok", "okay", "danke",
+})
+# Mehrwort-Formen, deren Einzelwoerter allein zu schwach sind.
+_STOP_PHRASES = ("hoer auf", "hör auf", "sei still", "sei ruhig")
+
+
+def is_stop_command(text: str) -> bool:
+    """Erkennt eine reine Stopp-Aeusserung ("Stopp", "Jarvis, hör auf", "abbrechen").
+
+    Bewusst konservativ: kurze Nachricht (max. 5 Woerter), mindestens ein
+    Stop-Wort/-Ausdruck und KEIN inhaltliches Wort — "Wie stoppe ich einen
+    Container?" ist eine normale Frage, kein Stopp.
+    """
+    words = re.findall(r"\w+", (text or "").lower())
+    if not words or len(words) > 5:
+        return False
+    joined = " ".join(words)
+    has_stop = any(w in _STOP_WORDS for w in words) or any(p in joined for p in _STOP_PHRASES)
+    if not has_stop:
+        return False
+    return all(w in _STOP_WORDS or w in _STOP_FILLER for w in words)
+
+
 def is_allowed_origin(origin: str | None) -> bool:
     """Prueft, ob ein WebSocket-``Origin``-Header lokal (erlaubt) ist.
 

@@ -19,6 +19,7 @@ from actions import (
     is_allowed_origin,
     is_origin_acceptable,
     is_confirmation,
+    is_stop_command,
     split_inbox_category,
 )
 
@@ -206,6 +207,33 @@ class IsConfirmationTests(unittest.TestCase):
     def test_long_sentence_with_buried_yes_is_none(self):
         # "ja" tief in einem langen Satz ist keine Bestaetigung.
         self.assertIsNone(is_confirmation("Ich habe mich gefragt ob das damals ja so richtig war"))
+
+
+class IsStopCommandTests(unittest.TestCase):
+    def test_plain_stop_words(self):
+        for text in ("Stopp", "stop", "Stopp!", "abbrechen", "Halt", "Abbruch", "stoppen"):
+            with self.subTest(text=text):
+                self.assertTrue(is_stop_command(text))
+
+    def test_stop_with_filler(self):
+        for text in ("Jarvis, stopp", "bitte stopp", "Okay, stopp jetzt", "Jarvis, sei still", "hör auf"):
+            with self.subTest(text=text):
+                self.assertTrue(is_stop_command(text))
+
+    def test_questions_about_stopping_are_not_stop(self):
+        for text in (
+            "Wie stoppe ich einen Docker-Container",
+            "stoppe die Recherche zu SSDs",
+            "Kannst du kurz stoppen und was anderes machen",
+            "Was bedeutet Abbruch bei einem Build",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(is_stop_command(text))
+
+    def test_normal_text_and_empty(self):
+        self.assertFalse(is_stop_command("Wie ist das Wetter morgen?"))
+        self.assertFalse(is_stop_command(""))
+        self.assertFalse(is_stop_command("   "))
 
 
 class ActionRegistryTests(unittest.TestCase):

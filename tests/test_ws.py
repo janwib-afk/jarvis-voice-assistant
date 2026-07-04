@@ -15,7 +15,9 @@ zuerst abholen.
 import asyncio
 import os
 import sys
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -119,6 +121,87 @@ class _StubWS:
 
     async def send_json(self, data):
         self.sent.append(data)
+
+
+@unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
+class StopFlowTests(unittest.TestCase):
+    """"Stopp" bricht eine laufende Verarbeitung ab, ohne die Verbindung zu beenden."""
+
+    def setUp(self):
+        self.client = TestClient(server.app)
+        self.token = server.SESSION_TOKEN
+
+    def _connect(self):
+        return self.client.websocket_connect(
+            f"/ws?token={self.token}", headers={"origin": VALID_ORIGIN}
+        )
+
+    def _wait_for(self, record, marker, timeout=3.0):
+        deadline = time.monotonic() + timeout
+        while marker not in record and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return marker in record
+
+    def test_stop_frame_cancels_running_task(self):
+        record = []
+
+        async def slow_process(session_id, text, ws):
+            record.append("start")
+            try:
+                await asyncio.sleep(30)
+                record.append("finished")
+            except asyncio.CancelledError:
+                record.append("cancelled")
+                raise
+
+        with mock.patch.object(server.assistant_core, "process_message", slow_process):
+            with self._connect() as sock:
+                sock.receive_json()  # health-Frame
+                sock.send_json({"text": "recherchiere zu ssds"})
+                self.assertTrue(self._wait_for(record, "start"), "Worker hat nicht gestartet")
+                sock.send_json({"type": "stop"})
+                frame = sock.receive_json()
+                self.assertEqual(frame["type"], "stop")
+                confirm = sock.receive_json()
+                self.assertEqual(confirm["type"], "response")
+                self.assertIn("gestoppt", confirm["text"].lower())
+                self.assertEqual(confirm["audio"], "")
+                self.assertTrue(self._wait_for(record, "cancelled"), "Task wurde nicht gecancelt")
+        self.assertNotIn("finished", record)
+
+    def test_spoken_stop_word_without_running_task(self):
+        # "Stopp" als Text ohne laufende Aktion: nur der stop-Frame, kein LLM-Aufruf.
+        called = []
+
+        async def fail_process(session_id, text, ws):
+            called.append(text)
+
+        with mock.patch.object(server.assistant_core, "process_message", fail_process):
+            with self._connect() as sock:
+                sock.receive_json()  # health-Frame
+                sock.send_json({"text": "Jarvis, stopp!"})
+                frame = sock.receive_json()
+                self.assertEqual(frame["type"], "stop")
+        self.assertEqual(called, [])
+
+    def test_stop_clears_pending_confirmation(self):
+        import actions as actions_mod
+
+        async def idle_process(session_id, text, ws):
+            pass
+
+        with mock.patch.object(server.assistant_core, "process_message", idle_process):
+            with self._connect() as sock:
+                sock.receive_json()  # health-Frame
+                # pending_confirm der Session simulieren (Session-ID kennt nur der
+                # Server) — daher global fuer alle Sessions setzen und pruefen,
+                # dass Stopp sie leert.
+                server.assistant_core.pending_confirm["dummy-check"] = actions_mod.Action("SEARCH", "x")
+                sock.send_json({"type": "stop"})
+                sock.receive_json()  # stop-Frame
+        # Die eigene Session wurde geleert; fremde Eintraege bleiben unberuehrt.
+        self.assertIn("dummy-check", server.assistant_core.pending_confirm)
+        server.assistant_core.pending_confirm.pop("dummy-check", None)
 
 
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")

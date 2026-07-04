@@ -118,19 +118,68 @@ async def websocket_endpoint(ws: WebSocket):
     # Startup-Warnungen ans Status-Center melden.
     await ws.send_json({"type": "health", "warnings": STARTUP_WARNINGS})
 
+    # Nachrichten laufen als Task neben der Receive-Loop — so kommt ein "Stopp"
+    # auch WÄHREND einer langen Aktion (z.B. 3-Minuten-Recherche) durch.
+    # Ein Worker arbeitet die Queue strikt sequenziell ab (wie bisher).
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    current: dict = {"task": None}
+
+    async def worker():
+        while True:
+            text = await queue.get()
+            task = asyncio.create_task(assistant_core.process_message(session_id, text, ws))
+            current["task"] = task
+            try:
+                await task
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    # Der Worker selbst wurde beendet (Disconnect) — Task mitnehmen.
+                    task.cancel()
+                    raise
+                # Task wurde per "Stopp" abgebrochen — weiter mit der naechsten Nachricht.
+            except Exception:
+                # Unerwartete Fehler beenden nie die Verbindung.
+                logger.exception("Nachrichtenverarbeitung fehlgeschlagen")
+                try:
+                    await assistant_core.send_error(ws, "llm", "Interner Fehler bei der Verarbeitung.")
+                except Exception:
+                    pass
+            finally:
+                current["task"] = None
+
+    worker_task = asyncio.create_task(worker())
+
     try:
         while True:
             data = await ws.receive_json()
             user_text = data.get("text", "").strip()
+
+            # Stopp: laufende Verarbeitung/Aktion abbrechen, Queue leeren,
+            # Frontend stoppt die Audio-Wiedergabe (Frame type=stop).
+            if data.get("type") == "stop" or actions.is_stop_command(user_text):
+                task = current["task"]
+                was_busy = task is not None and not task.done()
+                if was_busy:
+                    task.cancel()
+                while not queue.empty():
+                    queue.get_nowait()
+                assistant_core.pending_confirm.pop(session_id, None)
+                logger.info("Stopp empfangen (Task aktiv: %s)", was_busy)
+                await ws.send_json({"type": "stop"})
+                if was_busy:
+                    await ws.send_json({"type": "response", "text": "Okay, gestoppt.", "audio": ""})
+                continue
+
             if not user_text:
                 continue
 
             logger.debug("You: %s", user_text)
-            await assistant_core.process_message(session_id, user_text, ws)
+            await queue.put(user_text)
 
     except WebSocketDisconnect:
         pass
     finally:
+        worker_task.cancel()
         ws_clients.discard(ws)
         assistant_core.end_session(session_id)
 
