@@ -208,6 +208,43 @@ class IsConfirmationTests(unittest.TestCase):
         self.assertIsNone(is_confirmation("Ich habe mich gefragt ob das damals ja so richtig war"))
 
 
+class ActionRegistryTests(unittest.TestCase):
+    """Konsistenz der zentralen Registry (actions.REGISTRY)."""
+
+    def test_every_action_has_label_and_positive_timeout(self):
+        for action_type, spec in actions.REGISTRY.items():
+            with self.subTest(action_type=action_type):
+                self.assertEqual(spec.type, action_type)
+                self.assertTrue(spec.label.strip())
+                self.assertGreater(spec.timeout, 0)
+                self.assertGreater(spec.summary_max_tokens, 0)
+                self.assertIn(spec.payload, ("required", "optional", "none"))
+                self.assertIn(spec.risk, ("low", "confirm"))
+
+    def test_derived_views_match_registry(self):
+        self.assertEqual(actions.ALLOWED_ACTIONS, frozenset(actions.REGISTRY))
+        self.assertEqual(
+            actions.PAYLOAD_ACTIONS | actions.NO_PAYLOAD_ACTIONS | actions.OPTIONAL_PAYLOAD_ACTIONS,
+            actions.ALLOWED_ACTIONS,
+        )
+        # URL-Aktionen brauchen zwingend einen Payload.
+        self.assertTrue(actions.URL_ACTIONS <= actions.PAYLOAD_ACTIONS)
+        # Confirm-Aktionen kommen ausschliesslich aus risk="confirm".
+        for action_type in actions.CONFIRM_ACTIONS:
+            self.assertEqual(actions.REGISTRY[action_type].risk, "confirm")
+
+    def test_spec_and_label_lookup(self):
+        self.assertEqual(actions.spec_for("RESEARCH").timeout, 180)
+        self.assertEqual(actions.label_for("SEARCH"), "Websuche")
+        # Unbekannter Typ faellt aufs Typ-Kuerzel zurueck (Anzeige darf nie crashen).
+        self.assertEqual(actions.label_for("UNBEKANNT"), "UNBEKANNT")
+
+    def test_unknown_action_not_executable(self):
+        _, action, err = parse_action("[ACTION:SHUTDOWN] jetzt")
+        self.assertIsNone(action)
+        self.assertIsNotNone(err)
+
+
 class IsAllowedOriginTests(unittest.TestCase):
     def test_localhost_allowed(self):
         self.assertTrue(is_allowed_origin("http://localhost:8340"))

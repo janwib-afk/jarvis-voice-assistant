@@ -392,60 +392,11 @@ async def send_spoken_response(ws: WebSocket, text: str, display_text: str | Non
         await send_error(ws, "tts", "Sprachausgabe fehlgeschlagen — Antwort wird nur als Text angezeigt.", tts_err)
 
 
-ACTION_LABELS = {
-    "SEARCH": "Websuche",
-    "BROWSE": "Seite lesen",
-    "OPEN": "Browser öffnen",
-    "SCREEN": "Bildschirm ansehen",
-    "NEWS": "Nachrichten",
-    "INBOX_READ": "Inbox lesen",
-    "INBOX_WRITE": "Inbox-Eintrag",
-    "RESEARCH": "Recherche",
-    "CLIPBOARD": "Zwischenablage",
-    "CLIPBOARD_NOTE": "Clipboard-Notiz",
-    "NOTES_RECENT": "Letzte Notizen",
-    "SESSION_SUMMARY": "Sitzungsfazit",
-}
-
-BROWSER_ACTIONS = {"SEARCH", "BROWSE", "OPEN", "NEWS", "RESEARCH"}
-
-# Gesamt-Timeout pro Aktion (Sekunden) — Recherche liest mehrere Seiten.
-ACTION_TIMEOUTS = {"RESEARCH": 180}
-DEFAULT_ACTION_TIMEOUT = 60
-
-# Aktionsspezifische Aufgaben für den Zusammenfassungs-Schritt; Default bleibt
-# die generische Kurz-Zusammenfassung.
-SUMMARY_TASKS = {
-    "INBOX_READ": (
-        "Gib einen kurzen, strukturierten Tagesrueckblick ueber die heutigen Notizen: "
-        "gruppiere nach Kategorie (Idee, Aufgabe, Termin, Recherche, Erinnerung, Notiz) "
-        "und fasse knapp zusammen. Maximal 5 Saetze."
-    ),
-    "NOTES_RECENT": (
-        "Fasse die zuletzt bearbeiteten Notizen kurz zusammen und nenne dabei die "
-        "Notiznamen, damit klar ist woran zuletzt gearbeitet wurde. Maximal 5 Saetze."
-    ),
-    "RESEARCH": (
-        "Fasse die Rechercheergebnisse aus den Quellen zu einer praezisen Antwort "
-        "zusammen. Maximal 5 Saetze. Nenne KEINE URLs im Text."
-    ),
-    "CLIPBOARD": (
-        "Fuehre den genannten Auftrag auf dem Inhalt der Zwischenablage aus. "
-        "Antworte kurz und praezise."
-    ),
-    "SESSION_SUMMARY": (
-        "Fasse kurz zusammen, was in dieser Sitzung besprochen und erledigt wurde. "
-        "Maximal 5 Saetze."
-    ),
-}
-DEFAULT_SUMMARY_TASK = "Fasse die folgenden Informationen KURZ zusammen, maximal 3 Saetze."
-
-SUMMARY_MAX_TOKENS = {"RESEARCH": 350, "SESSION_SUMMARY": 350, "INBOX_READ": 350, "NOTES_RECENT": 350}
-DEFAULT_SUMMARY_MAX_TOKENS = 250
+# Labels, Timeouts, Summary-Aufgaben usw. liegen zentral in actions.REGISTRY.
 
 
 def summary_system_prompt(action_type: str) -> str:
-    task = SUMMARY_TASKS.get(action_type, DEFAULT_SUMMARY_TASK)
+    task = actions.spec_for(action_type).summary_task or actions.DEFAULT_SUMMARY_TASK
     return (
         f"Du bist Jarvis. {task} Antworte auf Deutsch im Jarvis-Stil: freundlich, "
         f"direkt und professionell, wie ein kompetenter Kollege auf Augenhoehe. "
@@ -461,7 +412,7 @@ async def send_action_event(ws: WebSocket, phase: str, action_type: str, detail:
         "type": "action",
         "phase": phase,
         "action": action_type,
-        "label": ACTION_LABELS.get(action_type, action_type),
+        "label": actions.label_for(action_type),
         "detail": detail,
         "ts": time.time(),
     })
@@ -639,20 +590,19 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws: We
     if action.type == "SCREEN":
         await send_spoken_response(ws, "Ich werfe kurz einen Blick auf deinen Bildschirm.")
 
+    spec = actions.spec_for(action.type)
     await send_action_event(ws, "start", action.type, (action.payload or "")[:80])
     try:
         # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
-        timeout = ACTION_TIMEOUTS.get(action.type, DEFAULT_ACTION_TIMEOUT)
-        action_result = await asyncio.wait_for(execute_action(action, session_id), timeout=timeout)
+        action_result = await asyncio.wait_for(execute_action(action, session_id), timeout=spec.timeout)
         logger.info("Action %s lieferte %d Zeichen", action.type, len(action_result))
         logger.debug("Action-Ergebnis: %s", action_result)
         await send_action_event(ws, "done", action.type)
     except Exception as e:
         logger.warning("Action %s fehlgeschlagen", action.type, exc_info=True)
-        label = ACTION_LABELS.get(action.type, action.type)
-        component = "browser" if action.type in BROWSER_ACTIONS else "action"
+        component = "browser" if spec.is_browser else "action"
         await send_action_event(ws, "error", action.type, type(e).__name__)
-        await send_error(ws, component, f"Aktion '{label}' fehlgeschlagen.", type(e).__name__)
+        await send_error(ws, component, f"Aktion '{spec.label}' fehlgeschlagen.", type(e).__name__)
         action_result = f"Fehler: {e}"
 
     if action.type == "OPEN":
@@ -665,7 +615,7 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws: We
         try:
             summary_resp = await ai.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=SUMMARY_MAX_TOKENS.get(action.type, DEFAULT_SUMMARY_MAX_TOKENS),
+                max_tokens=spec.summary_max_tokens,
                 system=summary_system_prompt(action.type),
                 messages=[{"role": "user", "content": action_result}],
             )
@@ -743,7 +693,7 @@ async def process_message(session_id: str, user_text: str, ws: WebSocket):
         if action.type in actions.CONFIRM_ACTIONS:
             # Riskante Aktion: erst merken und mündlich rückfragen.
             pending_confirm[session_id] = action
-            label = ACTION_LABELS.get(action.type, action.type)
+            label = actions.label_for(action.type)
             detail = f" ({action.payload[:60]})" if action.payload else ""
             frage = f"Soll ich das wirklich ausführen: {label}{detail}? Ja oder Nein, {USER_ADDRESS}."
             conversations[session_id].append({"role": "assistant", "content": frage})

@@ -14,21 +14,102 @@ from urllib.parse import urlparse
 # Gleiche Regex wie bisher: [ACTION:TYP] optionaler payload bis Zeilenende.
 ACTION_PATTERN = re.compile(r'\[ACTION:(\w+)\]\s*(.*?)$', re.DOTALL | re.MULTILINE)
 
-# Aktionen mit freiem Text-Payload (Pflicht)
-PAYLOAD_ACTIONS = frozenset({"SEARCH", "BROWSE", "OPEN", "INBOX_WRITE", "RESEARCH"})
-# Aktionen ohne Payload (etwaiger Resttext wird verworfen)
-NO_PAYLOAD_ACTIONS = frozenset({"NEWS", "INBOX_READ", "CLIPBOARD_NOTE", "NOTES_RECENT", "SESSION_SUMMARY"})
-# Aktionen mit optionalem Payload (SCREEN: Kontextfrage, CLIPBOARD: Auftrag)
-OPTIONAL_PAYLOAD_ACTIONS = frozenset({"SCREEN", "CLIPBOARD"})
-# Aktionen, deren Payload eine gueltige http(s)-URL sein muss
-URL_ACTIONS = frozenset({"OPEN", "BROWSE"})
 
-ALLOWED_ACTIONS = PAYLOAD_ACTIONS | NO_PAYLOAD_ACTIONS | OPTIONAL_PAYLOAD_ACTIONS
+@dataclass(frozen=True)
+class ActionSpec:
+    """Alle Metadaten einer Aktion an einer Stelle (Registry-Eintrag).
+
+    - ``payload``: "required" | "optional" | "none"
+    - ``is_url``: Payload muss eine gueltige http(s)-URL sein
+    - ``risk``: "low" | "confirm" — confirm-Aktionen brauchen ein muendliches Ja
+    - ``timeout``: Gesamt-Cap in Sekunden fuer die Ausfuehrung
+    - ``is_browser``: Fehler werden dem Frontend als Browser-Problem gemeldet
+    - ``summary_task``: aktionsspezifische Aufgabe fuer den Zusammenfassungs-Schritt
+      (None = generische Kurz-Zusammenfassung)
+    """
+    type: str
+    label: str
+    payload: str = "required"
+    is_url: bool = False
+    risk: str = "low"
+    timeout: int = 60
+    is_browser: bool = False
+    summary_task: str | None = None
+    summary_max_tokens: int = 250
+
+
+DEFAULT_SUMMARY_TASK = "Fasse die folgenden Informationen KURZ zusammen, maximal 3 Saetze."
+
+# Zentrale Registry: nur hier eingetragene Aktionen werden geparst/ausgefuehrt.
+REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
+    ActionSpec("SEARCH", "Websuche", is_browser=True),
+    ActionSpec("BROWSE", "Seite lesen", is_url=True, is_browser=True),
+    ActionSpec("OPEN", "Browser öffnen", is_url=True, is_browser=True),
+    ActionSpec("SCREEN", "Bildschirm ansehen", payload="optional"),
+    ActionSpec("NEWS", "Nachrichten", payload="none", is_browser=True),
+    ActionSpec(
+        "INBOX_READ", "Inbox lesen", payload="none", summary_max_tokens=350,
+        summary_task=(
+            "Gib einen kurzen, strukturierten Tagesrueckblick ueber die heutigen Notizen: "
+            "gruppiere nach Kategorie (Idee, Aufgabe, Termin, Recherche, Erinnerung, Notiz) "
+            "und fasse knapp zusammen. Maximal 5 Saetze."
+        ),
+    ),
+    ActionSpec("INBOX_WRITE", "Inbox-Eintrag"),
+    ActionSpec(
+        "RESEARCH", "Recherche", is_browser=True, timeout=180, summary_max_tokens=350,
+        summary_task=(
+            "Fasse die Rechercheergebnisse aus den Quellen zu einer praezisen Antwort "
+            "zusammen. Maximal 5 Saetze. Nenne KEINE URLs im Text."
+        ),
+    ),
+    ActionSpec(
+        "CLIPBOARD", "Zwischenablage", payload="optional",
+        summary_task=(
+            "Fuehre den genannten Auftrag auf dem Inhalt der Zwischenablage aus. "
+            "Antworte kurz und praezise."
+        ),
+    ),
+    ActionSpec("CLIPBOARD_NOTE", "Clipboard-Notiz", payload="none"),
+    ActionSpec(
+        "NOTES_RECENT", "Letzte Notizen", payload="none", summary_max_tokens=350,
+        summary_task=(
+            "Fasse die zuletzt bearbeiteten Notizen kurz zusammen und nenne dabei die "
+            "Notiznamen, damit klar ist woran zuletzt gearbeitet wurde. Maximal 5 Saetze."
+        ),
+    ),
+    ActionSpec(
+        "SESSION_SUMMARY", "Sitzungsfazit", payload="none", summary_max_tokens=350,
+        summary_task=(
+            "Fasse kurz zusammen, was in dieser Sitzung besprochen und erledigt wurde. "
+            "Maximal 5 Saetze."
+        ),
+    ),
+)}
+
+# Abgeleitete Views — bestehende Aufrufer/Tests arbeiten weiter mit Sets.
+ALLOWED_ACTIONS = frozenset(REGISTRY)
+PAYLOAD_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.payload == "required")
+NO_PAYLOAD_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.payload == "none")
+OPTIONAL_PAYLOAD_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.payload == "optional")
+URL_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.is_url)
+BROWSER_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.is_browser)
 
 # Aktionen, die erst nach muendlicher Bestaetigung ausgefuehrt werden.
-# Aktuell leer — kuenftige riskante Aktionen (Loeschen, Dateien, Systembefehle)
-# werden hier eingetragen und sind damit automatisch abgesichert.
-CONFIRM_ACTIONS = frozenset()
+# Aktuell leer — kuenftige riskante Aktionen bekommen risk="confirm" in der
+# Registry und sind damit automatisch abgesichert.
+CONFIRM_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.risk == "confirm")
+
+
+def spec_for(action_type: str) -> ActionSpec:
+    """Registry-Eintrag einer (bereits validierten) Aktion."""
+    return REGISTRY[action_type]
+
+
+def label_for(action_type: str) -> str:
+    """Anzeige-Label; unbekannte Typen fallen auf den Typnamen zurueck."""
+    spec = REGISTRY.get(action_type)
+    return spec.label if spec else action_type
 
 # Kategorien fuer Inbox-Eintraege; unbekannte/fehlende Kategorie => "Notiz".
 INBOX_CATEGORIES = ("Idee", "Aufgabe", "Termin", "Recherche", "Erinnerung")
