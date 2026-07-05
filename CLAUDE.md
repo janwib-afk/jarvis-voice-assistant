@@ -33,10 +33,14 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 ├── config.json            # Persoenliche Config (gitignored)
 ├── config.example.json    # Template mit Platzhaltern
 ├── requirements.txt       # Python Dependencies
-├── server.py              # FastAPI Backend (Claude Haiku + ElevenLabs TTS + Settings-API)
+├── server.py              # FastAPI: Routen, WS-Endpoint (Origin/Token, Stopp-Handling), Settings-API
+├── assistant_core.py      # Gespraechsfluss: System-Prompt, LLM-Calls, Verlauf, Action-Ausfuehrung
 ├── config_loader.py       # Config laden/validieren/speichern (Settings-Whitelist)
-├── actions.py             # Action-Tag-Parsing + URL/Origin-Policies + Inbox-Kategorien
-├── browser_tools.py       # Playwright Browser-Steuerung (Suche, Recherche-Quellen)
+├── actions.py             # Action-Registry (ActionSpec) + Parsing + URL/Origin-Policies + Stop-Woerter
+├── tts.py                 # ElevenLabs-TTS (Chunking, Retries) — pur und testbar
+├── memory.py              # Tages-Inbox, Vault-Helfer + Langzeit-Gedaechtnis ("Jarvis Memory.md")
+├── health.py              # /health-Report (Key-/Browser-/Vault-Checks, passiv)
+├── browser_tools.py       # Playwright Browser-Steuerung + HTML-Fallback fuer Quellensuche
 ├── screen_capture.py      # Screenshot + Claude Vision (optionale Kontextfrage)
 ├── clipboard_tools.py     # Windows-Zwischenablage lesen (PowerShell Get-Clipboard)
 ├── jarvis-launcher.pyw    # Natives pywebview-Fenster + Tray + Panel-/Fokus-Modus

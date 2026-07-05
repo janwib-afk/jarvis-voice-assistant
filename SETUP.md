@@ -68,7 +68,7 @@ Claude Code erstellt `config.json` aus `config.example.json` mit deinen echten D
 Eine deutsche Stimme auswaehlen und die Voice ID in die Config eintragen. Empfehlung: **Felix Serenitas** (Starter Plan noetig) oder eine der Standard-Stimmen (Free Plan).
 
 ### 4. Systemprompt
-Der Systemprompt wird in `server.py` automatisch aus der Config generiert. Er enthaelt:
+Der Systemprompt wird in `assistant_core.py` (`build_system_prompt`) automatisch aus der Config generiert. Er enthaelt:
 - Jarvis-Persoenlichkeit (kompetenter Kollege auf Augenhoehe: freundlich, direkt, professionell)
 - Duzen mit gewaehlter Anrede
 - Wetter- und Aufgaben-Integration
@@ -170,7 +170,7 @@ Erstelle `config.json` aus `config.example.json` mit den Nutzerdaten. Setze den 
 - Trage die Voice ID in die Config ein
 
 **Schritt 4 — Persona konfigurieren:**
-Der Systemprompt in `server.py` liest Name, Taetigkeit, Anrede und Stadt automatisch aus der Config — es muss NICHTS mehr im Code ersetzt werden. Trage stattdessen in `config.json` ein:
+Der Systemprompt in `assistant_core.py` liest Name, Taetigkeit, Anrede und Stadt automatisch aus der Config — es muss NICHTS mehr im Code ersetzt werden. Trage stattdessen in `config.json` ein:
 - `user_name` → Name des Nutzers
 - `user_role` → Taetigkeit/Rolle des Nutzers (z.B. "KI-Berater und Automatisierungsexperte")
 - `user_address` → gewuenschte Anrede (z.B. Vorname oder "Chef")

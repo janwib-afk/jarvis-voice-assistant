@@ -161,6 +161,10 @@ Clap twice → VS Code opens, Obsidian opens, Chrome opens with Jarvis. All wind
 | *"Open skool.com"* | Opens the URL in your browser |
 | *"What's on my screen?"* | Takes screenshot, describes what he sees |
 | *"What's happening in the world?"* | Opens worldmonitor.app, summarizes global news |
+| *"Recherchiere zu …"* | Reads 3–5 sources, speaks a summary, lists sources in the transcript |
+| *"Notiere: …"* | Writes a categorized entry into today's Obsidian Brain Dump |
+| *"Merk dir dauerhaft: …"* | Saves to `Jarvis Memory.md` — a plain Markdown file you can edit anytime |
+| *"Stopp"* (or Esc / stop button) | Immediately stops speech and cancels a running action |
 | *Any question* | Jarvis answers like a friendly, direct colleague |
 
 ---
@@ -169,18 +173,27 @@ Clap twice → VS Code opens, Obsidian opens, Chrome opens with Jarvis. All wind
 
 ```
 jarvis-voice-assistant/
-├── server.py              # FastAPI backend — the brain
-├── browser_tools.py       # Playwright browser automation
+├── server.py              # FastAPI layer — routes, WebSocket, settings API
+├── assistant_core.py      # The brain — system prompt, LLM calls, actions
+├── actions.py             # Action registry + parsing + safety policies
+├── tts.py                 # ElevenLabs text-to-speech
+├── memory.py              # Obsidian inbox/vault + long-term memory file
+├── health.py              # /health diagnostics
+├── browser_tools.py       # Playwright browser automation + HTML search fallback
 ├── screen_capture.py      # Screenshot + Claude Vision
+├── clipboard_tools.py     # Windows clipboard access
 ├── config.json            # Your personal config (gitignored)
 ├── config.example.json    # Template for new users
 ├── requirements.txt       # Python dependencies
 ├── frontend/
 │   ├── index.html         # Jarvis web UI
-│   ├── main.js            # Speech recognition + WebSocket + audio
+│   ├── main.js            # Speech recognition + WebSocket + audio + stop
+│   ├── settings.js        # Settings overlay
 │   └── style.css          # Dark theme with animated orb
+├── tests/                 # unittest suite (python -m unittest discover -s tests)
 ├── scripts/
 │   ├── clap-trigger.py    # Double-clap detection
+│   ├── smoke-test.py      # One-command health check
 │   └── launch-session.ps1 # Launches all apps + window snapping
 ├── CLAUDE.md              # Instructions for Claude Code
 └── SETUP.md               # Detailed setup guide
@@ -191,7 +204,7 @@ jarvis-voice-assistant/
 ## Customization
 
 ### Change Jarvis's personality
-Edit the system prompt in `server.py` → `build_system_prompt()`. The personality, greeting behavior, and action instructions are all defined there.
+Edit the system prompt in `assistant_core.py` → `build_system_prompt()`. The personality, greeting behavior, and action instructions are all defined there. Name, role, and how Jarvis addresses you come from `config.json` (editable in the settings UI).
 
 ### Change which apps launch
 Edit `config.json`:
@@ -226,6 +239,17 @@ MAX_GAP = 1.2     # Seconds between claps
 
 ---
 
+## Memory & Privacy
+
+Everything runs locally; only Claude (thinking/vision) and ElevenLabs (voice) receive data over the network.
+
+- **Daily notes** go into today's *Brain Dump* file in your Obsidian inbox (`[ACTION:INBOX_WRITE]`).
+- **Long-term memory** lives in `Jarvis Memory.md` in your vault (or `memory.md` in the workspace if no vault is configured). Jarvis writes to it **only when you explicitly ask** ("Merk dir dauerhaft …"). It's plain Markdown — read, edit, or delete it anytime; its content is shown to the model as part of the system prompt.
+- **Session history** is kept in memory only (capped) and discarded on disconnect.
+- **API keys** never leave `config.json` — the settings API refuses to read or write them.
+
+---
+
 ## Troubleshooting
 
 | Problem | Solution |
@@ -235,7 +259,9 @@ MAX_GAP = 1.2     # Seconds between claps
 | Clap not detected | Lower `THRESHOLD` in `clap-trigger.py` (try 0.10) |
 | Browser search fails | Run `playwright install chromium` |
 | No audio in Chrome | Click anywhere on the page first (Chrome autoplay policy) |
-| Jarvis uses the wrong name or tone | Adjust `user_address` in `config.json` or the persona in `server.py` (`build_system_prompt`) |
+| Jarvis uses the wrong name or tone | Adjust `user_address` in `config.json` or the persona in `assistant_core.py` (`build_system_prompt`) |
+| Jarvis won't stop talking | Say *"Stopp"*, press **Esc**, or click the stop button — this also cancels a running action |
+| Research finds no sources | Research falls back to DuckDuckGo's HTML endpoint if the browser fails — check your internet connection and run `python scripts/smoke-test.py` |
 
 ---
 
