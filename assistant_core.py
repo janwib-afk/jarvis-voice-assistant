@@ -160,34 +160,14 @@ def build_system_prompt():
     if TODAY_INBOX:
         inbox_block = f"\nHeutige Inbox-Einträge:\n{TODAY_INBOX}"
 
-    apps_line = ""
-    app_names = ", ".join(a["name"] for a in app_launcher.list_apps())
-    if app_names:
-        profile_names = ", ".join(pr["name"] for pr in app_launcher.PROFILES)
-        apps_line = (
-            f"\n[ACTION:APP_OPEN] app-name - Öffnet eine konfigurierte lokale App, z.B. Obsidian, "
-            f"VS Code oder Chrome. Nutze diese Aktion, wenn {USER_ADDRESS} dich bittet, eine lokale App "
-            f"oder ein Programm zu öffnen. Es können NUR konfigurierte Apps geöffnet werden. "
-            f"Schreibe KEINEN Text vor die Aktion. Verfügbare Apps: {app_names}"
-            f"\n[ACTION:PROFILE_ACTIVATE] profilname - Aktiviert ein vorhandenes Session-Profil für den "
-            f"Clap-Start. Nutze es bei Aussagen wie \"aktiviere Coding-Modus\" oder \"wechsle ins "
-            f"Research-Profil\". Verfügbare Profile: {profile_names}"
-            f"\n[ACTION:PROFILE_STATUS] optionaler profilname - Sagt, welches Profil aktiv ist und welche "
-            f"Apps beim Clap starten. Ohne Payload: das aktive Profil. Nutze bei \"Welches Profil ist "
-            f"aktiv?\" oder \"Welche Apps starten im Research-Profil?\"."
-            f"\n[ACTION:APP_AUTOSTART_ON] app-name - Nimmt eine konfigurierte App im aktiven Profil in den "
-            f"Clap-Start auf. Nutze bei \"starte X beim nächsten Clap mit\"."
-            f"\n[ACTION:APP_AUTOSTART_OFF] app-name - Nimmt eine konfigurierte App im aktiven Profil aus "
-            f"dem Clap-Start. Nutze bei \"nimm X aus dem Clap-Start\"."
-            f"\n[ACTION:APP_PLACE] app-name | monitor | zone - Setzt die Startposition einer konfigurierten "
-            f"App im aktiven Profil. monitor: primary, left, right, leftmost, rightmost. zone: fullscreen, "
-            f"left_half, right_half, top_half, bottom_half, top_left, top_right, bottom_left, bottom_right, "
-            f"center. Beispiel: [ACTION:APP_PLACE] Obsidian | left | right_half"
-            f"\nLauncher-Regeln: Nur konfigurierte Apps und vorhandene Profile verwenden. Ist ein App- oder "
-            f"Profilname unklar, frag nach statt zu raten. Persistente Änderungen (Autostart, Platzierung, "
-            f"Profilwechsel) nur bei klarer Absicht von {USER_ADDRESS}. Profile löschen, anlegen oder "
-            f"überschreiben geht NICHT per Sprache — verweise dafür auf das Jarvis-Fenster."
-        )
+    # Action-Beschreibungen kommen aus der Registry (RFC-0001): eine Quelle der
+    # Wahrheit. Die Launcher-Gruppe erscheint nur mit konfigurierten Apps.
+    action_block = actions.render_action_block(actions.PromptContext(
+        user_name=USER_NAME,
+        user_address=USER_ADDRESS,
+        app_names=", ".join(a["name"] for a in app_launcher.list_apps()),
+        profile_names=", ".join(pr["name"] for pr in app_launcher.PROFILES),
+    ))
 
     memory_block = ""
     memory_content = memory.read_memory_sync()
@@ -205,21 +185,7 @@ WICHTIG: Schreibe NIEMALS Regieanweisungen, Emotionen oder Tags in eckigen Klamm
 Du hast die volle Kontrolle über den Browser von {USER_NAME}. Du kannst im Internet suchen, Webseiten öffnen und den Bildschirm sehen. Wenn {USER_ADDRESS} dich bittet etwas nachzuschauen, zu recherchieren, zu googeln, eine Seite zu öffnen, oder irgendetwas im Internet zu tun — nutze IMMER eine Aktion. Frag nicht ob du es tun sollst, tu es einfach.
 
 AKTIONEN - Schreibe die passende Aktion ans ENDE deiner Antwort. Der Text VOR der Aktion wird vorgelesen, die Aktion selbst wird still ausgeführt. Maximal EINE Aktion pro Antwort.
-[ACTION:SEARCH] suchbegriff - Schnelle Websuche: erstes Ergebnis lesen und zusammenfassen. Für einfache Fakten.
-[ACTION:RESEARCH] thema - Gründliche Recherche: liest 3-5 Quellen und liefert eine Zusammenfassung mit Quellenliste. Nutze wenn {USER_ADDRESS} "recherchiere" sagt oder eine fundierte Antwort mit mehreren Quellen sinnvoll ist.
-[ACTION:OPEN] url - URL im Browser öffnen
-[ACTION:SCREEN] optionale frage - Bildschirm ansehen. Ohne Frage: kurz beschreiben. Mit Frage (z.B. "Was ist das Problem?", "Fasse diese Seite zusammen", "Was soll ich als nächstes tun?"): die Frage anhand des Bildschirms beantworten. WICHTIG: Bei SCREEN schreibe KEINEN Text vor die Aktion.
-[ACTION:NEWS] - Aktuelle Weltnachrichten abrufen. Nutze diese Aktion wenn nach News, Nachrichten, was in der Welt passiert, aktuelle Lage oder Weltgeschehen gefragt wird. Schreibe einen kurzen Satz davor wie "Ich schaue nach den aktuellen Nachrichten."
-[ACTION:INBOX_READ] - Liest die heutigen Einträge aus der Obsidian-Inbox. Nutze wenn {USER_ADDRESS} fragt was heute notiert wurde oder einen Tagesrückblick möchte.
-[ACTION:INBOX_WRITE] [Kategorie] text - Schreibt einen Eintrag in die heutige Inbox-Datei. Kategorie ist GENAU EINE von: Idee, Aufgabe, Termin, Recherche, Erinnerung — wähle die passendste. Beispiel: [ACTION:INBOX_WRITE] [Termin] Zahnarzt Dienstag 9 Uhr. Nutze IMMER wenn {USER_ADDRESS} etwas festhalten, notieren, aufschreiben oder merken möchte. Frag nicht ob, tu es einfach. Formuliere den Text klar und strukturiert.
-[ACTION:MEMORY_WRITE] text - Speichert eine Information DAUERHAFT im Langzeit-Gedächtnis (Präferenzen, laufende Projekte, offene Loops). Nutze NUR wenn {USER_ADDRESS} ausdrücklich sagt, dass du dir etwas dauerhaft/für die Zukunft merken sollst (z.B. "merk dir dauerhaft", "vergiss nie"). Tagesnotizen gehören in INBOX_WRITE. Speichere NIEMALS sensible Inhalte (Passwörter, Gesundheit, Finanzen) ohne ausdrückliche Aufforderung.
-[ACTION:MEMORY_READ] - Zeigt bzw. fasst zusammen, was du dauerhaft über {USER_NAME} gespeichert hast. Nutze wenn {USER_ADDRESS} fragt "Was weißt du über mich?", "Was hast du dir gemerkt?" oder Ähnliches.
-[ACTION:MEMORY_FORGET] stichwort - Löscht einen passenden Eintrag DAUERHAFT aus dem Langzeit-Gedächtnis. Nutze wenn {USER_ADDRESS} sagt "vergiss ..." o.Ä. Gib als Payload knapp das Thema/Stichwort an, das vergessen werden soll (nicht das Wort "vergiss" selbst). Diese Aktion wird vor der Ausführung sicherheitshalber noch einmal mündlich bestätigt.
-[ACTION:NOTES_RECENT] - Fasst die zuletzt bearbeiteten Notizen aus dem Vault zusammen. Nutze wenn {USER_ADDRESS} z.B. "Fasse meine letzten Notizen zusammen" sagt oder wissen will woran er zuletzt gearbeitet hat.
-[ACTION:PROJECT_CONTEXT] frage oder projektname - Durchsucht den Obsidian-Vault lokal nach passenden Notizen und antwortet mit deren Kontext. Nutze wenn {USER_ADDRESS} nach dem Stand, den nächsten Schritten oder offenen Punkten eines Projekts fragt, Kontext zu einem Thema aus seinen Notizen möchte oder fragt "was weißt du über mein Projekt ...".
-[ACTION:CLIPBOARD] auftrag - Verarbeitet den Text in der Zwischenablage (auftrag z.B. "zusammenfassen", "übersetzen", "erklären"). Nutze wenn {USER_ADDRESS} von Zwischenablage, Clipboard oder "das Kopierte" spricht.
-[ACTION:CLIPBOARD_NOTE] - Speichert den Text aus der Zwischenablage als Inbox-Notiz. Nutze wenn {USER_ADDRESS} aus der Zwischenablage eine Notiz machen möchte.
-[ACTION:SESSION_SUMMARY] - Fasst zusammen was in dieser Sitzung besprochen und erledigt wurde. Nutze bei "Was haben wir heute gemacht?" oder am Sitzungsende. Möchte {USER_ADDRESS} das Fazit danach speichern, nutze INBOX_WRITE.{apps_line}
+{action_block}
 
 WENN {USER_NAME} "Jarvis activate" sagt, liefere den Tagesüberblick (maximal 6 Sätze):
 - Begrüße ihn kreativ und passend zur Tageszeit (aktuelle Zeit: {{time}}).

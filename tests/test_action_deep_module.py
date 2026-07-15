@@ -23,6 +23,7 @@ import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
 
 import actions
 import app_launcher
+import assistant_core
 import browser_tools
 import clipboard_tools
 import memory
@@ -544,3 +545,166 @@ class ClipboardNoteActionTests(_TempVaultTestCase):
         self.assertEqual(result, "Die Zwischenablage ist leer oder enthält keinen Text.")
         datei = os.path.join(self.inbox, time.strftime("%Y-%m-%d") + " Brain Dump.md")
         self.assertFalse(os.path.exists(datei))
+
+
+# ── Selbstbeschreibung / Prompt-Block (Slice P) ─────────────────────────────
+
+GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "prompt_golden")
+
+# Der Action-Block liegt im System-Prompt zwischen diesen beiden Ankern.
+_BLOCK_START = "Maximal EINE Aktion pro Antwort.\n"
+_BLOCK_END = "\n\nWENN "
+
+
+def golden(name: str) -> str:
+    with open(os.path.join(GOLDEN_DIR, name), encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def golden_action_block(name: str) -> str:
+    """Den Action-Block aus dem eingefrorenen Golden schneiden.
+
+    Das Golden wurde VOR der Umstellung aus dem damaligen Verhalten aufgezeichnet
+    und ist damit eine unabhaengige Quelle der Wahrheit — es wird nie automatisch
+    neu erzeugt.
+    """
+    text = golden(name)
+    start = text.index(_BLOCK_START) + len(_BLOCK_START)
+    end = text.index(_BLOCK_END, start)
+    return text[start:end]
+
+
+PROMPT_CTX_WITH_APPS = dict(
+    user_name="Jan", user_address="Jan",
+    app_names="Obsidian, VS Code", profile_names="Coding, Research",
+)
+PROMPT_CTX_WITHOUT_APPS = dict(user_name="Jan", user_address="Jan")
+
+
+class ActionBlockRenderTests(unittest.TestCase):
+    """Der generierte Action-Block ist byte-identisch zum eingefrorenen Golden."""
+
+    def test_block_with_apps_is_byte_identical(self):
+        rendered = actions.render_action_block(
+            actions.PromptContext(**PROMPT_CTX_WITH_APPS))
+        self.assertEqual(rendered, golden_action_block("system_prompt_with_apps.txt"))
+
+    def test_block_without_apps_is_byte_identical(self):
+        rendered = actions.render_action_block(
+            actions.PromptContext(**PROMPT_CTX_WITHOUT_APPS))
+        self.assertEqual(rendered, golden_action_block("system_prompt_without_apps.txt"))
+
+    def test_browse_is_not_advertised(self):
+        """BROWSE ist registriert und ausfuehrbar, wird aber bewusst nicht beworben."""
+        self.assertIsNone(actions.spec_for("BROWSE").describe)
+        rendered = actions.render_action_block(
+            actions.PromptContext(**PROMPT_CTX_WITH_APPS))
+        self.assertNotIn("[ACTION:BROWSE]", rendered)
+
+    def test_launcher_actions_only_appear_with_configured_apps(self):
+        without = actions.render_action_block(
+            actions.PromptContext(**PROMPT_CTX_WITHOUT_APPS))
+        for typ in ("APP_OPEN", "PROFILE_ACTIVATE", "PROFILE_STATUS",
+                    "APP_AUTOSTART_ON", "APP_AUTOSTART_OFF", "APP_PLACE"):
+            self.assertNotIn(f"[ACTION:{typ}]", without)
+        self.assertNotIn("Launcher-Regeln:", without)
+
+    def test_advertised_actions_keep_todays_order(self):
+        rendered = actions.render_action_block(
+            actions.PromptContext(**PROMPT_CTX_WITH_APPS))
+        erwartet = ["SEARCH", "RESEARCH", "OPEN", "SCREEN", "NEWS", "INBOX_READ",
+                    "INBOX_WRITE", "MEMORY_WRITE", "MEMORY_READ", "MEMORY_FORGET",
+                    "NOTES_RECENT", "PROJECT_CONTEXT", "CLIPBOARD", "CLIPBOARD_NOTE",
+                    "SESSION_SUMMARY", "APP_OPEN", "PROFILE_ACTIVATE", "PROFILE_STATUS",
+                    "APP_AUTOSTART_ON", "APP_AUTOSTART_OFF", "APP_PLACE"]
+        # Zeilenanfaenge = beworbene Actions (Inline-Beispiele zaehlen nicht).
+        tatsaechlich = [line.split("]")[0][len("[ACTION:"):]
+                        for line in rendered.split("\n")
+                        if line.startswith("[ACTION:")]
+        self.assertEqual(tatsaechlich, erwartet)
+
+
+class SystemPromptGoldenTests(unittest.TestCase):
+    """Der VOLLSTAENDIGE System-Prompt bleibt byte-identisch (beide Varianten).
+
+    Die Goldens wurden vor der Umstellung aufgezeichnet und werden nie
+    automatisch neu erzeugt — sie sind der Schutz gegen unbemerkten Prompt-Drift.
+    """
+
+    APPS = [
+        {"id": "obsidian", "name": "Obsidian", "command": "C:/nirgends/obsidian.exe",
+         "type": "process", "process_name": "obsidian.exe"},
+        {"id": "vscode", "name": "VS Code", "command": "C:/nirgends/code.exe",
+         "type": "process", "process_name": "code.exe"},
+    ]
+    LAUNCHER = {"active_profile": "coding", "profiles": [
+        {"id": "coding", "name": "Coding", "apps": {"obsidian": {"autostart": True}}},
+        {"id": "research", "name": "Research", "apps": {"vscode": {"autostart": True}}},
+    ]}
+
+    def setUp(self):
+        self._apps = (app_launcher.APPS, app_launcher.PROFILES,
+                      app_launcher.ACTIVE_PROFILE)
+        self._paths = (memory.VAULT_PATH, memory.INBOX_PATH)
+        self._core = {n: getattr(assistant_core, n) for n in (
+            "USER_NAME", "USER_ADDRESS", "USER_ROLE", "CITY", "WEATHER_INFO",
+            "TASKS_INFO", "VAULT_SUMMARY", "TODAY_INBOX")}
+        assistant_core.configure({"user_name": "Jan", "user_address": "Jan",
+                                  "user_role": "Produktdesigner", "city": "Hamburg"})
+        assistant_core.WEATHER_INFO = ""
+        assistant_core.TASKS_INFO = []
+        assistant_core.VAULT_SUMMARY = None
+        assistant_core.TODAY_INBOX = None
+        memory.configure(vault_path="", inbox_path="")
+
+    def tearDown(self):
+        for n, v in self._core.items():
+            setattr(assistant_core, n, v)
+        memory.configure(vault_path=self._paths[0], inbox_path=self._paths[1])
+        (app_launcher.APPS, app_launcher.PROFILES,
+         app_launcher.ACTIVE_PROFILE) = self._apps
+
+    def test_system_prompt_with_apps_is_byte_identical(self):
+        app_launcher.configure(self.APPS, self.LAUNCHER)
+        self.assertEqual(assistant_core.build_system_prompt(),
+                         golden("system_prompt_with_apps.txt"))
+
+    def test_system_prompt_without_apps_is_byte_identical(self):
+        app_launcher.configure([], None)
+        self.assertEqual(assistant_core.build_system_prompt(),
+                         golden("system_prompt_without_apps.txt"))
+
+    def test_build_system_prompt_hardcodes_no_single_action(self):
+        """Zweite Beschreibungsquelle ist weg: keine [ACTION:TYP]-Zeile im Code."""
+        import inspect
+        quelle = inspect.getsource(assistant_core.build_system_prompt)
+        self.assertNotIn("[ACTION:", quelle)
+
+
+class RegistryContractTests(unittest.TestCase):
+    """Der dauerhafte Action-Contract: 22 Typen, alle ausfuehrbar."""
+
+    def test_exactly_22_action_types(self):
+        self.assertEqual(len(actions.REGISTRY), 22)
+
+    def test_every_action_is_executable(self):
+        ohne = sorted(t for t, s in actions.REGISTRY.items() if s.execute is None)
+        self.assertEqual(ohne, [], "Jede Registry-Action muss ausfuehrbar sein")
+
+    def test_derived_sets_unchanged(self):
+        self.assertEqual(sorted(actions.CONFIRM_ACTIONS), ["MEMORY_FORGET"])
+        self.assertEqual(sorted(actions.SPEAK_RESULT_ACTIONS), [
+            "APP_AUTOSTART_OFF", "APP_AUTOSTART_ON", "APP_OPEN", "APP_PLACE",
+            "PROFILE_ACTIVATE", "PROFILE_STATUS"])
+        self.assertEqual(sorted(actions.URL_ACTIONS), ["BROWSE", "OPEN"])
+        self.assertEqual(sorted(actions.BROWSER_ACTIONS),
+                         ["BROWSE", "NEWS", "OPEN", "RESEARCH", "SEARCH"])
+
+    def test_cancellation_propagates_through_execute(self):
+        """Stopp muss durch execute durchschlagen (CancelledError nicht schlucken)."""
+        async def _cancelling(*args, **kwargs):
+            raise asyncio.CancelledError()
+
+        with mock.patch.object(browser_tools, "search_and_read", _cancelling):
+            with self.assertRaises(asyncio.CancelledError):
+                execute("SEARCH", "egal")

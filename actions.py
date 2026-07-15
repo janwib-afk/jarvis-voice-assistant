@@ -362,31 +362,186 @@ async def _exec_session_summary(payload: str, ctx: ActionContext) -> str:
     return f"Sitzungsprotokoll:\n{log}"
 
 
+# ── Selbstbeschreibung (RFC-0001 Slice P) ───────────────────────────────────
+# Je Action der Prompt-Absatz, den bisher build_system_prompt hardcodiert hat —
+# Text WOERTLICH uebernommen (byte-genaue Goldens schuetzen das). ``describe=None``
+# heisst: bewusst nicht beworben (BROWSE ist registriert + ausfuehrbar, aber der
+# System-Prompt hat sie noch nie erwaehnt).
+
+# Gemeinsamer Suffix der Launcher-Gruppe — erscheint nur mit konfigurierten Apps.
+def _describe_launcher_rules(c: PromptContext) -> str:
+    return (
+        f"Launcher-Regeln: Nur konfigurierte Apps und vorhandene Profile verwenden. Ist ein App- oder "
+        f"Profilname unklar, frag nach statt zu raten. Persistente Änderungen (Autostart, Platzierung, "
+        f"Profilwechsel) nur bei klarer Absicht von {c.user_address}. Profile löschen, anlegen oder "
+        f"überschreiben geht NICHT per Sprache — verweise dafür auf das Jarvis-Fenster."
+    )
+
+
+def _d_search(c: PromptContext) -> str:
+    return ("[ACTION:SEARCH] suchbegriff - Schnelle Websuche: erstes Ergebnis lesen und "
+            "zusammenfassen. Für einfache Fakten.")
+
+
+def _d_research(c: PromptContext) -> str:
+    return (f"[ACTION:RESEARCH] thema - Gründliche Recherche: liest 3-5 Quellen und liefert eine "
+            f"Zusammenfassung mit Quellenliste. Nutze wenn {c.user_address} \"recherchiere\" sagt "
+            f"oder eine fundierte Antwort mit mehreren Quellen sinnvoll ist.")
+
+
+def _d_open(c: PromptContext) -> str:
+    return "[ACTION:OPEN] url - URL im Browser öffnen"
+
+
+def _d_screen(c: PromptContext) -> str:
+    return ("[ACTION:SCREEN] optionale frage - Bildschirm ansehen. Ohne Frage: kurz beschreiben. "
+            "Mit Frage (z.B. \"Was ist das Problem?\", \"Fasse diese Seite zusammen\", \"Was soll "
+            "ich als nächstes tun?\"): die Frage anhand des Bildschirms beantworten. WICHTIG: Bei "
+            "SCREEN schreibe KEINEN Text vor die Aktion.")
+
+
+def _d_news(c: PromptContext) -> str:
+    return ("[ACTION:NEWS] - Aktuelle Weltnachrichten abrufen. Nutze diese Aktion wenn nach News, "
+            "Nachrichten, was in der Welt passiert, aktuelle Lage oder Weltgeschehen gefragt wird. "
+            "Schreibe einen kurzen Satz davor wie \"Ich schaue nach den aktuellen Nachrichten.\"")
+
+
+def _d_inbox_read(c: PromptContext) -> str:
+    return (f"[ACTION:INBOX_READ] - Liest die heutigen Einträge aus der Obsidian-Inbox. Nutze wenn "
+            f"{c.user_address} fragt was heute notiert wurde oder einen Tagesrückblick möchte.")
+
+
+def _d_inbox_write(c: PromptContext) -> str:
+    return (f"[ACTION:INBOX_WRITE] [Kategorie] text - Schreibt einen Eintrag in die heutige "
+            f"Inbox-Datei. Kategorie ist GENAU EINE von: Idee, Aufgabe, Termin, Recherche, "
+            f"Erinnerung — wähle die passendste. Beispiel: [ACTION:INBOX_WRITE] [Termin] Zahnarzt "
+            f"Dienstag 9 Uhr. Nutze IMMER wenn {c.user_address} etwas festhalten, notieren, "
+            f"aufschreiben oder merken möchte. Frag nicht ob, tu es einfach. Formuliere den Text "
+            f"klar und strukturiert.")
+
+
+def _d_memory_write(c: PromptContext) -> str:
+    return (f"[ACTION:MEMORY_WRITE] text - Speichert eine Information DAUERHAFT im "
+            f"Langzeit-Gedächtnis (Präferenzen, laufende Projekte, offene Loops). Nutze NUR wenn "
+            f"{c.user_address} ausdrücklich sagt, dass du dir etwas dauerhaft/für die Zukunft merken "
+            f"sollst (z.B. \"merk dir dauerhaft\", \"vergiss nie\"). Tagesnotizen gehören in "
+            f"INBOX_WRITE. Speichere NIEMALS sensible Inhalte (Passwörter, Gesundheit, Finanzen) "
+            f"ohne ausdrückliche Aufforderung.")
+
+
+def _d_memory_read(c: PromptContext) -> str:
+    return (f"[ACTION:MEMORY_READ] - Zeigt bzw. fasst zusammen, was du dauerhaft über {c.user_name} "
+            f"gespeichert hast. Nutze wenn {c.user_address} fragt \"Was weißt du über mich?\", \"Was "
+            f"hast du dir gemerkt?\" oder Ähnliches.")
+
+
+def _d_memory_forget(c: PromptContext) -> str:
+    return (f"[ACTION:MEMORY_FORGET] stichwort - Löscht einen passenden Eintrag DAUERHAFT aus dem "
+            f"Langzeit-Gedächtnis. Nutze wenn {c.user_address} sagt \"vergiss ...\" o.Ä. Gib als "
+            f"Payload knapp das Thema/Stichwort an, das vergessen werden soll (nicht das Wort "
+            f"\"vergiss\" selbst). Diese Aktion wird vor der Ausführung sicherheitshalber noch einmal "
+            f"mündlich bestätigt.")
+
+
+def _d_notes_recent(c: PromptContext) -> str:
+    return (f"[ACTION:NOTES_RECENT] - Fasst die zuletzt bearbeiteten Notizen aus dem Vault zusammen. "
+            f"Nutze wenn {c.user_address} z.B. \"Fasse meine letzten Notizen zusammen\" sagt oder "
+            f"wissen will woran er zuletzt gearbeitet hat.")
+
+
+def _d_project_context(c: PromptContext) -> str:
+    return (f"[ACTION:PROJECT_CONTEXT] frage oder projektname - Durchsucht den Obsidian-Vault lokal "
+            f"nach passenden Notizen und antwortet mit deren Kontext. Nutze wenn {c.user_address} "
+            f"nach dem Stand, den nächsten Schritten oder offenen Punkten eines Projekts fragt, "
+            f"Kontext zu einem Thema aus seinen Notizen möchte oder fragt \"was weißt du über mein "
+            f"Projekt ...\".")
+
+
+def _d_clipboard(c: PromptContext) -> str:
+    return (f"[ACTION:CLIPBOARD] auftrag - Verarbeitet den Text in der Zwischenablage (auftrag z.B. "
+            f"\"zusammenfassen\", \"übersetzen\", \"erklären\"). Nutze wenn {c.user_address} von "
+            f"Zwischenablage, Clipboard oder \"das Kopierte\" spricht.")
+
+
+def _d_clipboard_note(c: PromptContext) -> str:
+    return (f"[ACTION:CLIPBOARD_NOTE] - Speichert den Text aus der Zwischenablage als Inbox-Notiz. "
+            f"Nutze wenn {c.user_address} aus der Zwischenablage eine Notiz machen möchte.")
+
+
+def _d_session_summary(c: PromptContext) -> str:
+    return (f"[ACTION:SESSION_SUMMARY] - Fasst zusammen was in dieser Sitzung besprochen und erledigt "
+            f"wurde. Nutze bei \"Was haben wir heute gemacht?\" oder am Sitzungsende. Möchte "
+            f"{c.user_address} das Fazit danach speichern, nutze INBOX_WRITE.")
+
+
+def _d_app_open(c: PromptContext) -> str:
+    return (f"[ACTION:APP_OPEN] app-name - Öffnet eine konfigurierte lokale App, z.B. Obsidian, "
+            f"VS Code oder Chrome. Nutze diese Aktion, wenn {c.user_address} dich bittet, eine lokale App "
+            f"oder ein Programm zu öffnen. Es können NUR konfigurierte Apps geöffnet werden. "
+            f"Schreibe KEINEN Text vor die Aktion. Verfügbare Apps: {c.app_names}")
+
+
+def _d_profile_activate(c: PromptContext) -> str:
+    return (f"[ACTION:PROFILE_ACTIVATE] profilname - Aktiviert ein vorhandenes Session-Profil für den "
+            f"Clap-Start. Nutze es bei Aussagen wie \"aktiviere Coding-Modus\" oder \"wechsle ins "
+            f"Research-Profil\". Verfügbare Profile: {c.profile_names}")
+
+
+def _d_profile_status(c: PromptContext) -> str:
+    return ("[ACTION:PROFILE_STATUS] optionaler profilname - Sagt, welches Profil aktiv ist und welche "
+            "Apps beim Clap starten. Ohne Payload: das aktive Profil. Nutze bei \"Welches Profil ist "
+            "aktiv?\" oder \"Welche Apps starten im Research-Profil?\".")
+
+
+def _d_autostart_on(c: PromptContext) -> str:
+    return ("[ACTION:APP_AUTOSTART_ON] app-name - Nimmt eine konfigurierte App im aktiven Profil in den "
+            "Clap-Start auf. Nutze bei \"starte X beim nächsten Clap mit\".")
+
+
+def _d_autostart_off(c: PromptContext) -> str:
+    return ("[ACTION:APP_AUTOSTART_OFF] app-name - Nimmt eine konfigurierte App im aktiven Profil aus "
+            "dem Clap-Start. Nutze bei \"nimm X aus dem Clap-Start\".")
+
+
+def _d_app_place(c: PromptContext) -> str:
+    return ("[ACTION:APP_PLACE] app-name | monitor | zone - Setzt die Startposition einer konfigurierten "
+            "App im aktiven Profil. monitor: primary, left, right, leftmost, rightmost. zone: fullscreen, "
+            "left_half, right_half, top_half, bottom_half, top_left, top_right, bottom_left, bottom_right, "
+            "center. Beispiel: [ACTION:APP_PLACE] Obsidian | left | right_half")
+
+
 # Zentrale Registry: nur hier eingetragene Aktionen werden geparst/ausgefuehrt.
 REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
-    ActionSpec("SEARCH", "Websuche", is_browser=True, execute=_exec_search),
+    ActionSpec("SEARCH", "Websuche", is_browser=True, execute=_exec_search,
+               describe=_d_search, prompt_order=1),
     ActionSpec("BROWSE", "Seite lesen", is_url=True, is_browser=True,
-               execute=_exec_browse),
+               execute=_exec_browse),  # describe=None: bewusst nicht beworben
     ActionSpec("OPEN", "Browser öffnen", is_url=True, is_browser=True,
-               execute=_exec_open),
+               execute=_exec_open, describe=_d_open, prompt_order=3),
     ActionSpec("APP_OPEN", "App öffnen", timeout=15, speaks_result=True,
-               execute=_exec_app_open),
+               execute=_exec_app_open,
+               describe=_d_app_open, prompt_order=16, prompt_group="launcher"),
     # Launcher-Sprachsteuerung (Phase 5): wirkt ueber die Profil-Schicht in
     # app_launcher — nie ueber freie Kommandos. Antworten sind fertige Saetze.
     ActionSpec("PROFILE_ACTIVATE", "Profil aktivieren", timeout=15, speaks_result=True,
-               execute=_exec_profile_activate),
+               execute=_exec_profile_activate,
+               describe=_d_profile_activate, prompt_order=17, prompt_group="launcher"),
     ActionSpec("PROFILE_STATUS", "Profil-Status", payload="optional", timeout=15,
-               speaks_result=True, execute=_exec_profile_status),
+               speaks_result=True, execute=_exec_profile_status,
+               describe=_d_profile_status, prompt_order=18, prompt_group="launcher"),
     ActionSpec("APP_AUTOSTART_ON", "Clap-Start an", timeout=15, speaks_result=True,
-               execute=_exec_autostart_on),
+               execute=_exec_autostart_on,
+               describe=_d_autostart_on, prompt_order=19, prompt_group="launcher"),
     ActionSpec("APP_AUTOSTART_OFF", "Clap-Start aus", timeout=15, speaks_result=True,
-               execute=_exec_autostart_off),
+               execute=_exec_autostart_off,
+               describe=_d_autostart_off, prompt_order=20, prompt_group="launcher"),
     ActionSpec("APP_PLACE", "App platzieren", timeout=15, speaks_result=True,
-               execute=_exec_app_place),
+               execute=_exec_app_place,
+               describe=_d_app_place, prompt_order=21, prompt_group="launcher"),
     ActionSpec("SCREEN", "Bildschirm ansehen", payload="optional",
-               execute=_exec_screen),
+               execute=_exec_screen, describe=_d_screen, prompt_order=4),
     ActionSpec("NEWS", "Nachrichten", payload="none", is_browser=True,
-               execute=_exec_news),
+               execute=_exec_news, describe=_d_news, prompt_order=5),
     ActionSpec(
         "INBOX_READ", "Inbox lesen", payload="none", summary_max_tokens=350,
         summary_task=(
@@ -394,10 +549,12 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "gruppiere nach Kategorie (Idee, Aufgabe, Termin, Recherche, Erinnerung, Notiz) "
             "und fasse knapp zusammen. Maximal 5 Sätze."
         ),
-        execute=_exec_inbox_read,
+        execute=_exec_inbox_read, describe=_d_inbox_read, prompt_order=6,
     ),
-    ActionSpec("INBOX_WRITE", "Inbox-Eintrag", execute=_exec_inbox_write),
-    ActionSpec("MEMORY_WRITE", "Merken", execute=_exec_memory_write),
+    ActionSpec("INBOX_WRITE", "Inbox-Eintrag", execute=_exec_inbox_write,
+               describe=_d_inbox_write, prompt_order=7),
+    ActionSpec("MEMORY_WRITE", "Merken", execute=_exec_memory_write,
+               describe=_d_memory_write, prompt_order=8),
     ActionSpec(
         "MEMORY_READ", "Gedächtnis lesen", payload="none", summary_max_tokens=350,
         summary_task=(
@@ -405,7 +562,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Projekte, offene Loops). Ordne es knapp und nenne die Punkte. Maximal 5 Sätze. "
             "Steht dort nichts, sag das ehrlich."
         ),
-        execute=_exec_memory_read,
+        execute=_exec_memory_read, describe=_d_memory_read, prompt_order=9,
     ),
     ActionSpec(
         "MEMORY_FORGET", "Vergessen", risk="confirm",
@@ -413,7 +570,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Bestätige kurz und freundlich, was du aus dem Langzeit-Gedächtnis gelöscht "
             "hast (oder dass es nichts Passendes gab). Maximal 2 Sätze."
         ),
-        execute=_exec_memory_forget,
+        execute=_exec_memory_forget, describe=_d_memory_forget, prompt_order=10,
     ),
     ActionSpec(
         "RESEARCH", "Recherche", is_browser=True, timeout=180, summary_max_tokens=350,
@@ -421,7 +578,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Fasse die Rechercheergebnisse aus den Quellen zu einer präzisen Antwort "
             "zusammen. Maximal 5 Sätze. Nenne KEINE URLs im Text."
         ),
-        execute=_exec_research,
+        execute=_exec_research, describe=_d_research, prompt_order=2,
     ),
     ActionSpec(
         "CLIPBOARD", "Zwischenablage", payload="optional",
@@ -429,17 +586,18 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Führe den genannten Auftrag auf dem Inhalt der Zwischenablage aus. "
             "Antworte kurz und präzise."
         ),
-        execute=_exec_clipboard,
+        execute=_exec_clipboard, describe=_d_clipboard, prompt_order=13,
     ),
     ActionSpec("CLIPBOARD_NOTE", "Clipboard-Notiz", payload="none",
-               execute=_exec_clipboard_note),
+               execute=_exec_clipboard_note,
+               describe=_d_clipboard_note, prompt_order=14),
     ActionSpec(
         "NOTES_RECENT", "Letzte Notizen", payload="none", summary_max_tokens=350,
         summary_task=(
             "Fasse die zuletzt bearbeiteten Notizen kurz zusammen und nenne dabei die "
             "Notiznamen, damit klar ist woran zuletzt gearbeitet wurde. Maximal 5 Sätze."
         ),
-        execute=_exec_notes_recent,
+        execute=_exec_notes_recent, describe=_d_notes_recent, prompt_order=11,
     ),
     ActionSpec(
         "PROJECT_CONTEXT", "Projekt-Kontext", summary_max_tokens=350,
@@ -447,7 +605,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Nutze den folgenden Vault-Kontext, um die Frage projektbezogen zu "
             "beantworten. Wenn der Kontext nicht reicht, sag das ehrlich. Maximal 5 Sätze."
         ),
-        execute=_exec_project_context,
+        execute=_exec_project_context, describe=_d_project_context, prompt_order=12,
     ),
     ActionSpec(
         "SESSION_SUMMARY", "Sitzungsfazit", payload="none", summary_max_tokens=350,
@@ -455,7 +613,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Fasse kurz zusammen, was in dieser Sitzung besprochen und erledigt wurde. "
             "Maximal 5 Sätze."
         ),
-        execute=_exec_session_summary,
+        execute=_exec_session_summary, describe=_d_session_summary, prompt_order=15,
     ),
 )}
 
@@ -474,6 +632,28 @@ CONFIRM_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.risk == "confirm
 
 # Aktionen, deren Ergebnis direkt gesprochen wird (kein Zusammenfassungs-LLM).
 SPEAK_RESULT_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.speaks_result)
+
+
+def _described(group: str) -> list[ActionSpec]:
+    """Beworbene Actions einer Gruppe in deklarativer Prompt-Reihenfolge."""
+    specs = [sp for sp in REGISTRY.values()
+             if sp.describe is not None and sp.prompt_group == group]
+    return sorted(specs, key=lambda sp: sp.prompt_order)
+
+
+def render_action_block(c: PromptContext) -> str:
+    """Den Action-Block des System-Prompts aus den Selbstbeschreibungen erzeugen.
+
+    Eine Quelle der Wahrheit: der Text kommt aus den Registry-Eintraegen selbst.
+    Die Launcher-Gruppe (inkl. gemeinsamem Regel-Suffix) erscheint nur, wenn Apps
+    konfiguriert sind — genau wie bisher.
+    """
+    block = "\n".join(sp.describe(c) for sp in _described("core"))
+    if c.app_names:
+        launcher = [sp.describe(c) for sp in _described("launcher")]
+        launcher.append(_describe_launcher_rules(c))
+        block += "\n" + "\n".join(launcher)
+    return block
 
 
 def spec_for(action_type: str) -> ActionSpec:
