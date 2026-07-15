@@ -471,44 +471,6 @@ async def _execute_action_legacy(action: actions.Action, session_id: str) -> str
     elif t == "SCREEN":
         return await screen_capture.describe_screen(ai, question=p)
 
-    elif t == "INBOX_READ":
-        if not memory.inbox_available():
-            return "Inbox-Ordner nicht konfiguriert oder nicht gefunden."
-        content = await asyncio.to_thread(memory.read_today_inbox_sync)
-        if content is None:
-            return f"Noch keine Einträge für heute ({time.strftime('%Y-%m-%d')})."
-        return content
-
-    elif t == "INBOX_WRITE":
-        kategorie, text = actions.split_inbox_category(p)
-        return await memory.write_inbox_entry(text, kategorie, ai=ai)
-
-    elif t == "MEMORY_WRITE":
-        return await asyncio.to_thread(memory.append_memory, p)
-
-    elif t == "MEMORY_READ":
-        content = await asyncio.to_thread(memory.read_memory_sync)
-        if not content.strip():
-            return "Ich habe mir dauerhaft noch nichts gemerkt."
-        return f"Langzeit-Gedächtnis (dauerhaft gespeichert):\n{content}"
-
-    elif t == "MEMORY_FORGET":
-        return await asyncio.to_thread(memory.forget_memory, p)
-
-    elif t == "NOTES_RECENT":
-        notes = await asyncio.to_thread(memory.read_recent_notes_sync)
-        if not notes:
-            return "Keine Notizen gefunden — Vault nicht konfiguriert oder leer."
-        return notes
-
-    elif t == "PROJECT_CONTEXT":
-        if not memory.vault_available():
-            return "Kein Obsidian-Vault konfiguriert — bitte den Vault-Pfad in den Einstellungen hinterlegen."
-        context = await asyncio.to_thread(memory.get_project_context_sync, p)
-        if not context:
-            return f'Im Vault habe ich zu "{p}" nichts Passendes gefunden.'
-        return f'Frage: "{p}"\n\n{context}'
-
     elif t == "CLIPBOARD":
         clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
         if not clip:

@@ -7,13 +7,16 @@ damit es isoliert (ohne Serverstart) getestet werden kann.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 import browser_tools
+import memory
 
 logger = logging.getLogger("jarvis.actions")
 
@@ -155,6 +158,52 @@ async def _exec_research(payload: str, ctx: ActionContext) -> str:
     return "\n\n".join(parts)
 
 
+async def _exec_inbox_read(payload: str, ctx: ActionContext) -> str:
+    if not memory.inbox_available():
+        return "Inbox-Ordner nicht konfiguriert oder nicht gefunden."
+    content = await asyncio.to_thread(memory.read_today_inbox_sync)
+    if content is None:
+        return f"Noch keine Einträge für heute ({time.strftime('%Y-%m-%d')})."
+    return content
+
+
+async def _exec_inbox_write(payload: str, ctx: ActionContext) -> str:
+    kategorie, text = split_inbox_category(payload)
+    return await memory.write_inbox_entry(text, kategorie, ai=ctx.ai)
+
+
+async def _exec_memory_write(payload: str, ctx: ActionContext) -> str:
+    return await asyncio.to_thread(memory.append_memory, payload)
+
+
+async def _exec_memory_read(payload: str, ctx: ActionContext) -> str:
+    content = await asyncio.to_thread(memory.read_memory_sync)
+    if not content.strip():
+        return "Ich habe mir dauerhaft noch nichts gemerkt."
+    return f"Langzeit-Gedächtnis (dauerhaft gespeichert):\n{content}"
+
+
+async def _exec_memory_forget(payload: str, ctx: ActionContext) -> str:
+    return await asyncio.to_thread(memory.forget_memory, payload)
+
+
+async def _exec_notes_recent(payload: str, ctx: ActionContext) -> str:
+    notes = await asyncio.to_thread(memory.read_recent_notes_sync)
+    if not notes:
+        return "Keine Notizen gefunden — Vault nicht konfiguriert oder leer."
+    return notes
+
+
+async def _exec_project_context(payload: str, ctx: ActionContext) -> str:
+    if not memory.vault_available():
+        return ("Kein Obsidian-Vault konfiguriert — bitte den Vault-Pfad in den "
+                "Einstellungen hinterlegen.")
+    context = await asyncio.to_thread(memory.get_project_context_sync, payload)
+    if not context:
+        return f'Im Vault habe ich zu "{payload}" nichts Passendes gefunden.'
+    return f'Frage: "{payload}"\n\n{context}'
+
+
 async def _exec_session_summary(payload: str, ctx: ActionContext) -> str:
     lines = [
         f"{'Du' if msg['role'] == 'user' else 'Jarvis'}: {msg['content']}"
@@ -192,9 +241,10 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "gruppiere nach Kategorie (Idee, Aufgabe, Termin, Recherche, Erinnerung, Notiz) "
             "und fasse knapp zusammen. Maximal 5 Sätze."
         ),
+        execute=_exec_inbox_read,
     ),
-    ActionSpec("INBOX_WRITE", "Inbox-Eintrag"),
-    ActionSpec("MEMORY_WRITE", "Merken"),
+    ActionSpec("INBOX_WRITE", "Inbox-Eintrag", execute=_exec_inbox_write),
+    ActionSpec("MEMORY_WRITE", "Merken", execute=_exec_memory_write),
     ActionSpec(
         "MEMORY_READ", "Gedächtnis lesen", payload="none", summary_max_tokens=350,
         summary_task=(
@@ -202,6 +252,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Projekte, offene Loops). Ordne es knapp und nenne die Punkte. Maximal 5 Sätze. "
             "Steht dort nichts, sag das ehrlich."
         ),
+        execute=_exec_memory_read,
     ),
     ActionSpec(
         "MEMORY_FORGET", "Vergessen", risk="confirm",
@@ -209,6 +260,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Bestätige kurz und freundlich, was du aus dem Langzeit-Gedächtnis gelöscht "
             "hast (oder dass es nichts Passendes gab). Maximal 2 Sätze."
         ),
+        execute=_exec_memory_forget,
     ),
     ActionSpec(
         "RESEARCH", "Recherche", is_browser=True, timeout=180, summary_max_tokens=350,
@@ -232,6 +284,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Fasse die zuletzt bearbeiteten Notizen kurz zusammen und nenne dabei die "
             "Notiznamen, damit klar ist woran zuletzt gearbeitet wurde. Maximal 5 Sätze."
         ),
+        execute=_exec_notes_recent,
     ),
     ActionSpec(
         "PROJECT_CONTEXT", "Projekt-Kontext", summary_max_tokens=350,
@@ -239,6 +292,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Nutze den folgenden Vault-Kontext, um die Frage projektbezogen zu "
             "beantworten. Wenn der Kontext nicht reicht, sag das ehrlich. Maximal 5 Sätze."
         ),
+        execute=_exec_project_context,
     ),
     ActionSpec(
         "SESSION_SUMMARY", "Sitzungsfazit", payload="none", summary_max_tokens=350,
