@@ -57,9 +57,27 @@ python tests/browser/e2e_reduced_motion.py
 - **Visual-Baseline-Freigabe:** neue Baselines werden nur nach ausdrücklicher
   Nutzerbestätigung akzeptiert (`e2e_visual.py --update`), nie blind aktualisiert.
 
-## Status
+## Hosted-Runner-Evidenz (Phase-3-Gate)
 
-Die Workflowdatei ist erstellt und **lokal verifiziert** (alle Gate-Äquivalente
-grün, siehe Phase-3-Bericht). Ein Lauf auf einem frischen Hosted-Windows-Runner
-setzt einen Commit/Push voraus und ist **noch nicht** erfolgt (keine
-Git-Änderungen ohne ausdrückliche Nutzerfreigabe).
+- **Datum:** 2026-07-15
+- **Repository (persönlicher Fork):** `janwib-afk/jarvis-voice-assistant`
+  (Fork von `Julian-Ivanov/jarvis-voice-assistant`)
+- **Runner:** frischer GitHub-**hosted** Windows-Runner (`runs-on: windows-latest`,
+  beide Jobs)
+- **Auslöser:** `workflow_dispatch` auf `master`
+- **Getesteter Commit:** `e8079151b0bc9ec1342efc2481e71b457e76cc0f`
+  (`test: establish phase 3 Windows hosted-runner gate`)
+- **Run-ID / URL:** 29378212904 ·
+  https://github.com/janwib-afk/jarvis-voice-assistant/actions/runs/29378212904
+- **Ergebnis:**
+  - Job **Fast gates (syntax/unit/contract/integration/skip/native):** `success`
+    (alle Schritte grün — compileall, Smoke, volle Unittest-Suite, Windows-Native-Smokes)
+  - Job **Browser gates (Chromium):** `success`
+    (Chromium-Install, Browser-Smoke, Accessibility, Reduced Motion — alle grün)
+- **Skips:** nur der `if: failure()`-Schritt „Upload failure artifacts" wurde
+  übersprungen (erwartet bei Erfolg); **0 unerwartete Skips**.
+- **Kosten/Secrets:** keine Secrets referenziert; Tests nutzen synthetische
+  Fixtures/gestubbte Provider → **0 echte Provideraufrufe, keine persönliche Config**.
+
+> Ein zweiter `workflow_dispatch`-Lauf validiert den finalen Commit (inkl. dieser
+> Dokumentation) — siehe Phase-3-Bericht.
