@@ -557,7 +557,14 @@ _BLOCK_END = "\n\nWENN "
 
 
 def golden(name: str) -> str:
-    with open(os.path.join(GOLDEN_DIR, name), encoding="utf-8", newline="") as f:
+    """Golden-Fixture LF-normalisiert lesen.
+
+    Bewusst Universal-Newline (Default): das Repo laeuft mit core.autocrlf=true
+    ohne .gitattributes, ein frischer Checkout (z.B. Hosted-Runner) liefert die
+    Fixture also mit CRLF. Der System-Prompt selbst enthaelt nur \\n — ohne diese
+    Normalisierung waere der Golden-Vergleich rein zeilenende-bedingt rot.
+    """
+    with open(os.path.join(GOLDEN_DIR, name), encoding="utf-8") as f:
         return f.read()
 
 
