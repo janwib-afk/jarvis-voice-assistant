@@ -291,22 +291,14 @@ def _action_context(session_id: str) -> actions.ActionContext:
 
 
 async def execute_action(action: actions.Action, session_id: str) -> str:
-    """Thin Dispatcher: Kontext bauen, Registry-Lookup, ausfuehren.
+    """Thin Dispatcher (RFC-0001): Kontext bauen, Registry-Lookup, ausfuehren.
 
-    TEMPORAERER SHIM (RFC-0001 Kompatibilitaetsadapter): migrierte Actions laufen
-    ueber ``spec.execute``; noch nicht migrierte fallen auf den Legacy-``if/elif``
-    zurueck. Der Shim faellt in Slice C, sobald alle 22 Actions migriert sind.
+    Die Action beschreibt und fuehrt sich selbst aus; hier bleibt nur die
+    Uebersetzung von (action, session_id) in einen request-scoped Kontext.
+    Nur validierte Actions erreichen diesen Punkt (parse_action ist der Adapter).
     """
-    spec = actions.REGISTRY.get(action.type)
-    if spec is not None and spec.execute is not None:
-        return await spec.execute(action.payload, _action_context(session_id))
-    return await _execute_action_legacy(action, session_id)
-
-
-async def _execute_action_legacy(action: actions.Action, session_id: str) -> str:
-    # Alle 22 Actions sind migriert — dieser Fallback ist leer und faellt in
-    # Slice C zusammen mit dem Shim weg.
-    return ""
+    return await actions.spec_for(action.type).execute(
+        action.payload, _action_context(session_id))
 
 
 async def _finish_research(summary: str, action_result: str) -> str | None:
