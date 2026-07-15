@@ -24,7 +24,9 @@ import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
 import actions
 import app_launcher
 import browser_tools
+import clipboard_tools
 import memory
+import screen_capture
 
 
 def run(coro):
@@ -466,3 +468,79 @@ class AppPlaceActionTests(_LauncherTestCase):
         result = run(actions.spec_for("APP_PLACE").execute("Obsidian | left | Mond", c))
         self.assertTrue(result.startswith("Die Zone kenne ich nicht"))
         self.assertEqual(saved, [])
+
+
+class ScreenActionTests(unittest.TestCase):
+    """SCREEN nimmt NIE einen echten Screenshot im Test — die Capture-/Vision-
+    Grenze ist gefaked; geprueft wird, dass ctx.ai und die Frage durchgereicht
+    werden (kein Modul-Global)."""
+
+    def test_passes_context_ai_and_question_to_vision(self):
+        seen = {}
+
+        async def _fake_describe(ai_client, question=""):
+            seen["ai"] = ai_client
+            seen["question"] = question
+            return "Auf dem Bildschirm ist ein Terminal."
+
+        sentinel_ai = object()
+        with mock.patch.object(screen_capture, "describe_screen", _fake_describe):
+            result = execute("SCREEN", "Was ist das Problem?", ai=sentinel_ai)
+        self.assertEqual(result, "Auf dem Bildschirm ist ein Terminal.")
+        self.assertIs(seen["ai"], sentinel_ai, "SCREEN muss ctx.ai nutzen")
+        self.assertEqual(seen["question"], "Was ist das Problem?")
+
+    def test_without_question_passes_empty_payload(self):
+        seen = {}
+
+        async def _fake_describe(ai_client, question=""):
+            seen["question"] = question
+            return "Beschreibung."
+
+        with mock.patch.object(screen_capture, "describe_screen", _fake_describe):
+            execute("SCREEN", "")
+        self.assertEqual(seen["question"], "")
+
+
+class ClipboardActionTests(unittest.TestCase):
+    """CLIPBOARD liest nie die echte Zwischenablage im Test."""
+
+    def test_builds_task_block_from_clipboard(self):
+        with mock.patch.object(clipboard_tools, "get_clipboard_text",
+                               lambda: "Ein kopierter Text."):
+            result = execute("CLIPBOARD", "übersetzen")
+        self.assertEqual(
+            result,
+            "Auftrag: übersetzen\n\nInhalt der Zwischenablage:\nEin kopierter Text.",
+        )
+
+    def test_without_payload_uses_default_task(self):
+        with mock.patch.object(clipboard_tools, "get_clipboard_text",
+                               lambda: "Ein kopierter Text."):
+            result = execute("CLIPBOARD", "")
+        self.assertTrue(result.startswith("Auftrag: Fasse den Inhalt kurz zusammen.\n\n"))
+
+    def test_empty_clipboard_is_reported(self):
+        with mock.patch.object(clipboard_tools, "get_clipboard_text", lambda: ""):
+            result = execute("CLIPBOARD", "zusammenfassen")
+        self.assertEqual(result, "Die Zwischenablage ist leer oder enthält keinen Text.")
+
+
+class ClipboardNoteActionTests(_TempVaultTestCase):
+    """CLIPBOARD_NOTE schreibt den Clipboard-Text als Inbox-Notiz (Temp-Inbox)."""
+
+    def test_writes_clipboard_text_as_notiz(self):
+        with mock.patch.object(clipboard_tools, "get_clipboard_text",
+                               lambda: "Merkenswerter Satz."):
+            execute("CLIPBOARD_NOTE")
+        datei = os.path.join(self.inbox, time.strftime("%Y-%m-%d") + " Brain Dump.md")
+        inhalt = open(datei, encoding="utf-8").read()
+        self.assertIn("Notiz", inhalt)
+        self.assertIn("Merkenswerter Satz.", inhalt)
+
+    def test_empty_clipboard_writes_nothing(self):
+        with mock.patch.object(clipboard_tools, "get_clipboard_text", lambda: ""):
+            result = execute("CLIPBOARD_NOTE")
+        self.assertEqual(result, "Die Zwischenablage ist leer oder enthält keinen Text.")
+        datei = os.path.join(self.inbox, time.strftime("%Y-%m-%d") + " Brain Dump.md")
+        self.assertFalse(os.path.exists(datei))

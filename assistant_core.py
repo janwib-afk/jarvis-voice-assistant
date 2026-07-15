@@ -338,36 +338,8 @@ async def execute_action(action: actions.Action, session_id: str) -> str:
 
 
 async def _execute_action_legacy(action: actions.Action, session_id: str) -> str:
-    t = action.type
-    p = action.payload
-
-    if t == "SCREEN":
-        return await screen_capture.describe_screen(ai, question=p)
-
-    elif t == "CLIPBOARD":
-        clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
-        if not clip:
-            return "Die Zwischenablage ist leer oder enthält keinen Text."
-        auftrag = p or "Fasse den Inhalt kurz zusammen."
-        return f"Auftrag: {auftrag}\n\nInhalt der Zwischenablage:\n{clip}"
-
-    elif t == "CLIPBOARD_NOTE":
-        clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
-        if not clip:
-            return "Die Zwischenablage ist leer oder enthält keinen Text."
-        return await memory.write_inbox_entry(clip, actions.INBOX_FALLBACK_CATEGORY, ai=ai)
-
-    elif t == "SESSION_SUMMARY":
-        history = conversations.get(session_id, [])
-        lines = [
-            f"{'Du' if msg['role'] == 'user' else 'Jarvis'}: {msg['content']}"
-            for msg in history[-40:]
-        ]
-        log = "\n".join(lines)[-6000:]
-        if not log.strip():
-            return "Diese Sitzung hat noch keinen nennenswerten Verlauf."
-        return f"Sitzungsprotokoll:\n{log}"
-
+    # Alle 22 Actions sind migriert — dieser Fallback ist leer und faellt in
+    # Slice C zusammen mit dem Shim weg.
     return ""
 
 

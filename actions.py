@@ -17,7 +17,9 @@ from urllib.parse import urlparse
 
 import app_launcher
 import browser_tools
+import clipboard_tools
 import memory
+import screen_capture
 
 logger = logging.getLogger("jarvis.actions")
 
@@ -330,6 +332,25 @@ async def _exec_project_context(payload: str, ctx: ActionContext) -> str:
     return f'Frage: "{payload}"\n\n{context}'
 
 
+async def _exec_screen(payload: str, ctx: ActionContext) -> str:
+    return await screen_capture.describe_screen(ctx.ai, question=payload)
+
+
+async def _exec_clipboard(payload: str, ctx: ActionContext) -> str:
+    clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
+    if not clip:
+        return "Die Zwischenablage ist leer oder enthält keinen Text."
+    auftrag = payload or "Fasse den Inhalt kurz zusammen."
+    return f"Auftrag: {auftrag}\n\nInhalt der Zwischenablage:\n{clip}"
+
+
+async def _exec_clipboard_note(payload: str, ctx: ActionContext) -> str:
+    clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
+    if not clip:
+        return "Die Zwischenablage ist leer oder enthält keinen Text."
+    return await memory.write_inbox_entry(clip, INBOX_FALLBACK_CATEGORY, ai=ctx.ai)
+
+
 async def _exec_session_summary(payload: str, ctx: ActionContext) -> str:
     lines = [
         f"{'Du' if msg['role'] == 'user' else 'Jarvis'}: {msg['content']}"
@@ -362,7 +383,8 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
                execute=_exec_autostart_off),
     ActionSpec("APP_PLACE", "App platzieren", timeout=15, speaks_result=True,
                execute=_exec_app_place),
-    ActionSpec("SCREEN", "Bildschirm ansehen", payload="optional"),
+    ActionSpec("SCREEN", "Bildschirm ansehen", payload="optional",
+               execute=_exec_screen),
     ActionSpec("NEWS", "Nachrichten", payload="none", is_browser=True,
                execute=_exec_news),
     ActionSpec(
@@ -407,8 +429,10 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Führe den genannten Auftrag auf dem Inhalt der Zwischenablage aus. "
             "Antworte kurz und präzise."
         ),
+        execute=_exec_clipboard,
     ),
-    ActionSpec("CLIPBOARD_NOTE", "Clipboard-Notiz", payload="none"),
+    ActionSpec("CLIPBOARD_NOTE", "Clipboard-Notiz", payload="none",
+               execute=_exec_clipboard_note),
     ActionSpec(
         "NOTES_RECENT", "Letzte Notizen", payload="none", summary_max_tokens=350,
         summary_task=(
