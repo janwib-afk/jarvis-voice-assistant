@@ -129,6 +129,17 @@ still übersprungen.
 `INBOX_WRITE`, `MEMORY_WRITE`, `MEMORY_READ`, `MEMORY_FORGET`, `RESEARCH`, `CLIPBOARD`,
 `CLIPBOARD_NOTE`, `NOTES_RECENT`, `PROJECT_CONTEXT`, `SESSION_SUMMARY`.
 
+Seit **RFC-0001** (Phase 4B, 2026-07-15) ist die Action ein *deep module*: Metadaten,
+**Ausführung** (`execute(payload, ctx)`) und **Prompt-Selbstbeschreibung**
+(`describe(prompt_ctx)`) liegen je Action am Registry-Eintrag. **22/22 ausführbar**,
+**21/22 beworben** — `BROWSE` ist registriert und ausführbar, aber wie seit jeher nicht
+im System-Prompt. Der System-Prompt wird über `actions.render_action_block` aus der
+Registry erzeugt (byte-genaue Goldens in `tests/fixtures/prompt_golden/`);
+`assistant_core.execute_action` ist nur noch ein Thin Dispatcher, der `if/elif`-Router
+existiert nicht mehr. Timeout, Cancel, Confirmation, Summary, TTS, WS-Events,
+OPEN-Frühabbruch und RESEARCH-Autosave bleiben Orchestrierung in `assistant_core`.
+Details: [PHASE4B_ACTION_DEEP_MODULE_MIGRATION.md](../architecture/PHASE4B_ACTION_DEEP_MODULE_MIGRATION.md).
+
 Jede Aktion ist ein `ActionSpec` mit Feldern Label, Payload-Regel
 (`required`/`optional`/`none`), `risk`, `timeout`, `is_url`, `is_browser`,
 `speaks_result`, `summary_task`, `summary_max_tokens`.

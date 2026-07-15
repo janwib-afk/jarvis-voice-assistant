@@ -34,9 +34,11 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 ├── config.example.json    # Template mit Platzhaltern
 ├── requirements.txt       # Python Dependencies
 ├── server.py              # FastAPI: Routen, WS-Endpoint (Origin/Token, Stopp-Handling), Settings-/Dashboard-/Command-API
-├── assistant_core.py      # Gespraechsfluss: System-Prompt, LLM-Calls, Verlauf, Action-Ausfuehrung
+├── assistant_core.py      # Gespraechsfluss: System-Prompt, LLM-Calls, Verlauf, Action-Orchestrierung
 ├── config_loader.py       # Config laden/validieren/speichern (Settings-Whitelist, apps-Registry)
-├── actions.py             # Action-Registry (ActionSpec) + Parsing + URL/Origin-Policies + Stop-Woerter
+├── actions.py             # Action als deep module: Registry (ActionSpec) mit Metadaten,
+│                         #   Ausfuehrung (execute) + Prompt-Selbstbeschreibung (describe)
+│                         #   je Action; Parsing + URL/Origin-Policies + Stop-Woerter
 ├── app_launcher.py        # Allowlist-App-Launcher (config.apps) — Sprach-Aktion APP_OPEN + UI-Klick
 ├── tts.py                 # ElevenLabs-TTS (Chunking, Retries) — pur und testbar
 ├── memory.py              # Tages-Inbox, Vault-Helfer + Langzeit-Gedaechtnis ("Jarvis Memory.md")

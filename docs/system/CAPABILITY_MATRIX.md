@@ -17,6 +17,13 @@
 
 ## 1. Action-Capabilities (`[ACTION:...]`, 22 Typen)
 
+> Seit RFC-0001 (Phase 4B, 2026-07-15) beschreibt und fuehrt sich jede Action selbst
+> aus: Metadaten + `execute` + `describe` liegen am Registry-Eintrag in `actions.py`.
+> `assistant_core.execute_action` ist nur noch ein Thin Dispatcher; Timeout, Cancel,
+> Confirmation, Summary, TTS und WS-Events bleiben Orchestrierung.
+> **Capability-/Policy-Lifecycle (validate/preview/authorize/verify) ist weiterhin
+> NICHT implementiert** (Phase 5).
+
 Quelle: `actions.py::REGISTRY`. Nutzer-Entry: gesprochene/getippte Utterance → LLM
 emittiert `[ACTION:TYP]`. Stop/Cancel gilt global: laufende Nachrichten laufen als Task,
 „Stopp"/Esc/Button cancelt sie (`server.websocket_endpoint`, `actions.is_stop_command`).
@@ -27,7 +34,7 @@ emittiert `[ACTION:TYP]`. Stop/Cancel gilt global: laufende Nachrichten laufen a
 | BROWSE | Seite lesen | `browser_tools.visit` | Web | öffentlich | network-read | URL-Policy | ✅ | Summary | `test_actions` | untrusted-Inhalt ungefiltert | 2/5 |
 | OPEN | URL öffnen | `browser_tools.open_url`, `actions.normalize_url` | Web | öffentlich | network-read/local-execute | URL-Policy (nur http/https) | ✅ | Bestätigung im UI | `test_actions` (normalize_url) | keine SSRF-Regeln | 2 |
 | APP_OPEN | App starten | `app_launcher.launch` | config.apps | lokal | local-execute | **Allowlist** | – | gesprochener Satz | `test_app_launcher`, `test_voice_launcher` | kein Preview/Verify | 5 |
-| PROFILE_ACTIVATE | Profil aktivieren | `assistant_core.execute_action`, `app_launcher` | config.launcher | lokal | local-execute/local-write | Voice/UI | – | Statussatz | `test_voice_launcher`, `test_launcher_api` | – | 8 |
+| PROFILE_ACTIVATE | Profil aktivieren | `actions` (`spec.execute`), `app_launcher` | config.launcher | lokal | local-execute/local-write | Voice/UI | – | Statussatz | `test_voice_launcher`, `test_launcher_api` | – | 8 |
 | PROFILE_STATUS | Profil-Status | `app_launcher.effective_apps` | config.launcher | lokal | read-local | Voice/UI | – | Statussatz | `test_voice_launcher` | – | 8 |
 | APP_AUTOSTART_ON | Clap-Start an | `app_launcher`, `save_settings` | config.launcher | lokal | local-write | Voice/UI | – | Statussatz | `test_voice_launcher`, `test_launcher_api` | – | 8 |
 | APP_AUTOSTART_OFF | Clap-Start aus | dito | config.launcher | lokal | local-write | Voice/UI | – | Statussatz | dito | – | 8 |
@@ -44,7 +51,7 @@ emittiert `[ACTION:TYP]`. Stop/Cancel gilt global: laufende Nachrichten laufen a
 | CLIPBOARD_NOTE | Clipboard als Notiz | `clipboard_tools`, `memory` | Clipboard→Vault | sensibel→persönlich | local-write | Voice/UI | – | Bestätigungssatz | `test_actions` | dito | 2/7 |
 | NOTES_RECENT | Letzte Notizen | `memory.read_recent_notes_sync` | Vault | persönlich | read-sensitive | Voice/UI | – | Summary | `test_memory` | – | 7 |
 | PROJECT_CONTEXT | Vault-Kontext-Broker | `memory.get_project_context_sync` | Vault | persönlich | read-sensitive | Voice/UI | – | projektbezogene Antwort | `test_memory` | Ranking heuristisch; Secret-Filter vorhanden | 7 |
-| SESSION_SUMMARY | Sitzungsfazit | `assistant_core.execute_action` | Conversation-History | lokal | read-local | Voice/UI | – | Summary | `test_confirm_flow`/`test_prompt` (indirekt) | – | 6/7 |
+| SESSION_SUMMARY | Sitzungsfazit | `actions` (`spec.execute`) | Conversation-History | lokal | read-local | Voice/UI | – | Summary | `test_confirm_flow`/`test_prompt` (indirekt) | – | 6/7 |
 
 ## 2. Konversation, Sprache, Stop
 

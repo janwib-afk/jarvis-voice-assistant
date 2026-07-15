@@ -2,7 +2,20 @@
 
 ## Status
 
-**Accepted for incremental implementation** (2026-07-13).
+**Accepted for incremental implementation** (2026-07-13) — **implementiert am 2026-07-15**
+(Phase 4B, siehe [PHASE4B_ACTION_DEEP_MODULE_MIGRATION.md](PHASE4B_ACTION_DEEP_MODULE_MIGRATION.md)).
+
+**Implementierungsevidenz:** alle **22** Actions migriert und ausfuehrbar
+(`spec.execute`), 21 davon mit Selbstbeschreibung (`spec.describe`) — `BROWSE` bleibt
+bewusst unbeworben. Der `if/elif`-Router, der Dispatcher-Shim, die `_voice_*`-Helfer,
+`run_research` und die hardcodierten Prompt-Zeilen sind entfernt; der System-Prompt ist
+gegen zwei byte-genaue Goldens (mit/ohne Apps) unveraendert. Suite 589 gruen, Smoke ohne
+Skips, Browser-/Visual-/Native-Gates gruen. Slice-Commits: `d8a01de`, `5ca9e3d`,
+`7ce531a`, `48e32bd`, `df14c00`, `ce63713`, `9f1e69e`, `5df170b`, `140f62e`.
+
+**Nicht** implementiert (unveraendert Nicht-Ziel): der Capability-/Policy-Lifecycle
+(`validate/preview/authorize/verify`) — Phase 5. `[ACTION:…]` bleibt permanenter
+Legacy-Adapter.
 
 Grundlage der Annahme: In der Grilling-Session (Prompt 4) hat der Nutzer die
 Entscheidungen D1–D4 einzeln bestätigt und anschließend ausdrücklich delegiert
@@ -14,7 +27,7 @@ diesem RFC ernsthaft ausgearbeitet. Kein Produktionscode wurde geändert.
 
 Das Wissen über eine **Action** ist heute dreifach repräsentiert und über zwei
 Module verstreut: Metadaten (`actions.ActionSpec`/`REGISTRY`), Verhalten
-(`assistant_core.execute_action`, ein 24-Zweig-`if/elif`) und Prompt-Beschreibung
+(`assistant_core.execute_action`, ein 22-Zweig-`if/elif`) und Prompt-Beschreibung
 (hardcodiert in `assistant_core.build_system_prompt`). Dieses RFC vertieft die Action
 zu einem **deep module**, das sich **selbst beschreibt und selbst ausführt**, hinter
 einem kleinen, einheitlichen interface. Der Dispatcher wird ein dünner Lookup, der
@@ -27,7 +40,7 @@ unverändert. Der Umbau ist vertikal (eine Action nach der anderen) und rückrol
 | Repräsentation | Ort | Beleg |
 |---|---|---|
 | Metadaten (label, payload-Regel, risk, timeout, is_url/is_browser, speaks_result, summary_task, summary_max_tokens) | `ActionSpec` + `REGISTRY` | `actions.py:18–123` |
-| Verhalten | `execute_action` — `if/elif` auf `action.type`, 24 Zweige | `assistant_core.py:452–563` |
+| Verhalten | `execute_action` — `if/elif` auf `action.type`, 22 Zweige | `assistant_core.py:452–563` |
 | Prompt-Beschreibung | hardcodierter Text je Action | `assistant_core.py:208–222`, Launcher-Block `167–190` |
 | abgeleitete Klassifikation | `CONFIRM_ACTIONS`/`SPEAK_RESULT_ACTIONS`/`BROWSER_ACTIONS`/`URL_ACTIONS` | `actions.py:126–139` |
 | Konsum der Metadaten | Timeout/Cancel/Summary/Speak-Branch | `run_action_and_respond`, `assistant_core.py:584–650` |

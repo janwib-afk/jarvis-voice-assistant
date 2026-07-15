@@ -33,7 +33,8 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
 - **Abgrenzung:** `Action` = geparster Aufruf (`actions.Action`); `ActionSpec` =
   Metadaten des Typs. Der `[ACTION:...]`-Text ist das Wire-Format, nicht die Action.
 - **Quellen:** `actions.parse_action`, `actions.Action`, Ausführung in
-  `assistant_core.execute_action` (`assistant_core.py:452`).
+  `actions.spec_for(TYP).execute(payload, ctx)`; `assistant_core.execute_action`
+  ist seit RFC-0001 nur noch ein Thin Dispatcher (Kontext bauen + Lookup).
 
 ### ActionSpec
 - **Bedeutung:** Metadaten eines Action-Typs (Label, Payload-Regel, Risk, Timeout,
