@@ -449,7 +449,33 @@ async def _voice_place_app(payload: str) -> str:
     return f"{app['name']} liegt jetzt {_ZONE_SPEECH[zone]} {_MONITOR_SPEECH[monitor]}."
 
 
+def _action_context(session_id: str) -> actions.ActionContext:
+    """Request-scoped Kontext aus dem AKTUELLEN Prozesszustand bauen (RFC-0001).
+
+    Der Verlauf wird als unveraenderlicher Snapshot uebergeben — die Action sieht
+    weder ``session_id`` noch das ``conversations``-Dict.
+    """
+    return actions.ActionContext(
+        ai=ai,
+        history=tuple(dict(msg) for msg in conversations.get(session_id, [])),
+        persist_launcher=PERSIST_LAUNCHER,
+    )
+
+
 async def execute_action(action: actions.Action, session_id: str) -> str:
+    """Thin Dispatcher: Kontext bauen, Registry-Lookup, ausfuehren.
+
+    TEMPORAERER SHIM (RFC-0001 Kompatibilitaetsadapter): migrierte Actions laufen
+    ueber ``spec.execute``; noch nicht migrierte fallen auf den Legacy-``if/elif``
+    zurueck. Der Shim faellt in Slice C, sobald alle 22 Actions migriert sind.
+    """
+    spec = actions.REGISTRY.get(action.type)
+    if spec is not None and spec.execute is not None:
+        return await spec.execute(action.payload, _action_context(session_id))
+    return await _execute_action_legacy(action, session_id)
+
+
+async def _execute_action_legacy(action: actions.Action, session_id: str) -> str:
     t = action.type
     p = action.payload
 

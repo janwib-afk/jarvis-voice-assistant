@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 # Gleiche Regex wie bisher: [ACTION:TYP] optionaler payload bis Zeilenende.
@@ -16,8 +17,39 @@ ACTION_PATTERN = re.compile(r'\[ACTION:(\w+)\]\s*(.*?)$', re.DOTALL | re.MULTILI
 
 
 @dataclass(frozen=True)
+class ActionContext:
+    """Request-scoped Ausfuehrungskontext einer Aktion (RFC-0001).
+
+    Bewusst winzig und unveraenderlich: nur die querschnittlichen Abhaengigkeiten,
+    die eine Action nicht selbst besitzen darf. Die stabilen Capability-Module
+    (``browser_tools``/``memory``/``app_launcher``/``screen_capture``/
+    ``clipboard_tools``) sind **direkte** Abhaengigkeiten der Implementation und
+    stehen absichtlich NICHT im Kontext.
+
+    - ``ai``: LLM-Client (prod: Anthropic, test: Fake) — der einzige echte Seam.
+    - ``history``: unveraenderlicher Snapshot des Sitzungsverlaufs (kein
+      ``session_id``, kein ``conversations``-Dict, keine ``Runtime``).
+    - ``persist_launcher``: optionaler async Hook fuer Launcher-Persistenz;
+      fehlt er, liefert die Action denselben sprechbaren Fehler wie bisher.
+    """
+    ai: Any = None
+    history: tuple[dict, ...] = ()
+    persist_launcher: Callable | None = None
+
+
+@dataclass(frozen=True)
+class PromptContext:
+    """Kontext der Prompt-Selbstbeschreibung — nur Anzeige-/Persona-Werte."""
+    user_name: str = ""
+    user_address: str = ""
+    app_names: str = ""
+    profile_names: str = ""
+
+
+@dataclass(frozen=True)
 class ActionSpec:
-    """Alle Metadaten einer Aktion an einer Stelle (Registry-Eintrag).
+    """Alle Metadaten, die Ausfuehrung UND die Selbstbeschreibung einer Aktion
+    an einer Stelle (Registry-Eintrag, RFC-0001 Variant A).
 
     - ``payload``: "required" | "optional" | "none"
     - ``is_url``: Payload muss eine gueltige http(s)-URL sein
@@ -28,6 +60,13 @@ class ActionSpec:
       direkt gesprochen (keine LLM-Zusammenfassung)
     - ``summary_task``: aktionsspezifische Aufgabe fuer den Zusammenfassungs-Schritt
       (None = generische Kurz-Zusammenfassung)
+    - ``execute``: ``async (payload, ctx) -> str`` — fuehrt die Aktion aus und gibt
+      das ROHE Ergebnis zurueck. Timeout/Cancel/Zusammenfassung/TTS/WS-Events
+      bleiben Sache der Orchestrierung.
+    - ``describe``: ``(PromptContext) -> str`` — der Prompt-Absatz dieser Aktion.
+      ``None`` = bewusst nicht im System-Prompt beworben (heute: BROWSE).
+    - ``prompt_order``/``prompt_group``: deklarative Reihenfolge/Gruppe fuer den
+      generierten Prompt ("core" immer, "launcher" nur bei konfigurierten Apps).
     """
     type: str
     label: str
@@ -39,9 +78,29 @@ class ActionSpec:
     speaks_result: bool = False
     summary_task: str | None = None
     summary_max_tokens: int = 250
+    execute: Callable | None = None
+    describe: Callable | None = None
+    prompt_order: int | None = None
+    prompt_group: str = "core"
 
 
 DEFAULT_SUMMARY_TASK = "Fasse die folgenden Informationen KURZ zusammen, maximal 3 Sätze."
+
+
+# ── Ausfuehrung (RFC-0001) ──────────────────────────────────────────────────
+# Je Action eine ``execute``-Funktion, direkt am Registry-Eintrag referenziert.
+# Sie geben das ROHE Ergebnis zurueck; Orchestrierung bleibt in assistant_core.
+
+async def _exec_session_summary(payload: str, ctx: ActionContext) -> str:
+    lines = [
+        f"{'Du' if msg['role'] == 'user' else 'Jarvis'}: {msg['content']}"
+        for msg in ctx.history[-40:]
+    ]
+    log = "\n".join(lines)[-6000:]
+    if not log.strip():
+        return "Diese Sitzung hat noch keinen nennenswerten Verlauf."
+    return f"Sitzungsprotokoll:\n{log}"
+
 
 # Zentrale Registry: nur hier eingetragene Aktionen werden geparst/ausgefuehrt.
 REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
@@ -119,6 +178,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Fasse kurz zusammen, was in dieser Sitzung besprochen und erledigt wurde. "
             "Maximal 5 Sätze."
         ),
+        execute=_exec_session_summary,
     ),
 )}
 
