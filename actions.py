@@ -7,10 +7,15 @@ damit es isoliert (ohne Serverstart) getestet werden kann.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlparse
+
+import browser_tools
+
+logger = logging.getLogger("jarvis.actions")
 
 # Gleiche Regex wie bisher: [ACTION:TYP] optionaler payload bis Zeilenende.
 ACTION_PATTERN = re.compile(r'\[ACTION:(\w+)\]\s*(.*?)$', re.DOTALL | re.MULTILINE)
@@ -91,6 +96,65 @@ DEFAULT_SUMMARY_TASK = "Fasse die folgenden Informationen KURZ zusammen, maximal
 # Je Action eine ``execute``-Funktion, direkt am Registry-Eintrag referenziert.
 # Sie geben das ROHE Ergebnis zurueck; Orchestrierung bleibt in assistant_core.
 
+# Erfolgreiche Recherche-Ergebnisse enthalten pro Quelle eine solche Zeile —
+# daraus baut die Orchestrierung die Quellenliste fuers Transcript und den Autosave.
+RESEARCH_SOURCE_PREFIX = "QUELLE: "
+
+
+async def _exec_search(payload: str, ctx: ActionContext) -> str:
+    result = await browser_tools.search_and_read(payload)
+    if "error" not in result:
+        return (f"Seite: {result.get('title', '')}\nURL: {result.get('url', '')}"
+                f"\n\n{result.get('content', '')[:2000]}")
+    return f"Suche fehlgeschlagen: {result.get('error', '')}"
+
+
+async def _exec_browse(payload: str, ctx: ActionContext) -> str:
+    result = await browser_tools.visit(payload)
+    if "error" not in result:
+        return f"Seite: {result.get('title', '')}\n\n{result.get('content', '')[:2000]}"
+    return f"Seite nicht erreichbar: {result.get('error', '')}"
+
+
+async def _exec_open(payload: str, ctx: ActionContext) -> str:
+    await browser_tools.open_url(payload)
+    return f"Geöffnet: {payload}"
+
+
+async def _exec_news(payload: str, ctx: ActionContext) -> str:
+    result = await browser_tools.fetch_news()
+    return result
+
+
+async def _exec_research(payload: str, ctx: ActionContext) -> str:
+    """Recherche-Modus: 3–5 Quellen lesen statt nur des ersten Treffers."""
+    links = await browser_tools.search_links(payload, limit=5)
+    if not links:
+        return "Recherche fehlgeschlagen: keine Suchergebnisse gefunden."
+    parts = [f"Recherche zu: {payload}"]
+    gelesen = 0
+    for link in links:
+        if gelesen >= 4:
+            break
+        result = await browser_tools.visit(link["url"], max_chars=1500)
+        if "error" in result:
+            logger.info("Recherche-Quelle übersprungen: %s", link["url"])
+            continue
+        gelesen += 1
+        title = (result.get("title") or link["title"]).strip()
+        parts.append(f"{RESEARCH_SOURCE_PREFIX}{title} — {link['url']}\n"
+                     f"{result.get('content', '')}")
+    if gelesen == 0:
+        return "Recherche fehlgeschlagen: keine der Quellen war lesbar."
+    if gelesen < 3:
+        # Duenne Quellenlage ehrlich benennen statt Scheinsicherheit vorzulesen.
+        parts.append(
+            f"HINWEIS AN JARVIS: Nur {gelesen} Quelle(n) waren lesbar — sag ehrlich dazu, "
+            "dass die Quellenlage dünn ist und die Antwort entsprechend vorsichtig zu werten ist."
+        )
+    return "\n\n".join(parts)
+
+
 async def _exec_session_summary(payload: str, ctx: ActionContext) -> str:
     lines = [
         f"{'Du' if msg['role'] == 'user' else 'Jarvis'}: {msg['content']}"
@@ -104,9 +168,11 @@ async def _exec_session_summary(payload: str, ctx: ActionContext) -> str:
 
 # Zentrale Registry: nur hier eingetragene Aktionen werden geparst/ausgefuehrt.
 REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
-    ActionSpec("SEARCH", "Websuche", is_browser=True),
-    ActionSpec("BROWSE", "Seite lesen", is_url=True, is_browser=True),
-    ActionSpec("OPEN", "Browser öffnen", is_url=True, is_browser=True),
+    ActionSpec("SEARCH", "Websuche", is_browser=True, execute=_exec_search),
+    ActionSpec("BROWSE", "Seite lesen", is_url=True, is_browser=True,
+               execute=_exec_browse),
+    ActionSpec("OPEN", "Browser öffnen", is_url=True, is_browser=True,
+               execute=_exec_open),
     ActionSpec("APP_OPEN", "App öffnen", timeout=15, speaks_result=True),
     # Launcher-Sprachsteuerung (Phase 5): wirkt ueber die Profil-Schicht in
     # app_launcher — nie ueber freie Kommandos. Antworten sind fertige Saetze.
@@ -117,7 +183,8 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
     ActionSpec("APP_AUTOSTART_OFF", "Clap-Start aus", timeout=15, speaks_result=True),
     ActionSpec("APP_PLACE", "App platzieren", timeout=15, speaks_result=True),
     ActionSpec("SCREEN", "Bildschirm ansehen", payload="optional"),
-    ActionSpec("NEWS", "Nachrichten", payload="none", is_browser=True),
+    ActionSpec("NEWS", "Nachrichten", payload="none", is_browser=True,
+               execute=_exec_news),
     ActionSpec(
         "INBOX_READ", "Inbox lesen", payload="none", summary_max_tokens=350,
         summary_task=(
@@ -149,6 +216,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
             "Fasse die Rechercheergebnisse aus den Quellen zu einer präzisen Antwort "
             "zusammen. Maximal 5 Sätze. Nenne KEINE URLs im Text."
         ),
+        execute=_exec_research,
     ),
     ActionSpec(
         "CLIPBOARD", "Zwischenablage", payload="optional",

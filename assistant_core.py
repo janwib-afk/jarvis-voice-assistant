@@ -307,38 +307,8 @@ def _llm_error_hint(e: Exception) -> str:
 
 
 # ── Aktionen ─────────────────────────────────────────────────────────────────
-
-# Erfolgreiche Recherche-Ergebnisse enthalten pro Quelle eine solche Zeile —
-# daraus baut process_message die Quellenliste fürs Transcript und den Autosave.
-RESEARCH_SOURCE_PREFIX = "QUELLE: "
-
-
-async def run_research(topic: str) -> str:
-    """Recherche-Modus: 3–5 Quellen lesen statt nur des ersten Treffers."""
-    links = await browser_tools.search_links(topic, limit=5)
-    if not links:
-        return "Recherche fehlgeschlagen: keine Suchergebnisse gefunden."
-    parts = [f"Recherche zu: {topic}"]
-    gelesen = 0
-    for link in links:
-        if gelesen >= 4:
-            break
-        result = await browser_tools.visit(link["url"], max_chars=1500)
-        if "error" in result:
-            logger.info("Recherche-Quelle übersprungen: %s", link["url"])
-            continue
-        gelesen += 1
-        title = (result.get("title") or link["title"]).strip()
-        parts.append(f"{RESEARCH_SOURCE_PREFIX}{title} — {link['url']}\n{result.get('content', '')}")
-    if gelesen == 0:
-        return "Recherche fehlgeschlagen: keine der Quellen war lesbar."
-    if gelesen < 3:
-        # Duenne Quellenlage ehrlich benennen statt Scheinsicherheit vorzulesen.
-        parts.append(
-            f"HINWEIS AN JARVIS: Nur {gelesen} Quelle(n) waren lesbar — sag ehrlich dazu, "
-            "dass die Quellenlage dünn ist und die Antwort entsprechend vorsichtig zu werten ist."
-        )
-    return "\n\n".join(parts)
+# Die Ausfuehrung liegt seit RFC-0001 je Action am Registry-Eintrag (actions.py);
+# hier bleibt nur die Orchestrierung (Timeout/Cancel/Summary/TTS/WS/Autosave).
 
 
 # ── Launcher-Sprachsteuerung (Phase 5) ──────────────────────────────────────
@@ -479,23 +449,7 @@ async def _execute_action_legacy(action: actions.Action, session_id: str) -> str
     t = action.type
     p = action.payload
 
-    if t == "SEARCH":
-        result = await browser_tools.search_and_read(p)
-        if "error" not in result:
-            return f"Seite: {result.get('title', '')}\nURL: {result.get('url', '')}\n\n{result.get('content', '')[:2000]}"
-        return f"Suche fehlgeschlagen: {result.get('error', '')}"
-
-    elif t == "BROWSE":
-        result = await browser_tools.visit(p)
-        if "error" not in result:
-            return f"Seite: {result.get('title', '')}\n\n{result.get('content', '')[:2000]}"
-        return f"Seite nicht erreichbar: {result.get('error', '')}"
-
-    elif t == "OPEN":
-        await browser_tools.open_url(p)
-        return f"Geöffnet: {p}"
-
-    elif t == "APP_OPEN":
+    if t == "APP_OPEN":
         result = await asyncio.to_thread(app_launcher.launch, p)
         return result["message"]
 
@@ -516,13 +470,6 @@ async def _execute_action_legacy(action: actions.Action, session_id: str) -> str
 
     elif t == "SCREEN":
         return await screen_capture.describe_screen(ai, question=p)
-
-    elif t == "NEWS":
-        result = await browser_tools.fetch_news()
-        return result
-
-    elif t == "RESEARCH":
-        return await run_research(p)
 
     elif t == "INBOX_READ":
         if not memory.inbox_available():
@@ -592,9 +539,9 @@ async def _execute_action_legacy(action: actions.Action, session_id: str) -> str
 async def _finish_research(summary: str, action_result: str) -> str | None:
     """Quellenliste für die Anzeige anhängen und das Ergebnis in den Brain Dump sichern."""
     sources = [
-        line[len(RESEARCH_SOURCE_PREFIX):].strip()
+        line[len(actions.RESEARCH_SOURCE_PREFIX):].strip()
         for line in action_result.splitlines()
-        if line.startswith(RESEARCH_SOURCE_PREFIX)
+        if line.startswith(actions.RESEARCH_SOURCE_PREFIX)
     ]
     if not sources:
         return None
