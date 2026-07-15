@@ -311,114 +311,6 @@ def _llm_error_hint(e: Exception) -> str:
 # hier bleibt nur die Orchestrierung (Timeout/Cancel/Summary/TTS/WS/Autosave).
 
 
-# ── Launcher-Sprachsteuerung (Phase 5) ──────────────────────────────────────
-# Antworten sind fertige deutsche Saetze (speaks_result) — kein Zusammenfassungs-LLM.
-
-_MONITOR_SPEECH = {
-    "primary": "auf dem Hauptmonitor", "left": "auf dem linken Monitor",
-    "right": "auf dem rechten Monitor", "leftmost": "ganz links",
-    "rightmost": "ganz rechts",
-}
-_ZONE_SPEECH = {
-    "fullscreen": "im Vollbild", "left_half": "in der linken Hälfte",
-    "right_half": "in der rechten Hälfte", "top_half": "in der oberen Hälfte",
-    "bottom_half": "in der unteren Hälfte", "top_left": "oben links",
-    "top_right": "oben rechts", "bottom_left": "unten links",
-    "bottom_right": "unten rechts", "center": "zentriert",
-}
-
-
-def _available_apps() -> str:
-    return ", ".join(a["name"] for a in app_launcher.APPS)
-
-
-def _available_profiles() -> str:
-    return ", ".join(p["name"] for p in app_launcher.PROFILES)
-
-
-def _unknown_app_message(query: str) -> str:
-    available = _available_apps()
-    if not available:
-        return "Es sind keine Apps konfiguriert — trage Apps in den Einstellungen ein."
-    return f"Die App '{(query or '').strip()}' ist nicht konfiguriert. Verfügbar: {available}."
-
-
-async def _persist_launcher_or_error(new_launcher: dict, kind: str) -> str | None:
-    """Persist via injizierten Server-Hook; None = ok, sonst sprechbarer Fehler."""
-    if PERSIST_LAUNCHER is None:
-        return "Profil-Änderungen sind gerade nicht möglich."
-    errors = await PERSIST_LAUNCHER(new_launcher, kind)
-    if errors:
-        return "Das konnte ich nicht speichern: " + " ".join(errors)
-    return None
-
-
-async def _voice_activate_profile(payload: str) -> str:
-    profile = app_launcher.find_profile(payload)
-    if profile is None:
-        return (f"Das Profil '{(payload or '').strip()}' kenne ich nicht. "
-                f"Verfügbar: {_available_profiles()}.")
-    if profile["id"] == app_launcher.ACTIVE_PROFILE:
-        return f"{profile['name']} ist bereits aktiv."
-    new_launcher = app_launcher.launcher_with_active(profile["id"])
-    error = await _persist_launcher_or_error(new_launcher, "profile")
-    if error:
-        return error
-    return f"{profile['name']} ist jetzt aktiv."
-
-
-def _voice_profile_status(payload: str) -> str:
-    if payload.strip():
-        profile = app_launcher.find_profile(payload)
-        if profile is None:
-            return (f"Das Profil '{payload.strip()}' kenne ich nicht. "
-                    f"Verfügbar: {_available_profiles()}.")
-    else:
-        profile = app_launcher.find_profile(app_launcher.ACTIVE_PROFILE)
-        if profile is None:
-            return "Es ist kein Profil konfiguriert."
-    enabled = [a["name"] for a in app_launcher.effective_apps(profile["id"]) if a["autostart"]]
-    is_active = profile["id"] == app_launcher.ACTIVE_PROFILE
-    prefix = f"Aktiv ist '{profile['name']}'." if is_active else f"Im Profil '{profile['name']}':"
-    if not enabled:
-        return f"{prefix} Beim Clap startet nichts automatisch."
-    return f"{prefix} Beim Clap starten: {', '.join(enabled)}."
-
-
-async def _voice_set_autostart(payload: str, enabled: bool) -> str:
-    app = app_launcher.find_app(payload)
-    if app is None:
-        return _unknown_app_message(payload)
-    new_launcher = app_launcher.launcher_with_app_state(app["id"], autostart=enabled)
-    if new_launcher is None:
-        return _unknown_app_message(payload)
-    error = await _persist_launcher_or_error(new_launcher, "autostart")
-    if error:
-        return error
-    if enabled:
-        return f"{app['name']} startet beim nächsten Clap mit."
-    return f"{app['name']} ist aus dem Clap-Start raus."
-
-
-async def _voice_place_app(payload: str) -> str:
-    parsed, parse_error = actions.parse_place_payload(payload)
-    if parse_error:
-        return parse_error
-    app_query, monitor, zone = parsed
-    app = app_launcher.find_app(app_query)
-    if app is None:
-        return _unknown_app_message(app_query)
-    new_launcher = app_launcher.launcher_with_app_state(
-        app["id"], placement={"monitor": monitor, "zone": zone}
-    )
-    if new_launcher is None:
-        return _unknown_app_message(app_query)
-    error = await _persist_launcher_or_error(new_launcher, "placement")
-    if error:
-        return error
-    return f"{app['name']} liegt jetzt {_ZONE_SPEECH[zone]} {_MONITOR_SPEECH[monitor]}."
-
-
 def _action_context(session_id: str) -> actions.ActionContext:
     """Request-scoped Kontext aus dem AKTUELLEN Prozesszustand bauen (RFC-0001).
 
@@ -449,26 +341,7 @@ async def _execute_action_legacy(action: actions.Action, session_id: str) -> str
     t = action.type
     p = action.payload
 
-    if t == "APP_OPEN":
-        result = await asyncio.to_thread(app_launcher.launch, p)
-        return result["message"]
-
-    elif t == "PROFILE_ACTIVATE":
-        return await _voice_activate_profile(p)
-
-    elif t == "PROFILE_STATUS":
-        return _voice_profile_status(p)
-
-    elif t == "APP_AUTOSTART_ON":
-        return await _voice_set_autostart(p, True)
-
-    elif t == "APP_AUTOSTART_OFF":
-        return await _voice_set_autostart(p, False)
-
-    elif t == "APP_PLACE":
-        return await _voice_place_app(p)
-
-    elif t == "SCREEN":
+    if t == "SCREEN":
         return await screen_capture.describe_screen(ai, question=p)
 
     elif t == "CLIPBOARD":

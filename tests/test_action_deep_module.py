@@ -22,6 +22,7 @@ from unittest import mock
 import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
 
 import actions
+import app_launcher
 import browser_tools
 import memory
 
@@ -297,3 +298,171 @@ class ProjectContextActionTests(_TempVaultTestCase):
         result = execute("PROJECT_CONTEXT", "Nordlicht")
         self.assertTrue(result.startswith('Frage: "Nordlicht"\n\n'))
         self.assertIn("Prototyp", result)
+
+
+class _LauncherTestCase(unittest.TestCase):
+    """Basis fuer Launcher-Actions: echte Registry-/Profil-/Allowlist-Logik, aber
+    der tatsaechliche Prozess-/URL-Start ist als externe Grenze gefaked."""
+
+    APPS = [
+        {"id": "obsidian", "name": "Obsidian", "command": "C:/nirgends/obsidian.exe",
+         "type": "process", "process_name": "obsidian.exe"},
+        {"id": "vscode", "name": "VS Code", "command": "C:/nirgends/code.exe",
+         "type": "process", "process_name": "code.exe"},
+    ]
+    LAUNCHER = {
+        "active_profile": "coding",
+        "profiles": [
+            {"id": "coding", "name": "Coding",
+             "apps": {"obsidian": {"autostart": True}, "vscode": {"autostart": False}}},
+            {"id": "research", "name": "Research",
+             "apps": {"obsidian": {"autostart": False}, "vscode": {"autostart": False}}},
+        ],
+    }
+
+    def setUp(self):
+        self._saved = (app_launcher.APPS, app_launcher.PROFILES,
+                       app_launcher.ACTIVE_PROFILE)
+        app_launcher.configure(self.APPS, self.LAUNCHER)
+        self.started = []
+        self._patches = [
+            mock.patch.object(app_launcher, "_start_process",
+                              lambda cmd: self.started.append(cmd)),
+            mock.patch.object(app_launcher, "_start_url",
+                              lambda cmd: self.started.append(cmd)),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self._patches:
+            p.stop()
+        (app_launcher.APPS, app_launcher.PROFILES,
+         app_launcher.ACTIVE_PROFILE) = self._saved
+
+    def persisting_ctx(self):
+        """Kontext mit aufzeichnendem Persist-Hook — schreibt nichts auf Platte."""
+        saved = []
+
+        async def _persist(new_launcher, kind):
+            saved.append((new_launcher, kind))
+            return []
+
+        return actions.ActionContext(persist_launcher=_persist), saved
+
+
+class AppOpenActionTests(_LauncherTestCase):
+    def test_opens_configured_app_and_speaks_result(self):
+        result = execute("APP_OPEN", "Obsidian")
+        self.assertIn("Obsidian", result)
+        self.assertEqual(self.started, ["C:/nirgends/obsidian.exe"])
+
+    def test_unknown_app_is_refused_without_starting_anything(self):
+        result = execute("APP_OPEN", "Photoshop")
+        self.assertIn("Photoshop", result)
+        self.assertEqual(self.started, [], "Nicht-Allowlist-App darf nichts starten")
+
+
+class ProfileActivateActionTests(_LauncherTestCase):
+    def test_activates_known_profile_via_persist_hook(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("PROFILE_ACTIVATE").execute("Research", c))
+        self.assertEqual(result, "Research ist jetzt aktiv.")
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0][1], "profile")
+        self.assertEqual(saved[0][0]["active_profile"], "research")
+
+    def test_already_active_profile_needs_no_persist(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("PROFILE_ACTIVATE").execute("Coding", c))
+        self.assertEqual(result, "Coding ist bereits aktiv.")
+        self.assertEqual(saved, [])
+
+    def test_unknown_profile_lists_available(self):
+        c, _ = self.persisting_ctx()
+        result = run(actions.spec_for("PROFILE_ACTIVATE").execute("Gaming", c))
+        self.assertEqual(
+            result,
+            "Das Profil 'Gaming' kenne ich nicht. Verfügbar: Coding, Research.",
+        )
+
+    def test_missing_persist_hook_gives_spoken_error(self):
+        result = execute("PROFILE_ACTIVATE", "Research")
+        self.assertEqual(result, "Profil-Änderungen sind gerade nicht möglich.")
+
+    def test_persist_failure_is_spoken(self):
+        async def _failing(new_launcher, kind):
+            return ["Datei gesperrt"]
+
+        result = run(actions.spec_for("PROFILE_ACTIVATE").execute(
+            "Research", actions.ActionContext(persist_launcher=_failing)))
+        self.assertEqual(result, "Das konnte ich nicht speichern: Datei gesperrt")
+
+
+class ProfileStatusActionTests(_LauncherTestCase):
+    def test_without_payload_reports_active_profile(self):
+        self.assertEqual(execute("PROFILE_STATUS"),
+                         "Aktiv ist 'Coding'. Beim Clap starten: Obsidian.")
+
+    def test_named_profile_without_autostart_apps(self):
+        self.assertEqual(execute("PROFILE_STATUS", "Research"),
+                         "Im Profil 'Research': Beim Clap startet nichts automatisch.")
+
+
+class AutostartActionTests(_LauncherTestCase):
+    def test_autostart_on_persists_and_speaks(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("APP_AUTOSTART_ON").execute("VS Code", c))
+        self.assertEqual(result, "VS Code startet beim nächsten Clap mit.")
+        self.assertEqual(saved[0][1], "autostart")
+        self.assertIs(saved[0][0]["profiles"][0]["apps"]["vscode"]["autostart"], True)
+
+    def test_autostart_off_persists_and_speaks(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("APP_AUTOSTART_OFF").execute("Obsidian", c))
+        self.assertEqual(result, "Obsidian ist aus dem Clap-Start raus.")
+        self.assertIs(saved[0][0]["profiles"][0]["apps"]["obsidian"]["autostart"], False)
+
+    def test_unknown_app_is_refused(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("APP_AUTOSTART_ON").execute("Photoshop", c))
+        self.assertEqual(
+            result,
+            "Die App 'Photoshop' ist nicht konfiguriert. Verfügbar: Obsidian, VS Code.",
+        )
+        self.assertEqual(saved, [])
+
+
+class AppPlaceActionTests(_LauncherTestCase):
+    def test_places_app_and_speaks_german_position(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("APP_PLACE").execute(
+            "Obsidian | left | right_half", c))
+        self.assertEqual(
+            result,
+            "Obsidian liegt jetzt in der rechten Hälfte auf dem linken Monitor.",
+        )
+        self.assertEqual(saved[0][1], "placement")
+        self.assertEqual(saved[0][0]["profiles"][0]["apps"]["obsidian"]["placement"],
+                         {"monitor": "left", "zone": "right_half"})
+
+    def test_german_aliases_are_accepted(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("APP_PLACE").execute(
+            "Obsidian | links | Vollbild", c))
+        self.assertEqual(result,
+                         "Obsidian liegt jetzt im Vollbild auf dem linken Monitor.")
+        self.assertEqual(saved[0][0]["profiles"][0]["apps"]["obsidian"]["placement"],
+                         {"monitor": "left", "zone": "fullscreen"})
+
+    def test_malformed_payload_is_explained_without_persisting(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("APP_PLACE").execute("Obsidian | left", c))
+        self.assertIn("Ich brauche App, Monitor und Zone.", result)
+        self.assertEqual(saved, [])
+
+    def test_unknown_zone_is_refused(self):
+        c, saved = self.persisting_ctx()
+        result = run(actions.spec_for("APP_PLACE").execute("Obsidian | left | Mond", c))
+        self.assertTrue(result.startswith("Die Zone kenne ich nicht"))
+        self.assertEqual(saved, [])

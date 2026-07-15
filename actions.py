@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+import app_launcher
 import browser_tools
 import memory
 
@@ -158,6 +159,131 @@ async def _exec_research(payload: str, ctx: ActionContext) -> str:
     return "\n\n".join(parts)
 
 
+# ── Launcher-Sprachsteuerung ────────────────────────────────────────────────
+# Wirkt ausschliesslich ueber die Profil-Schicht in app_launcher — nie ueber
+# freie Kommandos. Antworten sind fertige deutsche Saetze (speaks_result).
+
+_MONITOR_SPEECH = {
+    "primary": "auf dem Hauptmonitor", "left": "auf dem linken Monitor",
+    "right": "auf dem rechten Monitor", "leftmost": "ganz links",
+    "rightmost": "ganz rechts",
+}
+_ZONE_SPEECH = {
+    "fullscreen": "im Vollbild", "left_half": "in der linken Hälfte",
+    "right_half": "in der rechten Hälfte", "top_half": "in der oberen Hälfte",
+    "bottom_half": "in der unteren Hälfte", "top_left": "oben links",
+    "top_right": "oben rechts", "bottom_left": "unten links",
+    "bottom_right": "unten rechts", "center": "zentriert",
+}
+
+
+def _available_apps() -> str:
+    return ", ".join(a["name"] for a in app_launcher.APPS)
+
+
+def _available_profiles() -> str:
+    return ", ".join(p["name"] for p in app_launcher.PROFILES)
+
+
+def _unknown_app_message(query: str) -> str:
+    available = _available_apps()
+    if not available:
+        return "Es sind keine Apps konfiguriert — trage Apps in den Einstellungen ein."
+    return f"Die App '{(query or '').strip()}' ist nicht konfiguriert. Verfügbar: {available}."
+
+
+async def _persist_launcher_or_error(ctx: ActionContext, new_launcher: dict,
+                                     kind: str) -> str | None:
+    """Persist ausschliesslich ueber ctx.persist_launcher; None = ok."""
+    if ctx.persist_launcher is None:
+        return "Profil-Änderungen sind gerade nicht möglich."
+    errors = await ctx.persist_launcher(new_launcher, kind)
+    if errors:
+        return "Das konnte ich nicht speichern: " + " ".join(errors)
+    return None
+
+
+async def _exec_app_open(payload: str, ctx: ActionContext) -> str:
+    result = await asyncio.to_thread(app_launcher.launch, payload)
+    return result["message"]
+
+
+async def _exec_profile_activate(payload: str, ctx: ActionContext) -> str:
+    profile = app_launcher.find_profile(payload)
+    if profile is None:
+        return (f"Das Profil '{(payload or '').strip()}' kenne ich nicht. "
+                f"Verfügbar: {_available_profiles()}.")
+    if profile["id"] == app_launcher.ACTIVE_PROFILE:
+        return f"{profile['name']} ist bereits aktiv."
+    new_launcher = app_launcher.launcher_with_active(profile["id"])
+    error = await _persist_launcher_or_error(ctx, new_launcher, "profile")
+    if error:
+        return error
+    return f"{profile['name']} ist jetzt aktiv."
+
+
+async def _exec_profile_status(payload: str, ctx: ActionContext) -> str:
+    if payload.strip():
+        profile = app_launcher.find_profile(payload)
+        if profile is None:
+            return (f"Das Profil '{payload.strip()}' kenne ich nicht. "
+                    f"Verfügbar: {_available_profiles()}.")
+    else:
+        profile = app_launcher.find_profile(app_launcher.ACTIVE_PROFILE)
+        if profile is None:
+            return "Es ist kein Profil konfiguriert."
+    enabled = [a["name"] for a in app_launcher.effective_apps(profile["id"])
+               if a["autostart"]]
+    is_active = profile["id"] == app_launcher.ACTIVE_PROFILE
+    prefix = (f"Aktiv ist '{profile['name']}'." if is_active
+              else f"Im Profil '{profile['name']}':")
+    if not enabled:
+        return f"{prefix} Beim Clap startet nichts automatisch."
+    return f"{prefix} Beim Clap starten: {', '.join(enabled)}."
+
+
+async def _set_autostart(payload: str, ctx: ActionContext, enabled: bool) -> str:
+    app = app_launcher.find_app(payload)
+    if app is None:
+        return _unknown_app_message(payload)
+    new_launcher = app_launcher.launcher_with_app_state(app["id"], autostart=enabled)
+    if new_launcher is None:
+        return _unknown_app_message(payload)
+    error = await _persist_launcher_or_error(ctx, new_launcher, "autostart")
+    if error:
+        return error
+    if enabled:
+        return f"{app['name']} startet beim nächsten Clap mit."
+    return f"{app['name']} ist aus dem Clap-Start raus."
+
+
+async def _exec_autostart_on(payload: str, ctx: ActionContext) -> str:
+    return await _set_autostart(payload, ctx, True)
+
+
+async def _exec_autostart_off(payload: str, ctx: ActionContext) -> str:
+    return await _set_autostart(payload, ctx, False)
+
+
+async def _exec_app_place(payload: str, ctx: ActionContext) -> str:
+    parsed, parse_error = parse_place_payload(payload)
+    if parse_error:
+        return parse_error
+    app_query, monitor, zone = parsed
+    app = app_launcher.find_app(app_query)
+    if app is None:
+        return _unknown_app_message(app_query)
+    new_launcher = app_launcher.launcher_with_app_state(
+        app["id"], placement={"monitor": monitor, "zone": zone}
+    )
+    if new_launcher is None:
+        return _unknown_app_message(app_query)
+    error = await _persist_launcher_or_error(ctx, new_launcher, "placement")
+    if error:
+        return error
+    return f"{app['name']} liegt jetzt {_ZONE_SPEECH[zone]} {_MONITOR_SPEECH[monitor]}."
+
+
 async def _exec_inbox_read(payload: str, ctx: ActionContext) -> str:
     if not memory.inbox_available():
         return "Inbox-Ordner nicht konfiguriert oder nicht gefunden."
@@ -222,15 +348,20 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
                execute=_exec_browse),
     ActionSpec("OPEN", "Browser öffnen", is_url=True, is_browser=True,
                execute=_exec_open),
-    ActionSpec("APP_OPEN", "App öffnen", timeout=15, speaks_result=True),
+    ActionSpec("APP_OPEN", "App öffnen", timeout=15, speaks_result=True,
+               execute=_exec_app_open),
     # Launcher-Sprachsteuerung (Phase 5): wirkt ueber die Profil-Schicht in
     # app_launcher — nie ueber freie Kommandos. Antworten sind fertige Saetze.
-    ActionSpec("PROFILE_ACTIVATE", "Profil aktivieren", timeout=15, speaks_result=True),
+    ActionSpec("PROFILE_ACTIVATE", "Profil aktivieren", timeout=15, speaks_result=True,
+               execute=_exec_profile_activate),
     ActionSpec("PROFILE_STATUS", "Profil-Status", payload="optional", timeout=15,
-               speaks_result=True),
-    ActionSpec("APP_AUTOSTART_ON", "Clap-Start an", timeout=15, speaks_result=True),
-    ActionSpec("APP_AUTOSTART_OFF", "Clap-Start aus", timeout=15, speaks_result=True),
-    ActionSpec("APP_PLACE", "App platzieren", timeout=15, speaks_result=True),
+               speaks_result=True, execute=_exec_profile_status),
+    ActionSpec("APP_AUTOSTART_ON", "Clap-Start an", timeout=15, speaks_result=True,
+               execute=_exec_autostart_on),
+    ActionSpec("APP_AUTOSTART_OFF", "Clap-Start aus", timeout=15, speaks_result=True,
+               execute=_exec_autostart_off),
+    ActionSpec("APP_PLACE", "App platzieren", timeout=15, speaks_result=True,
+               execute=_exec_app_place),
     ActionSpec("SCREEN", "Bildschirm ansehen", payload="optional"),
     ActionSpec("NEWS", "Nachrichten", payload="none", is_browser=True,
                execute=_exec_news),
