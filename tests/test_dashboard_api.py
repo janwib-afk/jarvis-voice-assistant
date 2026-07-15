@@ -44,6 +44,13 @@ class DashboardApiTests(unittest.TestCase):
         self.client = TestClient(server.app)
         self.headers = {"X-Jarvis-Token": server.SESSION_TOKEN}
 
+        # Amendment 1 (voll-lazy Import): server.config ist beim Import None —
+        # hier kontrolliert die synthetische Fixture laden (ohne Lifespan, damit
+        # die App-Registry dieses Tests nicht überschrieben wird).
+        server.runtime.load_config()
+        self._saved_config = server.config
+        server.config = server.runtime.config
+
         self._saved_apps = (app_launcher.APPS, app_launcher.PROFILES,
                             app_launcher.ACTIVE_PROFILE)
         self._saved_core = {name: getattr(assistant_core, name) for name in _CORE_GLOBALS}
@@ -55,6 +62,7 @@ class DashboardApiTests(unittest.TestCase):
         assistant_core.LAST_REFRESH = 1700000000.0
 
     def tearDown(self):
+        server.config = self._saved_config
         app_launcher.APPS, app_launcher.PROFILES, app_launcher.ACTIVE_PROFILE = \
             self._saved_apps
         for name, value in self._saved_core.items():

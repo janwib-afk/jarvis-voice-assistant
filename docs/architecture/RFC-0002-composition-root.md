@@ -19,6 +19,39 @@ Nutzer bestätigt (2026-07-15).
 > bleibt **unverändert akzeptiert**, wird aber gemäß **D1 erst nach** der
 > Composition-Root-Stabilisierung umgesetzt.
 
+## Amendment 1 (2026-07-15) — Voll-lazy Import (ausdrücklich akzeptiert)
+
+**Vom Nutzer ausdrücklich als RFC-0002-Änderung akzeptiert (2026-07-15).** Bei der
+Implementierung (Prompt 8) trat ein direkter Konflikt zwischen dem ursprünglichen
+E3-„eager Import-Bootstrap" (Clients/Config **beim Import**) und dem Prompt-8-Gate
+(„Import lädt keine Config, erzeugt keine Clients") zutage. Dieses Amendment ersetzt
+den eager-Bootstrap-Kompromiss **normativ** durch **voll-lazy Import**. Wo ältere
+Passagen dieses RFC (Constraints „eager Priming"; Config-Ladezeitpunkt „Zwei-Welten-
+Kompromiss"; Ressourcenbesitz-Tabelle „`from_env` (Kompat: import-sichtbar)";
+Import-/App-Factory-Semantik; Adapter **A1/A5**; der „Nachgewiesen grün"-Absatz; die
+Slice-Beschreibungen; das Risiko „Zwei-Welten-Konstruktion") dem widersprechen,
+**gilt dieses Amendment** (die betroffenen Passagen sind unten entsprechend korrigiert).
+
+**Verbindliche Regeln (ersetzen widersprüchliche Passagen):**
+1. **`import server` lädt keine Config und erzeugt keine Clients** — kein `sys.exit`,
+   kein `ai`/`http`, keine Config-I/O beim Import.
+2. **`server.app` bleibt importierbar**, erhält beim Import aber nur eine **ungeöffnete
+   `Runtime`** (nur `config_path` aufgelöst + `session_token` erzeugt — beides ohne I/O).
+3. **Config und OWNED Clients entstehen ausschließlich im FastAPI-Lifespan** (`aopen`);
+   fehlende/ungültige Produktionsconfig ⇒ Lifespan-Start schlägt geschlossen fehl
+   (fails-closed); `python server.py` beendet mit Non-Zero-Exit **vor** `uvicorn.run`.
+4. **Tests und E2E-Harness wechseln** auf `create_app(runtime)` bzw. einen
+   lifespan-fahrenden `with TestClient(app)`; injizierte Test-Clients bleiben **BORROWED**.
+5. **Adapter A1 (eager Import-Bootstrap) entfällt**; **A5** bedeutet nun: `server.http`/`ai`
+   existieren erst **nach** Lifespan-Start (bzw. wenn injiziert). Der `_wired`-Latch bleibt
+   (Idempotenz + Schutz injizierter Fakes), aber es gibt **kein** eager `wire()` beim Import.
+6. **Wire-, REST-, WS-, Config- und Memory-Verträge bleiben byte-/shape-unverändert.**
+
+Falls die sieben vorgesehenen Testmigrationen nicht ausreichen oder ein bestehender
+öffentlicher Entry Point (`server.app`, `python server.py`, Launcher, `uvicorn server:app`)
+nicht erhalten werden kann, wird die Umsetzung mit konkretem Befund **gestoppt** statt den
+Scope still zu erweitern.
+
 ## Zusammenfassung
 
 Der heutige „Composition Root" ist der **Import von `server.py`**: beim `import server`
@@ -134,9 +167,10 @@ Methode.
 - Standardtests kosten 0 Provider (QUALITY_BASELINE); LLM/TTS/Browser gemockt.
 - `core.autocrlf=true` ohne `.gitattributes` → Slices klein halten (Diff-Lesbarkeit).
 - Nur vertikale, einzeln rückrollbare Slices; kein Big-Bang.
-- D5-Realität: Bestandstests fahren keine Lifespan → Import muss die import-lesbaren Symbole
-  weiter bereitstellen (eager „Priming"), während der Lifespan der kanonische open/close-Owner
-  für den uvicorn-Pfad ist.
+- D5-Realität (per **Amendment 1**): Import erzeugt nur eine **ungeöffnete** Runtime
+  (`config_path` + `session_token`, keine I/O); Config + OWNED-Clients öffnen ausschließlich im
+  Lifespan. Bestandstests, die `server.config`/`server.http` **ohne** Lifespan lasen, werden auf
+  `with TestClient(create_app(runtime))` migriert (7 Dateien).
 
 ## Betrachtete Entwurfsvarianten
 
@@ -176,9 +210,10 @@ Endform, aber teurer/riskanter; E1 pur trägt das Verhalten nicht im Runtime (un
   selbst erzeugte = **owned** (im Lifespan geschlossen).
 - **D4 — Browser:** Root besitzt den **Lifecycle**; `browser_tools`-Instanz bleibt vorerst
   modul-globaler Lazy-Singleton (per-App-Browser = Residual).
-- **D5 — Entry-Point/Config-Zeitpunkt:** `server.app` bleibt import-sicher; `create_app()`
-  reine Verdrahtung; Config-Laden + Client-Öffnen im Lifespan; fehlende Config → Startup
-  **fails-closed** (kein `sys.exit` beim Import).
+- **D5 — Entry-Point/Config-Zeitpunkt** (präzisiert durch **Amendment 1**): `server.app` bleibt
+  import-sicher und erhält beim Import nur eine **ungeöffnete** Runtime (keine Config-I/O, keine
+  Clients); `create_app()` reine Verdrahtung; Config-Laden + Client-Öffnen ausschließlich im
+  Lifespan; fehlende Config → Startup **fails-closed** (kein `sys.exit` beim Import).
 
 ## Zielarchitektur
 
@@ -275,18 +310,18 @@ Die Kompatibilitäts-Read-Aliase (`server.config`/`server.http`/…) sind ein te
   `sys.exit`**) → `check_runtime_environment`. Fehler ⇒ `config=None` (+ Warnung).
 - Der **`JARVIS_CONFIG_PATH`-Seam** (ADR 0003) bleibt der explizite Produktions-/Test-Selektor;
   **kein** stiller Fallback auf Testwerte.
-- **Zwei-Welten-Kompromiss (bewusst, transitional):** Für die import-lesbare Kompatibilität
-  konstruiert der Modul-Bootstrap `Runtime.from_env` + `wire()` beim Import (eager Priming);
-  der **Lifespan** ist der kanonische open/close-Owner für den uvicorn-Pfad. Dieser Kompromiss
-  ist deletionsfähig (siehe Deletion-Test), sobald die Tests auf `create_app(Runtime.from_env(...))`
-  umgestellt sind.
+- **Voll-lazy Import (Amendment 1):** Beim Import wird **keine** Config geladen und **kein**
+  Client erzeugt. `Runtime.for_production(...)` löst nur den `config_path` auf und erzeugt den
+  `session_token` — beides ohne I/O. `Runtime.load_config()` und die OWNED-Client-Erzeugung laufen
+  **ausschließlich** im Lifespan (`aopen`). Fehlende/ungültige Produktionsconfig ⇒ `aopen` schlägt
+  geschlossen fehl (fails-closed); kein `sys.exit` beim Import.
 
 ## Ressourcenbesitz und Lebenszyklus
 
 | Ressource | Besitz | Öffnen | Schließen |
 |---|---|---|---|
-| `ai`/`http` selbst erzeugt | OWNED | `from_env` (Kompat: import-sichtbar) | `aclose`: SDK-nativer async-Close, nur wenn OWNED |
-| `ai`/`http` injiziert | BORROWED | `from_env(ai=…, http=…)` | **nie** |
+| `ai`/`http` selbst erzeugt | OWNED | **`aopen` (Lifespan)** — nie beim Import (Amendment 1) | `aclose`: SDK-nativer async-Close, nur wenn OWNED |
+| `ai`/`http` injiziert | BORROWED | `create_app(Runtime(..., ai=…, http=…))` | **nie** |
 | Browser | Lifecycle-Owner = Runtime (D4) | lazy im ersten Action-Call | `aclose`: `browser_tools.close()` (ersetzt `on_shutdown`) |
 | Refresh-Task | OWNED | `aopen` (außer `JARVIS_SKIP_STARTUP_REFRESH`) | `aclose`: cancel + await + suppress |
 | `session_token`/`ws_clients`/`conversations`/`pending_confirm` | per-App, OWNED | `from_env` | mit dem Runtime-Objekt |
@@ -301,17 +336,24 @@ schließen → (4) OWNED `ai` schließen → `_closed=True`.
 ## Import- und App-Factory-Semantik
 
 `create_app(runtime)` ist **seiteneffektfrei** (nur Verdrahtung). `app = create_app(runtime)`
-darf auf Modulebene stehen und bleibt import-sicher, weil Config-Laden/Client-Öffnen erst im
-Lifespan (uvicorn) bzw. — für die Kompatibilität — im eager Import-Bootstrap passieren, nicht
-in `create_app` selbst. `server.app` bleibt ein importierbares ASGI-App-Objekt
-(`uvicorn server:app`, `python server.py`, `TestClient(server.app)` unverändert).
+darf auf Modulebene stehen und ist import-sicher, weil Config-Laden **und** Client-Öffnen
+**ausschließlich** im Lifespan (`aopen`) passieren — beim Import wird nur eine **ungeöffnete**
+Runtime erzeugt (Amendment 1). `server.app` bleibt ein importierbares ASGI-App-Objekt
+(`uvicorn server:app`, `python server.py`, `TestClient(server.app)`). Bestandstests, die
+`server`-Zustand **ohne** Lifespan lasen, fahren ihn nun via `with TestClient(app)`.
 
 ## Startup-, Partial-Failure- und Cleanup-Verhalten
 
 ```python
-async def aopen(self):
-    if self.config is None:                      # fails-closed (D5) — nur uvicorn-Pfad
-        raise RuntimeError("Konfiguration fehlt/ungültig — Server startet nicht.")
+async def aopen(self):                           # Amendment 1: Config + Clients erst HIER (Lifespan)
+    if self.config is None:
+        self.load_config()                       # ConfigError ⇒ fails-closed (kein sys.exit)
+    if self.http is None:                         # OWNED-Client erst hier erzeugen
+        self.http = httpx.AsyncClient(timeout=30); self.owns_clients = True
+    if self.ai is None:
+        self.ai = anthropic.AsyncAnthropic(api_key=self.config["anthropic_api_key"],
+                                           timeout=30.0, max_retries=2)
+    assistant_core.init_clients(self.ai, self.http)
     if not self._wired: self.wire()
     if not os.environ.get("JARVIS_SKIP_STARTUP_REFRESH"):
         self._refresh_task = asyncio.create_task(asyncio.to_thread(assistant_core.refresh_data))
@@ -383,11 +425,11 @@ Read-Aliase mit bestehenden Namen). Dünne, dokumentierte Adapter:
 
 | # | Adapter (in `server.py`) | Alter Aufrufer | Deprecation-Bedingung | Früheste Entfernung |
 |---|---|---|---|---|
-| A1 | Import-Bootstrap `Runtime.from_env(...) + wire()` | `import server` (`JARVIS_CONFIG_PATH`-Seam) | alle Tests bauen `create_app(Runtime…)` | nach Test-Migration |
+| A1 | **entfällt (Amendment 1)** — kein eager Import-Bootstrap; Import erzeugt nur eine ungeöffnete Runtime (`config_path`+`session_token`, keine I/O) | — | — | entfallen |
 | A2 | `app = create_app(runtime)` (Modul-`app`) | `server.app`, `uvicorn server:app`, e2e `@server.app.post` | — | **bleibt** (öffentlicher Entry) |
 | A3 | `SESSION_TOKEN = runtime.session_token` (Read-Alias) | `server.SESSION_TOKEN` | Tests lesen Runtime | nach Test-Migration |
 | A4 | `ws_clients = runtime.ws_clients` (dasselbe Set) | Broadcast/Routen | Routen lesen `app.state.runtime` | Slice-5-Abschluss |
-| A5 | `http`/`ai = runtime.http/ai` (Read-Alias) | `e2e_server.py:171` (`server.http`) | e2e liest Runtime | nach e2e-Migration |
+| A5 | `http`/`ai` existieren **erst nach Lifespan-Start** (bzw. injiziert) — kein Import-Alias (Amendment 1) | migriertes `e2e_server` nutzt `create_app(runtime)` + lifespan-`TestClient` | e2e liest Runtime | erledigt mit dieser Migration |
 | A6 | `config`/`CONFIG_PATH`/`STARTUP_WARNINGS` (Modul-Global, Source-of-Truth) | Routen + `test_*` patchen sie | **K05** (Settings-Single-Writer) | **erst mit K05** |
 | A7 | `apply_settings`/`broadcast_*`/`persist_launcher_block` als Modul-Funktionen, die an `runtime.*` delegieren | Routen, `PERSIST_LAUNCHER` | Routen/Core rufen Runtime | nach Slice 4 |
 | A8 | `__main__`: `sys.exit(1)` bei `config is None` **vor** `uvicorn.run` | `python server.py` (Launcher-„exited") | Launcher liest nur `/health` | Launcher-Änderung nötig |
@@ -396,45 +438,48 @@ Jeder Adapter trägt im Code einen `# DEPRECATED(K05/K03/D4/Test-Migration): …
 CI-grep-Guard (`server.SESSION_TOKEN`/`server.http`/`server.config` in `tests/`) macht die
 Löschreife messbar (0 Treffer ⇒ Alias entfernbar).
 
-**Nachgewiesen grün (bleibt unverändert):** `test_settings_api` (patcht `server.{config,
-STARTUP_WARNINGS,CONFIG_PATH}` — bleiben Modul-Global via A6; kein `with` ⇒ keine Lifespan);
-`e2e_server` (`load_config`-Monkeypatch vor Import trifft `Runtime.from_env(load=…)`;
-`init_clients(_FakeAI(), server.http)` — `_wired`-Latch verhindert Re-Wiring im Lifespan, `_FakeAI`
-bleibt); `test_ws` (`server.SESSION_TOKEN`/`pending_confirm`/`process_message`-Patches über Aliase/
-Module); `test_voice_launcher` (`PERSIST_LAUNCHER`-Signatur unverändert).
+**Migrationsbedarf (Amendment 1):** 7 Testdateien lasen `server.config`/`server.http`/
+`server.CONFIG_PATH` **ohne** Lifespan und werden auf einen lifespan-fahrenden
+`with TestClient(create_app(runtime))` bzw. injizierte BORROWED-Fakes umgestellt:
+`test_config_seam`, `test_settings_api`, `test_music_api`, `test_dashboard_api`,
+`test_launcher_api`, `test_ws`, `tests/browser/e2e_server.py`. Der `_wired`-Latch schützt
+injizierte Fakes vor Re-Wiring; `test_voice_launcher` (`PERSIST_LAUNCHER`-Signatur) und
+`test_conversation_ws` (fahren bereits einen Dialog über die WS-Seam) bleiben inhaltlich
+unverändert. Wire-/Frame-/Config-/Memory-Formen bleiben byte-/shape-identisch.
 
 ## Inkrementelle, vertikale Migrationsschritte
 
 Jeder Slice = ein Commit; „grün" = `python -m unittest discover -s tests` + `python scripts/
 smoke-test.py` + (nach Bedarf) Browser-Smoke + `verify_phase4/5`. Rollback = Commit revert.
 
-- **Slice 0 — `create_app()` extrahieren (reine Struktur).** `app = FastAPI()` (`server.py:78`)
-  → Handler-Rümpfe unverändert in `def create_app() -> FastAPI`; `app = create_app()`. *Prüft:*
-  import-sichere App-Factory (Struktur). *Rollback:* Funktion inlinen. *Grün:* `server.app`-Identität
-  + Routen unverändert; e2e `@server.app.post` hängt an dasselbe Objekt.
-- **Slice 1 — Lifespan statt Hooks + Client-Close (Leak-Fix).** `FastAPI(lifespan=_lifespan)`;
-  Startup = Refresh-Logik mit getracktem Task; Shutdown = `browser_tools.close()` + **NEU** OWNED
-  `ai`/`http`-Close. *Prüft:* Lifespan, Client-/Browser-Lifecycle, Background-Task-Cancellation.
-  *Rollback:* zwei Hooks zurück, Close streichen. *Grün:* Unit/WS-Tests fahren keine Lifespan →
-  unberührt; e2e fährt uvicorn → Refresh via Env geskippt, OWNED-Close ok, `_FakeAI` unangetastet.
-- **Slice 2 — Import-Sicherheit (kein `sys.exit` beim Import).** `try/except`+`config=None`;
-  `__main__` fail-fast (A8). *Prüft:* explizites Config-Laden, kein Import-`sys.exit`. *Rollback:*
-  Import-`sys.exit` restaurieren. *Grün:* gültige Fixture → Import ok; `test_config_seam` unverändert.
-- **Slice 3 — `Runtime` einführen; Clients/Token/ws_clients hineinziehen.** `Runtime.from_env`/`wire`;
-  `SESSION_TOKEN`/`ws_clients`/`http`/`ai` werden Read-Aliase (A3–A5, gleiche Objekte);
-  `lifespan=runtime.lifespan`. *Prüft:* per-App-Runtime-State, owned/borrowed. *Rollback:* Aliase →
-  plain Globals, Runtime entfernen. *Grün:* `server.SESSION_TOKEN`/`server.http` lesen Aliase;
-  `config`/`CONFIG_PATH` bleiben Source-of-Truth (A6).
-- **Slice 4 — Runtime = einziger `configure()`-Caller; Kern-Ops delegieren.** `wire()` bündelt die 4
-  configure/init (`server.py:70-76`); `apply_settings`/`broadcast_*`/`persist_launcher_block` werden
-  dünne Modul-Wrapper auf `runtime.*` (A7); `conversations`/`pending_confirm` an Runtime-Dicts aliasen.
-  *Prüft:* konfigurierbare Modul-Zustände, WS/Conversation-Session-Besitz (nur Besitz, nicht Protokoll).
-  *Rollback:* configure inlinen, Wrapper entfernen. *Grün:* `PERSIST_LAUNCHER`-Signatur + `apply_settings`
-  extern identisch.
-- **Slice 5 — Neue/migrierte Routen lesen `app.state.runtime` (E2-Muster) + Bridge-Cleanup.** Pro Route
-  einzeln umstellbar (eigener Rollbackpunkt); `_settings_token_ok` liest `runtime.session_token`.
-  *Prüft:* Kompatibilität der Entry Points; Dependency-Richtung. *Rollback:* einzelne Route zurück auf
-  Modul-Global.
+> **Amendment 1** ersetzt den eager-Bootstrap: die Slices erzeugen beim Import nur eine
+> **ungeöffnete** Runtime; Config + Clients öffnen im Lifespan; die 7 lifespan-losen Tests werden
+> migriert. Bündelung in wenige vertikale Slices (statt Read-Alias-Zwischenstände).
+
+- **Slice 1 — Import-sichere Factory + `runtime.py` + Lifespan (Kern).** `runtime.py` mit `Runtime`
+  (`for_production`/`load_config`/`wire`/`lifespan`/`aopen`/`aclose` + `apply_settings`/`broadcast_*`/
+  `persist_launcher_block`). `server.py`: `create_app(runtime)` (reine Verdrahtung, `lifespan=`), Modul
+  `runtime = Runtime.for_production(...)` (ungeöffnet — keine I/O/Clients), `app = create_app(runtime)`;
+  `ai`/`http`-Erzeugung + Config-Load + `configure`/`init_clients` + Refresh-Task wandern in `aopen`;
+  `browser_tools.close` + OWNED-Client-Close + Task-Cancel in `aclose`; `on_startup`/`on_shutdown`-Hooks
+  und der Import-`sys.exit`/Client-Bau entfallen; `__main__` fail-fast vor `uvicorn.run`. *Prüft:*
+  Import-Side-Effect-Freiheit, Factory, Lifespan-Open/Close, owned/borrowed, Refresh-Cancel. *Rollback:*
+  `runtime.py` entfernen + `server.py`-Diff reverten.
+- **Slice 2 — 7 lifespan-lose Tests migrieren.** `test_config_seam`, `test_settings_api`, `test_music_api`,
+  `test_dashboard_api`, `test_launcher_api`, `test_ws`, `tests/browser/e2e_server.py` fahren nun
+  `with TestClient(create_app(runtime))` bzw. `create_app(Runtime(..., ai=FakeAI(), http=FakeHttp()))`.
+  Injizierte Clients = BORROWED. *Prüft:* Bestandsverhalten byte-/shape-identisch über die Seams.
+  *Rollback:* je Testdatei zurück.
+- **Slice 3 — Per-App-State + Multi-App-Isolationstests.** `session_token`/`ws_clients`/`conversations`/
+  `pending_confirm` als Runtime-Felder; `wire()` aliast `assistant_core.conversations/pending_confirm` an
+  die Runtime-Dicts (Semantik unverändert). Neue Tests: zwei Runtimes → getrennte Felder, keine Mutation
+  A↔B; ≥5× flakefrei. *Rollback:* Felder/Tests zurück.
+- **Slice 4 — E2-Zugriff für neue/migrierte Routen (`app.state.runtime`) + Doku.** Wo risikoarm lesen
+  Routen `request.app.state.runtime` statt Modul-Global (`_settings_token_ok` → `runtime.session_token`);
+  `PHASE4_COMPOSITION_ROOT_MIGRATION.md`. *Rollback:* Route-weise zurück.
+
+`config`/`CONFIG_PATH`/`STARTUP_WARNINGS` bleiben **Source-of-Truth-Modul-Globals** (A6-Residual, K05);
+Reihenfolge respektiert **D1** und lässt K03/K04/K05 unangetastet.
 
 Reihenfolge respektiert **D1** (Root vor RFC-0001) und lässt K03/K04/K05 unangetastet.
 
@@ -457,11 +502,12 @@ Korrelation (Phase 9/11). Keine Gesprächsinhalte/Screens/Clipboard in Standardl
 - **Adapter-Verstetigung (Haupt­risiko):** A6/A7 hängen an K05, A4 an Slice-5-Abschluss,
   `conversations`/`pending_confirm` an K03, Browser-Singleton an D4. **Mitigation:** `# DEPRECATED(K0x)`-
   Marker + CI-grep-Guard + Deletion-Test.
-- **Zwei-Welten-Konstruktion** (Clients bei Import konstruiert, im Lifespan geschlossen) weicht vom
-  reinen „open-in-lifespan" ab — bewusster, dokumentierter, deletionsfähiger Kompromiss für
-  `server.http`-Import-Sichtbarkeit (e2e) + `_FakeAI`-Nicht-Clobber.
-- **`_wired`-Latch-Reihenfolge:** verlässt sich darauf, dass der Import-Bootstrap vor jeder Lifespan
-  verdrahtet; per-Test-Runtimes lassen `_wired=False`. In einem gezielten Test festnageln.
+- **Test-Migration (Amendment 1):** 7 Dateien wechseln auf lifespan-fahrende `TestClient`/Factory.
+  Risiko: eine übersehene `server.config`/`server.http`-Lesung **ohne** Lifespan bricht → durch die
+  Import-Side-Effect-Tests + volle Suite abgesichert; bei Nichtausreichen wird mit **konkretem
+  Befund gestoppt** (kein stiller Scope-Zuwachs).
+- **`_wired`-Latch:** garantiert genau-einmal-Verdrahtung im Lifespan und schützt injizierte Fakes
+  vor Re-Wiring; in einem gezielten Test festgenagelt.
 - **Unvollständige Parallel-Isolation** (siehe oben) — bewusst, dokumentiert, seriell getestet.
 - **Offen (Impl-Detail, in Slice 1 zu fixieren):** exakter SDK-Close von `AsyncAnthropic`
   (`close()`/`aclose()`); `ctx`-Form-Fragen sind RFC-0001-Thema, nicht hier.

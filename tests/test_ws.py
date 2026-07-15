@@ -94,16 +94,17 @@ class WebSocketHandshakeTests(unittest.TestCase):
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class HealthEndpointTests(unittest.TestCase):
     def test_health_endpoint(self):
-        client = TestClient(server.app)
-        resp = client.get("/health")
+        # Amendment 1: Config/Clients öffnen im Lifespan — daher 'with'.
+        with TestClient(server.app) as client:
+            resp = client.get("/health")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertTrue(body["ok"])
         self.assertIsInstance(body["warnings"], list)
 
     def test_health_reports_services_and_startup(self):
-        client = TestClient(server.app)
-        body = client.get("/health").json()
+        with TestClient(server.app) as client:
+            body = client.get("/health").json()
         self.assertEqual(
             set(body["services"]), {"config", "llm", "tts", "browser", "vault"}
         )

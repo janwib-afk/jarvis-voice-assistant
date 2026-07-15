@@ -94,14 +94,11 @@ CONFIG_PATH = os.path.join(TMP, "config.json")
 with open(CONFIG_PATH, "w", encoding="utf-8") as f:
     json.dump(E2E_CONFIG, f, indent=2)
 
-# load_config auf die Temp-Config umleiten, dann den echten Server importieren.
-import config_loader  # noqa: E402
-
-_orig_load_config = config_loader.load_config
-config_loader.load_config = lambda path: _orig_load_config(CONFIG_PATH)
-import server  # noqa: E402  (laedt Temp-Config, verdrahtet alle Module)
-config_loader.load_config = _orig_load_config
-server.CONFIG_PATH = CONFIG_PATH
+# Amendment 1 (voll-lazy Import): der Import laedt nichts und erzeugt keine
+# Clients — die Runtime bekommt die E2E-Temp-Config spaeter explizit. Kein
+# load_config-Monkeypatch mehr noetig.
+import server  # noqa: E402
+import runtime as runtime_mod  # noqa: E402
 
 import app_launcher  # noqa: E402
 import assistant_core  # noqa: E402
@@ -168,7 +165,6 @@ async def _fake_fetch_news():
     return "E2E-Nachrichten: nichts Echtes, rein synthetisch."
 
 
-assistant_core.init_clients(_FakeAI(), server.http)
 assistant_core.synthesize_speech = _fake_synth
 assistant_core.refresh_data = lambda: None
 browser_tools.search_links = _fake_search_links
@@ -191,8 +187,14 @@ screen_capture.describe_screen = lambda ai, question="": "E2E-Bildschirmbeschrei
 from fastapi import Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 
+# Runtime mit EXPLIZITER E2E-Temp-Config + injiziertem Fake-LLM (BORROWED — wird
+# vom Root nie geschlossen). environ={} umgeht ein evtl. geerbtes
+# JARVIS_CONFIG_PATH der Testsuite; Config/Clients oeffnen im Lifespan.
+_rt = runtime_mod.Runtime.for_production(config_path=CONFIG_PATH, environ={}, ai=_FakeAI())
+app = server.create_app(_rt)
 
-@server.app.post("/__e2e__/scenario")
+
+@app.post("/__e2e__/scenario")
 async def _e2e_scenario(request: Request):
     body = await request.json()
     _SCENARIO["replies"].clear()
@@ -203,7 +205,7 @@ async def _e2e_scenario(request: Request):
     return JSONResponse({"ok": True, "queued": len(_SCENARIO["replies"])})
 
 
-@server.app.post("/__e2e__/reset")
+@app.post("/__e2e__/reset")
 async def _e2e_reset():
     _SCENARIO["replies"].clear()
     _SCENARIO["llm_delay"] = 0.0
@@ -215,4 +217,4 @@ if __name__ == "__main__":
     import uvicorn
     print(f"[e2e] Temp: {TMP}")
     print(f"[e2e] Server: http://127.0.0.1:{PORT}  (Dummy-Keys, alle Provider gestubbt)")
-    uvicorn.run(server.app, host="127.0.0.1", port=PORT, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
