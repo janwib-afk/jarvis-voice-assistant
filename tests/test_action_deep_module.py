@@ -12,6 +12,7 @@ stammen aus der Spezifikation (docs/contracts/LEGACY_ACTION_PROTOCOL.md), nicht
 aus einer Neuberechnung durch den Produktionscode.
 """
 import asyncio
+import dataclasses
 import os
 import shutil
 import tempfile
@@ -686,6 +687,88 @@ class SystemPromptGoldenTests(unittest.TestCase):
         import inspect
         quelle = inspect.getsource(assistant_core.build_system_prompt)
         self.assertNotIn("[ACTION:", quelle)
+
+
+class ThinDispatcherTests(unittest.TestCase):
+    """assistant_core.execute_action bleibt als kompatible Seam bestehen und baut
+    den Kontext pro Aufruf aus dem aktuellen Prozesszustand.
+
+    Diese Abdeckung ersetzt das, was die auf die Action-Seam migrierten Tests
+    (test_inbox/test_voice_launcher) vorher nebenbei mitgeprueft haben.
+    """
+
+    def setUp(self):
+        self._saved = (assistant_core.ai, assistant_core.PERSIST_LAUNCHER)
+
+    def tearDown(self):
+        assistant_core.ai, assistant_core.PERSIST_LAUNCHER = self._saved
+        assistant_core.conversations.pop("dispatch-test", None)
+
+    def test_builds_context_from_current_process_state(self):
+        gesehen = {}
+
+        async def _spy(payload, c):
+            gesehen["ctx"] = c
+            gesehen["payload"] = payload
+            return "ok"
+
+        sentinel_ai = object()
+
+        async def _hook(launcher, kind):
+            return []
+
+        assistant_core.ai = sentinel_ai
+        assistant_core.PERSIST_LAUNCHER = _hook
+        assistant_core.conversations["dispatch-test"] = [
+            {"role": "user", "content": "Hallo"}]
+
+        spec = actions.spec_for("SEARCH")
+        with mock.patch.dict(actions.REGISTRY,
+                             {"SEARCH": dataclasses.replace(spec, execute=_spy)}):
+            result = run(assistant_core.execute_action(
+                actions.Action("SEARCH", "thema"), "dispatch-test"))
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(gesehen["payload"], "thema")
+        c = gesehen["ctx"]
+        self.assertIs(c.ai, sentinel_ai)
+        self.assertIs(c.persist_launcher, _hook)
+        self.assertEqual(c.history, ({"role": "user", "content": "Hallo"},))
+
+    def test_history_snapshot_is_isolated_from_later_mutation(self):
+        gesehen = {}
+
+        async def _spy(payload, c):
+            gesehen["ctx"] = c
+            return ""
+
+        assistant_core.conversations["dispatch-test"] = [
+            {"role": "user", "content": "Original"}]
+        spec = actions.spec_for("SEARCH")
+        with mock.patch.dict(actions.REGISTRY,
+                             {"SEARCH": dataclasses.replace(spec, execute=_spy)}):
+            run(assistant_core.execute_action(actions.Action("SEARCH", "x"),
+                                              "dispatch-test"))
+        # Nachtraegliche Aenderungen am Verlauf duerfen den Snapshot nicht treffen.
+        assistant_core.conversations["dispatch-test"].append(
+            {"role": "user", "content": "Spaeter"})
+        assistant_core.conversations["dispatch-test"][0]["content"] = "Geaendert"
+        self.assertEqual(gesehen["ctx"].history,
+                         ({"role": "user", "content": "Original"},))
+
+    def test_unknown_session_yields_empty_history(self):
+        gesehen = {}
+
+        async def _spy(payload, c):
+            gesehen["ctx"] = c
+            return ""
+
+        spec = actions.spec_for("SEARCH")
+        with mock.patch.dict(actions.REGISTRY,
+                             {"SEARCH": dataclasses.replace(spec, execute=_spy)}):
+            run(assistant_core.execute_action(actions.Action("SEARCH", "x"),
+                                              "gibt-es-nicht"))
+        self.assertEqual(gesehen["ctx"].history, ())
 
 
 class RegistryContractTests(unittest.TestCase):

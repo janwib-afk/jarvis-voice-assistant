@@ -160,25 +160,25 @@ class RunResearchThinSourcesTests(unittest.TestCase):
         self.assertIn("keine der Quellen war lesbar", result)
 
 
-@unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class SessionSummaryActionTests(unittest.TestCase):
+    """Seit RFC-0001 ueber die oeffentliche Action-Seam: der Verlauf kommt aus
+    ctx.history statt aus dem conversations-Modul-Global."""
+
+    def _run(self, history):
+        return asyncio.run(actions.spec_for("SESSION_SUMMARY").execute(
+            "", actions.ActionContext(history=history)))
+
     def test_session_protocol_from_history(self):
-        sid = "test-session-summary"
-        assistant_core.conversations[sid] = [
+        result = self._run((
             {"role": "user", "content": "Recherchiere zu SSDs"},
             {"role": "assistant", "content": "Erledigt, Sir."},
-        ]
-        try:
-            result = asyncio.run(assistant_core.execute_action(actions.Action("SESSION_SUMMARY"), sid))
-        finally:
-            assistant_core.conversations.pop(sid, None)
+        ))
         self.assertIn("Sitzungsprotokoll:", result)
         self.assertIn("Du: Recherchiere zu SSDs", result)
         self.assertIn("Jarvis: Erledigt, Sir.", result)
 
     def test_empty_session(self):
-        result = asyncio.run(assistant_core.execute_action(actions.Action("SESSION_SUMMARY"), "unbekannt"))
-        self.assertIn("keinen nennenswerten Verlauf", result)
+        self.assertIn("keinen nennenswerten Verlauf", self._run(()))
 
 
 class RecentNotesTests(unittest.TestCase):

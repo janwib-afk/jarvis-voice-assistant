@@ -303,9 +303,9 @@ class ProjectContextActionTests(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _run(self, payload):
-        return asyncio.run(
-            assistant_core.execute_action(actions.Action("PROJECT_CONTEXT", payload), "test-project-context")
-        )
+        # RFC-0001: ueber die oeffentliche Action-Seam, ohne Modul-Globals.
+        return asyncio.run(actions.spec_for("PROJECT_CONTEXT").execute(
+            payload, actions.ActionContext()))
 
     def test_returns_context_with_question_prefix(self):
         with open(os.path.join(self.tmp, "Alpha.md"), "w", encoding="utf-8") as f:
