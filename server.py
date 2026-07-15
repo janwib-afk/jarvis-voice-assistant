@@ -20,7 +20,7 @@ import time
 
 import anthropic
 import httpx
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -30,6 +30,7 @@ import monitors
 import assistant_core
 import config_loader
 import memory
+import runtime as runtime_mod
 
 # Logging: Betriebs-Logs auf INFO, private Inhalte nur auf DEBUG (Default aus).
 # Level per Umgebungsvariable JARVIS_LOG_LEVEL ueberschreibbar.
@@ -39,73 +40,39 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jarvis")
 
-# Lokales Session-Token: schuetzt /ws zusaetzlich zum Origin-Check. Wird beim
-# Start erzeugt und nur in die ausgelieferte Seite injiziert (Same-Origin).
-SESSION_TOKEN = secrets.token_urlsafe(24)
-
-# Load config (zentrale Validierung mit verständlichen Fehlermeldungen).
-# Produktion nutzt immer die echte config.json; nur kontrollierte Starts/Tests
-# waehlen ueber JARVIS_CONFIG_PATH ausdruecklich eine andere (z.B. synthetische)
-# Config — es gibt keinen stillen Rueckfall.
-CONFIG_PATH = config_loader.resolve_config_path(
-    os.environ, os.path.join(os.path.dirname(__file__), "config.json")
-)
-try:
-    config = config_loader.load_config(CONFIG_PATH)
-except config_loader.ConfigError as e:
-    logger.error("Konfigurationsfehler:\n%s", e)
-    sys.exit(1)
-
-# Optionale Voraussetzungen pruefen (Obsidian-Pfade, Playwright/Chromium).
-# Warnungen brechen den Start NICHT ab — betroffene Features degradieren nur.
-STARTUP_WARNINGS = config_loader.check_runtime_environment(config)
-for _warning in STARTUP_WARNINGS:
-    logger.warning("Startup-Check: %s", _warning)
-
-# Timeout + Retries SDK-nativ — gilt fuer alle Claude-Calls inkl. Vision.
-ai = anthropic.AsyncAnthropic(api_key=config["anthropic_api_key"], timeout=30.0, max_retries=2)
-http = httpx.AsyncClient(timeout=30)
-
-# Module verdrahten: Obsidian-Pfade, Persona/TTS-Werte, API-Clients, App-Registry.
-memory.configure(
-    vault_path=config.get("obsidian_inbox_path", ""),
-    inbox_path=config.get("obsidian_inbox_folder", ""),
-)
-assistant_core.configure(config)
-assistant_core.init_clients(ai, http)
-app_launcher.configure(config.get("apps", []), config.get("launcher"))
-
-app = FastAPI()
-
 import browser_tools
 import health
 
-# Chromium beim Server-Stopp mit beenden.
-app.router.on_shutdown.append(browser_tools.close)
+# ── Composition Root (RFC-0002 + Amendment 1): import-sicher ────────────────
+# Der Import erzeugt NUR eine ungeöffnete Runtime — kein Config-Load, keine
+# Provider-Clients, kein Prozess, kein sys.exit. Config + OWNED-Clients öffnen
+# ausschließlich im FastAPI-Lifespan (runtime.aopen) und schließen in aclose.
+runtime = runtime_mod.Runtime.for_production()
 
-
-async def _startup_refresh():
-    # Kontextdaten (Wetter/Tasks/Vault) im Hintergrund laden — der Server nimmt
-    # sofort Verbindungen an. build_system_prompt toleriert noch fehlende Daten.
-    # Tests/Smoke-Test setzen JARVIS_SKIP_STARTUP_REFRESH, um echte Netz-/
-    # Dateisystemzugriffe zu vermeiden.
-    if os.environ.get("JARVIS_SKIP_STARTUP_REFRESH"):
-        return
-    asyncio.get_running_loop().create_task(asyncio.to_thread(assistant_core.refresh_data))
-
-app.router.on_startup.append(_startup_refresh)
-
+# Modul-Globals: beim Import Platzhalter (bzw. runtime-nativ), vom Lifespan aus
+# der aktiven Runtime gesetzt. Routen/Helfer lesen diese (A6-Residual für
+# config/CONFIG_PATH/STARTUP_WARNINGS bis Kandidat 05).
+SESSION_TOKEN = runtime.session_token
+CONFIG_PATH = runtime.config_path
+config: dict | None = None
+STARTUP_WARNINGS: list[str] = []
 # Verbundene WS-Clients — fuer Push-Updates (z.B. frische Warnings nach Settings-Save).
-ws_clients: set[WebSocket] = set()
+ws_clients: set[WebSocket] = runtime.ws_clients
+
+# Routen werden auf einem APIRouter registriert, damit create_app(runtime) sie
+# auf einer frischen, isolierten App montieren kann.
+router = APIRouter()
 
 
-@app.websocket("/ws")
+@router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     # Token zuerst bestimmen — die Origin-Policy braucht es fuer den 'null'-Sonderfall.
     # Als bytes vergleichen — compare_digest auf str wirft bei Nicht-ASCII.
+    # E2-Zugriff (RFC-0002): Token/ws_clients/Warnings kommen aus der App-Runtime.
+    rt = ws.app.state.runtime
     origin = ws.headers.get("origin")
     token = ws.query_params.get("token", "")
-    token_valid = secrets.compare_digest(token.encode("utf-8"), SESSION_TOKEN.encode("utf-8"))
+    token_valid = secrets.compare_digest(token.encode("utf-8"), rt.session_token.encode("utf-8"))
 
     # 1. Origin-Policy: lokale Origins immer; 'null' nur mit gueltigem Token
     #    (pywebview/WebView2-Sandbox); fremde/fehlende Origins abgelehnt.
@@ -122,11 +89,11 @@ async def websocket_endpoint(ws: WebSocket):
 
     await ws.accept()
     session_id = str(id(ws))
-    ws_clients.add(ws)
+    rt.ws_clients.add(ws)
     logger.info("Client verbunden")
 
     # Startup-Warnungen ans Status-Center melden.
-    await ws.send_json({"type": "health", "warnings": STARTUP_WARNINGS})
+    await ws.send_json({"type": "health", "warnings": rt.startup_warnings})
 
     # Nachrichten laufen als Task neben der Receive-Loop — so kommt ein "Stopp"
     # auch WÄHREND einer langen Aktion (z.B. 3-Minuten-Recherche) durch.
@@ -207,17 +174,14 @@ async def websocket_endpoint(ws: WebSocket):
         worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await worker_task
-        ws_clients.discard(ws)
+        rt.ws_clients.discard(ws)
         assistant_core.end_session(session_id)
-
-
-app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "frontend")), name="static")
 
 
 INDEX_PATH = os.path.join(os.path.dirname(__file__), "frontend", "index.html")
 
 
-@app.get("/health")
+@router.get("/health")
 async def health_endpoint():
     """Passive Statusuebersicht fuer Launcher, Tests und Smoke-Test.
 
@@ -234,8 +198,11 @@ async def health_endpoint():
 # API-Keys verlassen den Server nie und werden nie angenommen.
 
 def _settings_token_ok(request: Request) -> bool:
+    # E2-Zugriff (RFC-0002): Dep aus der App-Runtime, nicht aus einem Modul-Global —
+    # damit ist die Token-Pruefung pro App-Instanz korrekt.
     token = request.headers.get("x-jarvis-token", "")
-    return secrets.compare_digest(token.encode("utf-8"), SESSION_TOKEN.encode("utf-8"))
+    expected = request.app.state.runtime.session_token
+    return secrets.compare_digest(token.encode("utf-8"), expected.encode("utf-8"))
 
 
 def _public_settings() -> dict:
@@ -284,14 +251,14 @@ async def apply_settings(merged: dict):
     await broadcast_health()
 
 
-@app.get("/settings")
+@router.get("/settings")
 async def get_settings(request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
     return {"ok": True, "settings": _public_settings(), "warnings": STARTUP_WARNINGS}
 
 
-@app.post("/settings")
+@router.post("/settings")
 async def post_settings(request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
@@ -347,7 +314,7 @@ def _scan_music_folder(folder: str) -> dict:
     return {"ok": True, "files": files, "error": ""}
 
 
-@app.get("/music/files")
+@router.get("/music/files")
 async def music_files(request: Request):
     """MP3-Liste fuers Kontrollzentrum. HTTP 200 auch bei fehlendem Ordner —
     die Antwort ist ein Zustandsbericht (ok/error), kein Crash."""
@@ -364,7 +331,7 @@ async def music_files(request: Request):
     }
 
 
-@app.post("/music/selection")
+@router.post("/music/selection")
 async def music_selection(request: Request):
     """MP3 fuer den naechsten Sessionstart waehlen ('' = abwaehlen).
 
@@ -413,7 +380,7 @@ async def music_selection(request: Request):
 # Gleiche Sicherheitslogik wie /settings: Session-Token im x-jarvis-token-Header.
 # UI-Klicks und Sprach-Aktion (APP_OPEN) laufen beide ueber app_launcher.
 
-@app.get("/dashboard/state")
+@router.get("/dashboard/state")
 def dashboard_state(request: Request):
     """Daten fuer das Command Center (Fokus-Modus). Sync def → Threadpool,
     da health.build_report Datei-/Pfad-Checks macht. Nutzt die gecachten
@@ -434,7 +401,7 @@ def dashboard_state(request: Request):
     }
 
 
-@app.post("/commands/app/open")
+@router.post("/commands/app/open")
 async def command_app_open(request: Request):
     """App aus der Registry starten (UI-Klick) — dieselbe Allowlist wie APP_OPEN."""
     if not _settings_token_ok(request):
@@ -516,7 +483,7 @@ def _profiles_response() -> dict:
     }
 
 
-@app.get("/launcher/apps")
+@router.get("/launcher/apps")
 async def launcher_list_apps(request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
@@ -524,7 +491,7 @@ async def launcher_list_apps(request: Request):
             "apps": app_launcher.list_apps()}
 
 
-@app.post("/launcher/apps/{app_id}/toggle")
+@router.post("/launcher/apps/{app_id}/toggle")
 async def launcher_toggle_autostart(app_id: str, request: Request):
     """Autostart einer bekannten App setzen — expliziter Boolean statt Flip,
     damit wiederholte Requests idempotent sind (kein Lost-Update)."""
@@ -551,7 +518,7 @@ async def launcher_toggle_autostart(app_id: str, request: Request):
     return {"ok": True, "apps": app_launcher.list_apps()}
 
 
-@app.get("/launcher/monitors")
+@router.get("/launcher/monitors")
 async def launcher_list_monitors(request: Request):
     """Physische Monitore fuer die Monitor-Map. Leere Liste = Erkennung
     fehlgeschlagen -> das Frontend zeigt die virtuelle Standardansicht."""
@@ -560,7 +527,7 @@ async def launcher_list_monitors(request: Request):
     return {"ok": True, "monitors": monitors.detect_monitors()}
 
 
-@app.post("/launcher/apps/{app_id}/placement")
+@router.post("/launcher/apps/{app_id}/placement")
 async def launcher_set_placement(app_id: str, request: Request):
     """Monitor/Zone einer bekannten App setzen — beide Felder sind Pflicht,
     damit wiederholte Requests idempotent sind (kein Lost-Update).
@@ -616,14 +583,14 @@ def _profile_name_from(body: dict):
     return name.strip(), None
 
 
-@app.get("/launcher/profiles")
+@router.get("/launcher/profiles")
 async def launcher_list_profiles(request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
     return _profiles_response()
 
 
-@app.post("/launcher/profiles")
+@router.post("/launcher/profiles")
 async def launcher_create_profile(request: Request):
     """Neues Profil mit Defaults (alle Apps autostart:true, keine Placements).
     Aktiviert bewusst NICHT — anlegen ist nicht wechseln."""
@@ -646,7 +613,7 @@ async def launcher_create_profile(request: Request):
     return _profiles_response()
 
 
-@app.post("/launcher/profiles/{profile_id}/activate")
+@router.post("/launcher/profiles/{profile_id}/activate")
 async def launcher_activate_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
@@ -660,7 +627,7 @@ async def launcher_activate_profile(profile_id: str, request: Request):
     return _profiles_response()
 
 
-@app.post("/launcher/profiles/{profile_id}/duplicate")
+@router.post("/launcher/profiles/{profile_id}/duplicate")
 async def launcher_duplicate_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
@@ -684,7 +651,7 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     return _profiles_response()
 
 
-@app.post("/launcher/profiles/{profile_id}/rename")
+@router.post("/launcher/profiles/{profile_id}/rename")
 async def launcher_rename_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
@@ -704,7 +671,7 @@ async def launcher_rename_profile(profile_id: str, request: Request):
     return _profiles_response()
 
 
-@app.delete("/launcher/profiles/{profile_id}")
+@router.delete("/launcher/profiles/{profile_id}")
 async def launcher_delete_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
@@ -720,7 +687,7 @@ async def launcher_delete_profile(profile_id: str, request: Request):
     return _profiles_response()
 
 
-@app.get("/")
+@router.get("/")
 async def serve_index():
     # Session-Token in die ausgelieferte Seite injizieren. Dank Same-Origin-Policy
     # kann nur diese Seite das Token lesen — fremde Origins nicht.
@@ -734,13 +701,59 @@ async def serve_index():
     return HTMLResponse(html)
 
 
+# ── App-Factory + Lifespan (Composition Root) ───────────────────────────────
+
+@contextlib.asynccontextmanager
+async def _server_lifespan(app):
+    """Öffnet/schließt die Ressourcen der App-Runtime und spiegelt die
+    A6-Residual-Modul-Globals (config/CONFIG_PATH/STARTUP_WARNINGS) + per-App
+    session_token/ws_clients aus der aktiven Runtime — Routen/Helfer lesen diese."""
+    rt = app.state.runtime
+    await rt.aopen()
+    global config, CONFIG_PATH, STARTUP_WARNINGS, SESSION_TOKEN, ws_clients
+    config = rt.config
+    CONFIG_PATH = rt.config_path
+    STARTUP_WARNINGS = rt.startup_warnings
+    SESSION_TOKEN = rt.session_token
+    ws_clients = rt.ws_clients
+    for _warning in STARTUP_WARNINGS:
+        logger.warning("Startup-Check: %s", _warning)
+    try:
+        yield
+    finally:
+        await rt.aclose()
+
+
+def create_app(rt: runtime_mod.Runtime) -> FastAPI:
+    """Reine, seiteneffektfreie Verdrahtung: App + Lifespan + Routen + Static.
+    Config/Clients öffnen erst im Lifespan (rt.aopen)."""
+    app = FastAPI(lifespan=_server_lifespan)
+    app.state.runtime = rt
+    app.include_router(router)
+    app.mount("/static", StaticFiles(
+        directory=os.path.join(os.path.dirname(__file__), "frontend")), name="static")
+    return app
+
+
+# Produktions-App (import-sicher: die Runtime ist ungeöffnet — keine Config/Clients).
+app = create_app(runtime)
+
+
 if __name__ == "__main__":
     import uvicorn
+    # Fail-fast: ohne gültige Config gar nicht starten (Launcher-„exited"-Signal
+    # bleibt erhalten). Dieser Config-Load ist der explizite Produktions-Check;
+    # der Lifespan (aopen) lädt sie dann nicht erneut.
+    try:
+        runtime.load_config()
+    except config_loader.ConfigError as e:
+        logger.error("Konfigurationsfehler:\n%s", e)
+        sys.exit(1)
     print("=" * 50, flush=True)
     print("  J.A.R.V.I.S. V2 Server", flush=True)
     print(f"  http://localhost:8340", flush=True)
     print("=" * 50, flush=True)
-    for _warning in STARTUP_WARNINGS:
+    for _warning in runtime.startup_warnings:
         print(f"  WARNUNG: {_warning}", flush=True)
     # Nur lokal binden — nicht im LAN erreichbar.
     uvicorn.run(app, host="127.0.0.1", port=8340)

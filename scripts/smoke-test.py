@@ -120,8 +120,10 @@ def check_health():
         import server
         from fastapi.testclient import TestClient
         logging.getLogger("httpx").setLevel(logging.WARNING)
-        client = TestClient(server.app)
-        resp = client.get("/health")
+        # Amendment 1 (voll-lazy Import): Config/Clients öffnen im FastAPI-Lifespan.
+        # 'with' fährt den Lifespan — damit prüft dieser Schritt den echten Start.
+        with TestClient(server.app) as client:
+            resp = client.get("/health")
         body = resp.json()
         assert resp.status_code == 200, f"Status {resp.status_code}"
         assert body["ok"] is True, "ok ist nicht True"

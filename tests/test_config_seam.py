@@ -98,8 +98,11 @@ class ActiveTestConfigTests(unittest.TestCase):
         )
 
     def test_no_silent_fallback_to_personal_config(self):
+        # Amendment 1 (voll-lazy Import): die aktive Config entsteht erst beim
+        # kontrollierten Laden (load_config), nicht beim Import.
+        server.runtime.load_config()
         self.assertTrue(
-            server.config.get("user_name") == SENTINEL_USER,
+            server.runtime.config.get("user_name") == SENTINEL_USER,
             "Aktive Config ist nicht die synthetische Fixture "
             "(Sentinel-user_name fehlt) — moeglicher Fallback auf echte Config.",
         )

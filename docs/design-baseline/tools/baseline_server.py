@@ -102,16 +102,9 @@ CONFIG_PATH = os.path.join(TMP, "config.json")
 with open(CONFIG_PATH, "w", encoding="utf-8") as f:
     json.dump(BASELINE_CONFIG, f, indent=2)
 
-# ── 2) load_config umleiten, dann den echten Server importieren ─────────────
-import config_loader  # noqa: E402
-
-_orig_load_config = config_loader.load_config
-config_loader.load_config = lambda path: _orig_load_config(CONFIG_PATH)
-import server  # noqa: E402  (laedt die Temp-Config, verdrahtet alle Module)
-config_loader.load_config = _orig_load_config
-
-# Alle Save-Endpunkte (Settings/Musik/Launcher) schreiben in die Temp-Config.
-server.CONFIG_PATH = CONFIG_PATH
+# ── 2) Server importieren (Amendment 1: Import laedt nichts, erzeugt nichts) ─
+import server  # noqa: E402
+import runtime as runtime_mod  # noqa: E402
 
 # ── 3) Stubs: LLM, TTS, refresh_data, App-Starts ─────────────────────────────
 import app_launcher  # noqa: E402
@@ -148,11 +141,17 @@ async def _fake_synthesize_speech(text):
     return b"", None  # kein Audio, kein Fehler -> Client geht sauber auf idle
 
 
-assistant_core.init_clients(_FakeAI(REPLIES), server.http)
 assistant_core.synthesize_speech = _fake_synthesize_speech
 assistant_core.refresh_data = lambda: None  # 'activate' loest sonst wttr.in aus
 app_launcher._start_url = lambda command: None
 app_launcher._start_process = lambda command: None
+
+# Runtime mit EXPLIZITER Temp-Config + injiziertem Fake-LLM (BORROWED — wird vom
+# Root nie geschlossen); Config/Clients oeffnen im Lifespan. environ={} umgeht ein
+# evtl. geerbtes JARVIS_CONFIG_PATH. Alle Save-Endpunkte schreiben in die Temp-Config.
+_rt = runtime_mod.Runtime.for_production(
+    config_path=CONFIG_PATH, environ={}, ai=_FakeAI(REPLIES))
+app = server.create_app(_rt)
 
 # ── 4) Start ─────────────────────────────────────────────────────────────────
 import uvicorn  # noqa: E402
@@ -160,4 +159,4 @@ import uvicorn  # noqa: E402
 if __name__ == "__main__":
     print(f"[baseline] Temp-Umgebung: {TMP}")
     print(f"[baseline] Server: http://127.0.0.1:{PORT}  (Dummy-Keys, LLM/TTS/Apps gestubbt)")
-    uvicorn.run(server.app, host="127.0.0.1", port=PORT, log_level="info")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="info")
