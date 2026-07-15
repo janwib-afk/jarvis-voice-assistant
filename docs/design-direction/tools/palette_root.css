@@ -1,0 +1,40 @@
+:root {
+    --bg-canvas: #19120c;  /* oklch(0.190 0.016 62) */
+    --bg-surface: #221a13;  /* oklch(0.225 0.018 64) */
+    --bg-raised: #2c231b;  /* oklch(0.265 0.020 66) */
+    --bg-inset: #110b07;  /* oklch(0.155 0.014 60) */
+    --text-primary: #e7ddc8;  /* oklch(0.900 0.030 84) */
+    --text-secondary: #b4a590;  /* oklch(0.730 0.035 78) */
+    --text-muted: #817363;  /* oklch(0.565 0.030 72) */
+    --accent-amber: #e7a854;  /* oklch(0.775 0.125 72) */
+    --accent-amber-deep: #c17930;  /* oklch(0.640 0.125 62) */
+    --brass: #9d865b;  /* oklch(0.630 0.065 82) */
+    --brass-bright: #c4a76b;  /* oklch(0.740 0.085 84) */
+    --copper: #bd7452;  /* oklch(0.630 0.105 45) */
+    --success-moss: #7c9261;  /* oklch(0.630 0.075 128) */
+    --warning-ember: #dc8748;  /* oklch(0.700 0.130 55) */
+    --error-brick: #ba5c4e;  /* oklch(0.585 0.125 30) */
+    --info-copper: #c4886a;  /* oklch(0.680 0.085 48) */
+    --orb-idle-core: #53361f;  /* oklch(0.360 0.055 58) */
+    --orb-idle-edge: #160d07;  /* oklch(0.170 0.020 58) */
+    --orb-listening-core: #e4a250;  /* oklch(0.760 0.125 70) */
+    --orb-listening-edge: #542c07;  /* oklch(0.340 0.075 58) */
+    --orb-thinking-core: #ebc160;  /* oklch(0.830 0.125 86) */
+    --orb-thinking-edge: #674600;  /* oklch(0.420 0.088 78) */
+    --orb-speaking-core: #f0944e;  /* oklch(0.750 0.140 56) */
+    --orb-speaking-edge: #622b0c;  /* oklch(0.360 0.090 46) */
+    --orb-muted-core: #251c15;  /* oklch(0.235 0.020 58) */
+    --orb-muted-edge: #0d0805;  /* oklch(0.140 0.012 58) */
+    --orb-error-core: #8f392a;  /* oklch(0.460 0.120 32) */
+    --orb-error-edge: #2b0e0a;  /* oklch(0.210 0.050 30) */
+    --shadow-base: #050302;  /* oklch(0.100 0.010 60) */
+    --border-subtle: rgba(157, 134, 91, 0.22);
+    --border-strong: rgba(196, 167, 107, 0.55);
+    --edge-light: rgba(231, 221, 200, 0.07);
+    --selection-bg: rgba(231, 168, 84, 0.14);
+    --focus-halo: rgba(196, 167, 107, 0.3);
+    --glow-amber: rgba(231, 168, 84, 0.35);
+    --glow-error: rgba(186, 92, 78, 0.35);
+    --shadow-soft: rgba(5, 3, 2, 0.35);
+    --shadow-inset: rgba(5, 3, 2, 0.55);
+}

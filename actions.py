@@ -24,6 +24,8 @@ class ActionSpec:
     - ``risk``: "low" | "confirm" — confirm-Aktionen brauchen ein muendliches Ja
     - ``timeout``: Gesamt-Cap in Sekunden fuer die Ausfuehrung
     - ``is_browser``: Fehler werden dem Frontend als Browser-Problem gemeldet
+    - ``speaks_result``: Ergebnis ist bereits ein kurzer deutscher Satz und wird
+      direkt gesprochen (keine LLM-Zusammenfassung)
     - ``summary_task``: aktionsspezifische Aufgabe fuer den Zusammenfassungs-Schritt
       (None = generische Kurz-Zusammenfassung)
     """
@@ -34,41 +36,66 @@ class ActionSpec:
     risk: str = "low"
     timeout: int = 60
     is_browser: bool = False
+    speaks_result: bool = False
     summary_task: str | None = None
     summary_max_tokens: int = 250
 
 
-DEFAULT_SUMMARY_TASK = "Fasse die folgenden Informationen KURZ zusammen, maximal 3 Saetze."
+DEFAULT_SUMMARY_TASK = "Fasse die folgenden Informationen KURZ zusammen, maximal 3 Sätze."
 
 # Zentrale Registry: nur hier eingetragene Aktionen werden geparst/ausgefuehrt.
 REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
     ActionSpec("SEARCH", "Websuche", is_browser=True),
     ActionSpec("BROWSE", "Seite lesen", is_url=True, is_browser=True),
     ActionSpec("OPEN", "Browser öffnen", is_url=True, is_browser=True),
+    ActionSpec("APP_OPEN", "App öffnen", timeout=15, speaks_result=True),
+    # Launcher-Sprachsteuerung (Phase 5): wirkt ueber die Profil-Schicht in
+    # app_launcher — nie ueber freie Kommandos. Antworten sind fertige Saetze.
+    ActionSpec("PROFILE_ACTIVATE", "Profil aktivieren", timeout=15, speaks_result=True),
+    ActionSpec("PROFILE_STATUS", "Profil-Status", payload="optional", timeout=15,
+               speaks_result=True),
+    ActionSpec("APP_AUTOSTART_ON", "Clap-Start an", timeout=15, speaks_result=True),
+    ActionSpec("APP_AUTOSTART_OFF", "Clap-Start aus", timeout=15, speaks_result=True),
+    ActionSpec("APP_PLACE", "App platzieren", timeout=15, speaks_result=True),
     ActionSpec("SCREEN", "Bildschirm ansehen", payload="optional"),
     ActionSpec("NEWS", "Nachrichten", payload="none", is_browser=True),
     ActionSpec(
         "INBOX_READ", "Inbox lesen", payload="none", summary_max_tokens=350,
         summary_task=(
-            "Gib einen kurzen, strukturierten Tagesrueckblick ueber die heutigen Notizen: "
+            "Gib einen kurzen, strukturierten Tagesrückblick über die heutigen Notizen: "
             "gruppiere nach Kategorie (Idee, Aufgabe, Termin, Recherche, Erinnerung, Notiz) "
-            "und fasse knapp zusammen. Maximal 5 Saetze."
+            "und fasse knapp zusammen. Maximal 5 Sätze."
         ),
     ),
     ActionSpec("INBOX_WRITE", "Inbox-Eintrag"),
     ActionSpec("MEMORY_WRITE", "Merken"),
     ActionSpec(
+        "MEMORY_READ", "Gedächtnis lesen", payload="none", summary_max_tokens=350,
+        summary_task=(
+            "Fasse zusammen, was du dauerhaft über den Nutzer weißt (Präferenzen, "
+            "Projekte, offene Loops). Ordne es knapp und nenne die Punkte. Maximal 5 Sätze. "
+            "Steht dort nichts, sag das ehrlich."
+        ),
+    ),
+    ActionSpec(
+        "MEMORY_FORGET", "Vergessen", risk="confirm",
+        summary_task=(
+            "Bestätige kurz und freundlich, was du aus dem Langzeit-Gedächtnis gelöscht "
+            "hast (oder dass es nichts Passendes gab). Maximal 2 Sätze."
+        ),
+    ),
+    ActionSpec(
         "RESEARCH", "Recherche", is_browser=True, timeout=180, summary_max_tokens=350,
         summary_task=(
-            "Fasse die Rechercheergebnisse aus den Quellen zu einer praezisen Antwort "
-            "zusammen. Maximal 5 Saetze. Nenne KEINE URLs im Text."
+            "Fasse die Rechercheergebnisse aus den Quellen zu einer präzisen Antwort "
+            "zusammen. Maximal 5 Sätze. Nenne KEINE URLs im Text."
         ),
     ),
     ActionSpec(
         "CLIPBOARD", "Zwischenablage", payload="optional",
         summary_task=(
-            "Fuehre den genannten Auftrag auf dem Inhalt der Zwischenablage aus. "
-            "Antworte kurz und praezise."
+            "Führe den genannten Auftrag auf dem Inhalt der Zwischenablage aus. "
+            "Antworte kurz und präzise."
         ),
     ),
     ActionSpec("CLIPBOARD_NOTE", "Clipboard-Notiz", payload="none"),
@@ -76,14 +103,21 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
         "NOTES_RECENT", "Letzte Notizen", payload="none", summary_max_tokens=350,
         summary_task=(
             "Fasse die zuletzt bearbeiteten Notizen kurz zusammen und nenne dabei die "
-            "Notiznamen, damit klar ist woran zuletzt gearbeitet wurde. Maximal 5 Saetze."
+            "Notiznamen, damit klar ist woran zuletzt gearbeitet wurde. Maximal 5 Sätze."
+        ),
+    ),
+    ActionSpec(
+        "PROJECT_CONTEXT", "Projekt-Kontext", summary_max_tokens=350,
+        summary_task=(
+            "Nutze den folgenden Vault-Kontext, um die Frage projektbezogen zu "
+            "beantworten. Wenn der Kontext nicht reicht, sag das ehrlich. Maximal 5 Sätze."
         ),
     ),
     ActionSpec(
         "SESSION_SUMMARY", "Sitzungsfazit", payload="none", summary_max_tokens=350,
         summary_task=(
             "Fasse kurz zusammen, was in dieser Sitzung besprochen und erledigt wurde. "
-            "Maximal 5 Saetze."
+            "Maximal 5 Sätze."
         ),
     ),
 )}
@@ -97,9 +131,12 @@ URL_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.is_url)
 BROWSER_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.is_browser)
 
 # Aktionen, die erst nach muendlicher Bestaetigung ausgefuehrt werden.
-# Aktuell leer — kuenftige riskante Aktionen bekommen risk="confirm" in der
-# Registry und sind damit automatisch abgesichert.
+# Aktuell: MEMORY_FORGET (loescht dauerhaft). Weitere riskante Aktionen bekommen
+# einfach risk="confirm" in der Registry und sind damit automatisch abgesichert.
 CONFIRM_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.risk == "confirm")
+
+# Aktionen, deren Ergebnis direkt gesprochen wird (kein Zusammenfassungs-LLM).
+SPEAK_RESULT_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.speaks_result)
 
 
 def spec_for(action_type: str) -> ActionSpec:
@@ -206,6 +243,67 @@ def parse_action(text: str) -> tuple[str, Action | None, str | None]:
         payload = url
 
     return spoken, Action(action_type, payload), None
+
+
+# ── APP_PLACE: "app | monitor | zone" ───────────────────────────────────────
+# Bewusste Kopie der Placement-Allowlists (Entkopplungs-Muster wie zwischen
+# config_loader und app_launcher) — ein Sync-Test verhindert Drift.
+PLACE_MONITORS = ("primary", "left", "right", "leftmost", "rightmost")
+PLACE_ZONES = ("fullscreen", "left_half", "right_half", "top_half", "bottom_half",
+               "top_left", "top_right", "bottom_left", "bottom_right", "center")
+
+# Deutsche Aliasse — das LLM soll kanonische Werte liefern, aber gesprochene
+# Formen ("linke Haelfte", "Vollbild") werden tolerant angenommen.
+_MONITOR_ALIASES = {
+    "links": "left", "linker monitor": "left",
+    "rechts": "right", "rechter monitor": "right",
+    "primär": "primary", "primaer": "primary", "haupt": "primary",
+    "hauptmonitor": "primary", "primärer monitor": "primary",
+    "primaerer monitor": "primary",
+    "ganz links": "leftmost", "ganz rechts": "rightmost",
+}
+_ZONE_ALIASES = {
+    "vollbild": "fullscreen", "fullscreen": "fullscreen", "maximiert": "fullscreen",
+    "linke hälfte": "left_half", "linke haelfte": "left_half",
+    "rechte hälfte": "right_half", "rechte haelfte": "right_half",
+    "obere hälfte": "top_half", "obere haelfte": "top_half", "oben": "top_half",
+    "untere hälfte": "bottom_half", "untere haelfte": "bottom_half", "unten": "bottom_half",
+    "oben links": "top_left", "oben rechts": "top_right",
+    "unten links": "bottom_left", "unten rechts": "bottom_right",
+    "mitte": "center", "zentriert": "center", "zentrum": "center",
+}
+
+_PLACE_FORMAT_HINT = "Format: app | monitor | zone (z.B. Obsidian | left | right_half)"
+
+
+def _normalize_place_token(raw: str, canonical: tuple, aliases: dict) -> str | None:
+    token = re.sub(r"\s+", " ", (raw or "").strip().casefold())
+    if token in canonical:
+        return token
+    return aliases.get(token)
+
+
+def parse_place_payload(payload: str) -> tuple[tuple[str, str, str] | None, str | None]:
+    """Zerlegt einen APP_PLACE-Payload ``app | monitor | zone``.
+
+    Rueckgabe: ``((app_query, monitor, zone), None)`` bei Erfolg, sonst
+    ``(None, fehlertext)`` — der Fehlertext ist deutsch und direkt sprechbar.
+    Monitor/Zone werden gegen die Allowlists geprueft; deutsche Aliasse
+    ("linke Haelfte", "Vollbild") werden auf kanonische Werte gemappt.
+    """
+    parts = [s.strip() for s in (payload or "").split("|")]
+    if len(parts) != 3 or not all(parts):
+        return None, f"Ich brauche App, Monitor und Zone. {_PLACE_FORMAT_HINT}"
+    app_query = parts[0]
+    monitor = _normalize_place_token(parts[1], PLACE_MONITORS, _MONITOR_ALIASES)
+    if monitor is None:
+        return None, ("Den Monitor kenne ich nicht — erlaubt: "
+                      + ", ".join(PLACE_MONITORS) + ".")
+    zone = _normalize_place_token(parts[2], PLACE_ZONES, _ZONE_ALIASES)
+    if zone is None:
+        return None, ("Die Zone kenne ich nicht — erlaubt: "
+                      + ", ".join(PLACE_ZONES) + ".")
+    return (app_query, monitor, zone), None
 
 
 # Fuehrendes "[Kategorie]" am Anfang eines INBOX_WRITE-Payloads.

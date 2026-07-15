@@ -1,0 +1,41 @@
+{
+  "source": {
+    "url": "http://127.0.0.1:8341/",
+    "extractedAt": "2026-07-11T08:23:59.040Z",
+    "extractor": "dembrandt"
+  },
+  "colors": {
+    "palette": [],
+    "cssVariables": {}
+  },
+  "typography": {
+    "headingFont": "Segoe UI",
+    "bodyFont": "Segoe UI"
+  },
+  "spacing": {
+    "scale": [
+      "2px",
+      "3px",
+      "4px",
+      "6px",
+      "7px",
+      "8px",
+      "9px",
+      "10px",
+      "12px",
+      "14px",
+      "16px",
+      "18px",
+      "20px",
+      "24px",
+      "28px",
+      "48px"
+    ]
+  },
+  "radius": {
+    "scale": []
+  },
+  "shadows": {
+    "scale": []
+  }
+}

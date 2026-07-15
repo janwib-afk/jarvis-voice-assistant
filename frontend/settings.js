@@ -1,13 +1,15 @@
-// Jarvis V2 — Settings-Overlay
+// Jarvis V2 — Einstellungen (inline im Kontrollzentrum)
 // Laedt/speichert UI-editierbare Felder ueber GET/POST /settings (Token-Header).
 // API-Keys verlassen den Server nie; der Mikrofonmodus ist rein clientseitig.
+// Sichtbarkeit steuert main.js ueber den Sub-View (cc-view-settings) — hier
+// lebt nur die Formular-Logik.
 (function () {
-    const view = document.getElementById('settings-view');
     const form = document.getElementById('settings-form');
     const msg = document.getElementById('settings-msg');
     const TEXT_KEYS = [
         'user_name', 'user_address', 'user_role', 'city',
         'elevenlabs_voice_id', 'obsidian_inbox_path', 'obsidian_inbox_folder',
+        'music_folder',
     ];
     let loaded = null; // Stand vom Server — Basis fuer den Diff beim Speichern
 
@@ -18,14 +20,87 @@
         };
     }
 
+    // Apps-Zeilenformat: "Name = befehl" oder nur "befehl" pro Zeile.
+    // Legacy-Strings aus der Config werden als rohe Befehlszeile angezeigt.
+    function appsToLines(apps) {
+        return (apps || []).map((a) => {
+            if (typeof a === 'string') return a;
+            const cmd = a.command || '';
+            return (a.name && a.name !== cmd) ? a.name + ' = ' + cmd : cmd;
+        }).join('\n');
+    }
+
+    function parseAppsLines(text, loadedApps) {
+        // Felder eines bestehenden Eintrags mit gleichem Befehl uebernehmen
+        // (autostart, id, placement, process_name) — ein Save aus dem Textfeld
+        // darf Toggle- und Platzierungs-Einstellungen nie verwerfen.
+        // Neue Zeilen und Legacy-Strings gelten als autostart:true.
+        const byCommand = {};
+        for (const a of loadedApps || []) {
+            if (a && typeof a === 'object' && a.command) byCommand[a.command] = a;
+        }
+        const entries = [];
+        for (const rawLine of text.split('\n')) {
+            const line = rawLine.trim();
+            if (!line) continue;
+            let name = '';
+            let command = line;
+            // Trenner ist das ERSTE " = " mit Leerzeichen — schuetzt URLs mit
+            // '=' wie obsidian://open?vault=x.
+            const sep = line.indexOf(' = ');
+            if (sep > 0) {
+                name = line.slice(0, sep).trim();
+                command = line.slice(sep + 3).trim();
+            }
+            if (!command) continue;
+            const prev = Object.prototype.hasOwnProperty.call(byCommand, command)
+                ? byCommand[command] : null;
+            const entry = {
+                command: command,
+                type: command.includes('://') ? 'url' : 'process',
+                autostart: prev ? prev.autostart !== false : true,
+            };
+            if (name) entry.name = name;
+            if (prev) {
+                if (prev.id) entry.id = prev.id;
+                if (prev.placement) entry.placement = prev.placement;
+                if (prev.process_name) entry.process_name = prev.process_name;
+                // Doppelte Befehlszeilen erben die ID nicht doppelt —
+                // sonst wuerde die Duplikat-ID-Validierung den Save ablehnen.
+                delete byCommand[command];
+            }
+            entries.push(entry);
+        }
+        return entries;
+    }
+
     function setMsg(text, isError) {
         msg.textContent = text;
         msg.className = isError ? 'error' : 'ok';
+        // Fokus-Management (docs/ux A11y §2): bei Fehlern landet der Fokus auf
+        // der Meldung — Serverfehler sind global und keinem Feld zuordenbar.
+        if (isError && text) {
+            msg.tabIndex = -1;
+            msg.focus();
+        }
     }
 
+    // Ungespeicherte Aenderungen sichtbar machen + Verwerfen absichern.
+    const dirtyPill = document.getElementById('settings-dirty');
+    const confirmRow = document.getElementById('settings-confirm');
+    let dirty = false;
+    function setDirty(value) {
+        dirty = value;
+        if (dirtyPill) dirtyPill.hidden = !value;
+        if (!value && confirmRow) confirmRow.hidden = true;
+    }
+    form.addEventListener('input', () => setDirty(true));
+
+    // Frische Werte vom Server ins Formular laden — wird von main.js beim
+    // Wechsel auf den Einstellungen-Sub-View aufgerufen.
     async function openSettings() {
         setMsg('', false);
-        view.classList.remove('hidden');
+        setDirty(false);
         const mic = localStorage.getItem('jarvis.micMode') || 'auto';
         const radio = form.querySelector(`input[name="micMode"][value="${mic}"]`);
         if (radio) radio.checked = true;
@@ -35,16 +110,40 @@
             const data = await resp.json();
             loaded = data.settings || {};
             for (const key of TEXT_KEYS) form.elements[key].value = loaded[key] || '';
-            form.elements['apps'].value = (loaded.apps || []).join('\n');
+            form.elements['apps'].value = appsToLines(loaded.apps);
         } catch (e) {
             loaded = null;
             setMsg('Einstellungen konnten nicht geladen werden — läuft der Server?', true);
         }
     }
 
+    // "Schliessen" heisst jetzt: zurueck zur Kontrollzentrum-Übersicht.
     function closeSettings() {
-        view.classList.add('hidden');
+        setDirty(false);
+        if (window.applyControlView) window.applyControlView('overview');
+        const h = document.getElementById('control-heading');
+        if (h) h.focus();
     }
+
+    // Abbrechen mit ungespeicherten Aenderungen: erst rueckfragen
+    // (sheet-dismiss-confirm, docs/ux Teil 8).
+    function requestClose() {
+        if (dirty && confirmRow) {
+            confirmRow.hidden = false;
+            const keep = document.getElementById('btn-keep');
+            if (keep) keep.focus();
+            return;
+        }
+        closeSettings();
+    }
+    const btnDiscard = document.getElementById('btn-discard');
+    const btnKeep = document.getElementById('btn-keep');
+    if (btnDiscard) btnDiscard.addEventListener('click', () => { closeSettings(); });
+    if (btnKeep) btnKeep.addEventListener('click', () => {
+        confirmRow.hidden = true;
+        const first = form.querySelector('input[type="text"]');
+        if (first) first.focus();
+    });
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -63,9 +162,13 @@
                 const val = form.elements[key].value.trim();
                 if (val !== (loaded[key] || '')) updates[key] = val;
             }
-            const apps = form.elements['apps'].value
-                .split('\n').map(s => s.trim()).filter(Boolean);
-            if (JSON.stringify(apps) !== JSON.stringify(loaded.apps || [])) updates.apps = apps;
+            // Diff ueber das normalisierte Zeilenformat — vermeidet Fehl-Diffs
+            // zwischen Legacy-Strings und Objektform.
+            const appsText = form.elements['apps'].value
+                .split('\n').map(s => s.trim()).filter(Boolean).join('\n');
+            if (appsText !== appsToLines(loaded.apps)) {
+                updates.apps = parseAppsLines(appsText, loaded.apps);
+            }
         }
         if (Object.keys(updates).length === 0) {
             setMsg('Gespeichert.', false);
@@ -85,7 +188,11 @@
                 return;
             }
             loaded = Object.assign({}, loaded, updates);
-            setMsg('Einstellungen gespeichert — wirken ab der nächsten Antwort.', false);
+            setDirty(false);
+            setMsg('Gespeichert ✓ — wirkt ab der nächsten Antwort.', false);
+            // Command Center nachziehen (neue App-Buttons, Musikordner etc.).
+            if (window.loadDashboardState) window.loadDashboardState();
+            if (window.loadMusic) window.loadMusic();
             setTimeout(closeSettings, 1000);
         } catch (err) {
             if (window.showErrorBanner) {
@@ -99,11 +206,6 @@
         }
     });
 
-    document.getElementById('btn-settings-cancel').addEventListener('click', closeSettings);
-    view.addEventListener('click', (e) => { if (e.target === view) closeSettings(); });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !view.classList.contains('hidden')) closeSettings();
-    });
-    document.getElementById('btn-settings').addEventListener('click', openSettings);
+    document.getElementById('btn-settings-cancel').addEventListener('click', requestClose);
     window.openSettings = openSettings;
 })();

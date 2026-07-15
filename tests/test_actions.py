@@ -12,16 +12,106 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import actions
+import app_launcher
 from actions import (
     Action,
     normalize_url,
     parse_action,
+    parse_place_payload,
     is_allowed_origin,
     is_origin_acceptable,
     is_confirmation,
     is_stop_command,
     split_inbox_category,
 )
+
+
+class ParseLauncherActionTests(unittest.TestCase):
+    """Phase 5: Launcher-Sprachaktionen sind in der Registry und parsen sauber."""
+
+    def test_profile_activate(self):
+        spoken, action, err = parse_action("Mach ich. [ACTION:PROFILE_ACTIVATE] Coding")
+        self.assertIsNone(err)
+        self.assertEqual(spoken, "Mach ich.")
+        self.assertEqual(action, Action("PROFILE_ACTIVATE", "Coding"))
+
+    def test_profile_activate_requires_payload(self):
+        _, action, err = parse_action("[ACTION:PROFILE_ACTIVATE]")
+        self.assertIsNone(action)
+        self.assertIsNotNone(err)
+
+    def test_profile_status_optional_payload(self):
+        _, action, err = parse_action("[ACTION:PROFILE_STATUS]")
+        self.assertIsNone(err)
+        self.assertEqual(action, Action("PROFILE_STATUS", ""))
+        _, action, err = parse_action("[ACTION:PROFILE_STATUS] Research")
+        self.assertIsNone(err)
+        self.assertEqual(action.payload, "Research")
+
+    def test_autostart_on_off(self):
+        _, action, err = parse_action("[ACTION:APP_AUTOSTART_ON] Obsidian")
+        self.assertIsNone(err)
+        self.assertEqual(action, Action("APP_AUTOSTART_ON", "Obsidian"))
+        _, action, err = parse_action("[ACTION:APP_AUTOSTART_OFF] Chrome")
+        self.assertIsNone(err)
+        self.assertEqual(action, Action("APP_AUTOSTART_OFF", "Chrome"))
+        _, action, err = parse_action("[ACTION:APP_AUTOSTART_ON]")
+        self.assertIsNone(action)
+        self.assertIsNotNone(err)
+
+    def test_app_place_parses_as_action(self):
+        _, action, err = parse_action("[ACTION:APP_PLACE] Obsidian | left | right_half")
+        self.assertIsNone(err)
+        self.assertEqual(action, Action("APP_PLACE", "Obsidian | left | right_half"))
+
+    def test_speak_result_actions_cover_launcher(self):
+        expected = {"APP_OPEN", "PROFILE_ACTIVATE", "PROFILE_STATUS",
+                    "APP_AUTOSTART_ON", "APP_AUTOSTART_OFF", "APP_PLACE"}
+        self.assertEqual(actions.SPEAK_RESULT_ACTIONS, frozenset(expected))
+
+    def test_no_confirm_needed_for_launcher_actions(self):
+        # Keine der neuen Aktionen ist destruktiv — kein Bestaetigungs-Flow.
+        self.assertEqual(actions.CONFIRM_ACTIONS & actions.SPEAK_RESULT_ACTIONS, frozenset())
+
+
+class ParsePlacePayloadTests(unittest.TestCase):
+    def test_happy_path(self):
+        parsed, err = parse_place_payload("Obsidian | left | right_half")
+        self.assertIsNone(err)
+        self.assertEqual(parsed, ("Obsidian", "left", "right_half"))
+
+    def test_german_aliases(self):
+        parsed, err = parse_place_payload("Obsidian | links | rechte Hälfte")
+        self.assertIsNone(err)
+        self.assertEqual(parsed, ("Obsidian", "left", "right_half"))
+        parsed, _ = parse_place_payload("VS Code | Hauptmonitor | Vollbild")
+        self.assertEqual(parsed, ("VS Code", "primary", "fullscreen"))
+        parsed, _ = parse_place_payload("VS Code | ganz rechts | Mitte")
+        self.assertEqual(parsed, ("VS Code", "rightmost", "center"))
+
+    def test_case_insensitive_canonical(self):
+        parsed, err = parse_place_payload("code | LEFT | Top_Half")
+        self.assertIsNone(err)
+        self.assertEqual(parsed, ("code", "left", "top_half"))
+
+    def test_wrong_part_count(self):
+        for payload in ("Obsidian | left", "a | b | c | d", "Obsidian", "", " | left | center"):
+            parsed, err = parse_place_payload(payload)
+            self.assertIsNone(parsed, payload)
+            self.assertIn("app | monitor | zone", err)
+
+    def test_invalid_monitor_and_zone(self):
+        parsed, err = parse_place_payload("Obsidian | mars | center")
+        self.assertIsNone(parsed)
+        self.assertIn("primary", err)  # nennt die erlaubten Werte
+        parsed, err = parse_place_payload("Obsidian | left | diagonal")
+        self.assertIsNone(parsed)
+        self.assertIn("fullscreen", err)
+
+    def test_constants_in_sync_with_app_launcher(self):
+        # Drift-Guard fuer die bewusste Konstanten-Kopie.
+        self.assertEqual(actions.PLACE_MONITORS, app_launcher.PLACEMENT_MONITORS)
+        self.assertEqual(actions.PLACE_ZONES, app_launcher.PLACEMENT_ZONES)
 
 
 class ParseActionValidTests(unittest.TestCase):
@@ -99,6 +189,35 @@ class ParseActionValidTests(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(action, Action("INBOX_WRITE", "[Termin] Zahnarzt Dienstag 9 Uhr"))
 
+    def test_memory_read_no_payload(self):
+        _, action, err = parse_action("Ich schaue nach. [ACTION:MEMORY_READ]")
+        self.assertIsNone(err)
+        self.assertEqual(action, Action("MEMORY_READ", ""))
+
+    def test_memory_forget_with_payload(self):
+        _, action, err = parse_action("[ACTION:MEMORY_FORGET] Kaffeevorliebe")
+        self.assertIsNone(err)
+        self.assertEqual(action, Action("MEMORY_FORGET", "Kaffeevorliebe"))
+
+    def test_memory_forget_requires_payload(self):
+        _, action, err = parse_action("[ACTION:MEMORY_FORGET]")
+        self.assertIsNone(action)
+        self.assertIsNotNone(err)
+
+    def test_project_context_with_payload(self):
+        spoken, action, err = parse_action("Ich schaue in deine Notizen. [ACTION:PROJECT_CONTEXT] Jarvis Voice Assistant")
+        self.assertIsNone(err)
+        self.assertEqual(spoken, "Ich schaue in deine Notizen.")
+        self.assertEqual(action, Action("PROJECT_CONTEXT", "Jarvis Voice Assistant"))
+
+
+class ConfirmActionRegistryTests(unittest.TestCase):
+    def test_memory_forget_requires_confirmation(self):
+        self.assertIn("MEMORY_FORGET", actions.CONFIRM_ACTIONS)
+
+    def test_memory_read_needs_no_confirmation(self):
+        self.assertNotIn("MEMORY_READ", actions.CONFIRM_ACTIONS)
+
 
 class ParseActionInvalidTests(unittest.TestCase):
     def test_no_action_returns_text(self):
@@ -122,6 +241,11 @@ class ParseActionInvalidTests(unittest.TestCase):
         _, action, err = parse_action("[ACTION:OPEN]   ")
         self.assertIsNone(action)
         self.assertIsNotNone(err)
+
+    def test_missing_payload_for_project_context(self):
+        _, action, err = parse_action("[ACTION:PROJECT_CONTEXT]")
+        self.assertIsNone(action)
+        self.assertIn("fehlender Payload fuer PROJECT_CONTEXT", err)
 
     def test_dangerous_scheme_javascript(self):
         _, action, err = parse_action("[ACTION:OPEN] javascript:alert(1)")
@@ -269,6 +393,27 @@ class ActionRegistryTests(unittest.TestCase):
 
     def test_unknown_action_not_executable(self):
         _, action, err = parse_action("[ACTION:SHUTDOWN] jetzt")
+        self.assertIsNone(action)
+        self.assertIsNotNone(err)
+
+    def test_app_open_spec(self):
+        spec = actions.spec_for("APP_OPEN")
+        self.assertEqual(spec.label, "App öffnen")
+        self.assertEqual(spec.payload, "required")
+        self.assertEqual(spec.risk, "low")
+        # Kein URL-Zwang: Payload ist ein App-Name, keine Adresse.
+        self.assertFalse(spec.is_url)
+        self.assertFalse(spec.is_browser)
+
+    def test_parse_app_open(self):
+        spoken, action, err = parse_action("Ich oeffne Obsidian. [ACTION:APP_OPEN] Obsidian")
+        self.assertIsNone(err)
+        self.assertEqual(action.type, "APP_OPEN")
+        self.assertEqual(action.payload, "Obsidian")
+        self.assertEqual(spoken, "Ich oeffne Obsidian.")
+
+    def test_parse_app_open_without_payload_fails(self):
+        _, action, err = parse_action("[ACTION:APP_OPEN]")
         self.assertIsNone(action)
         self.assertIsNotNone(err)
 

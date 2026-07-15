@@ -7,8 +7,31 @@
   "user_role": "YOUR_PROFESSION",
   "city": "YOUR_CITY",
   "workspace_path": "C:\\Users\\YOUR_USER\\Desktop\\jarvis_template",
-  "browser_url": "https://your-website.com",
   "obsidian_inbox_path": "C:\\Users\\YOUR_USER\\path\\to\\obsidian\\vault",
   "obsidian_inbox_folder": "C:\\Users\\YOUR_USER\\path\\to\\obsidian\\vault\\01 Inbox",
-  "apps": ["obsidian://open"]
+  "music_folder": "C:\\Users\\YOUR_USER\\Music\\jarvis",
+  "selected_music_file": "",
+  "music_volume": 0.25,
+  "apps": [
+    { "id": "obsidian", "name": "Obsidian", "command": "obsidian://open", "type": "url", "process_name": "Obsidian" },
+    { "id": "vscode", "name": "VS Code", "command": "code", "type": "process", "process_name": "Code" },
+    { "id": "kalender", "name": "Kalender", "command": "https://calendar.google.com", "type": "url", "process_name": "chrome" }
+  ],
+  "launcher": {
+    "active_profile": "coding",
+    "profiles": [
+      { "id": "coding", "name": "Coding", "apps": {
+        "vscode": { "autostart": true, "placement": { "monitor": "left", "zone": "left_half" } },
+        "obsidian": { "autostart": true, "placement": { "monitor": "left", "zone": "right_half" } },
+        "kalender": { "autostart": false } } },
+      { "id": "research", "name": "Research", "apps": {
+        "obsidian": { "autostart": true, "placement": { "monitor": "left", "zone": "fullscreen" } },
+        "kalender": { "autostart": true, "placement": { "monitor": "right", "zone": "fullscreen" } },
+        "vscode": { "autostart": false } } },
+      { "id": "writing", "name": "Writing", "apps": {
+        "obsidian": { "autostart": true, "placement": { "monitor": "primary", "zone": "center" } },
+        "vscode": { "autostart": false },
+        "kalender": { "autostart": false } } }
+    ]
+  }
 }

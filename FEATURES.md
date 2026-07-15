@@ -56,14 +56,19 @@ Funktionen.
 | 48 | Langzeit-Gedächtnis `[ACTION:MEMORY_WRITE]`: „Jarvis Memory.md" im Vault (Fallback `memory.md` im Workspace), nutzer-editierbar, fließt in den System-Prompt ein, speichert NUR auf ausdrücklichen Wunsch | [memory.py](memory.py) `append_memory`, `read_memory_sync` | ✅ neu |
 | 49 | Recherche-Fallback ohne Browser: `html.duckduckgo.com` via httpx wenn Chromium fehlt oder Selektoren leer sind; dünne Quellenlage (<3) wird ehrlich angesagt | [browser_tools.py](browser_tools.py) `_search_links_fallback`, [assistant_core.py](assistant_core.py) `run_research` | ✅ neu |
 | 50 | Modul-Split: server.py (958→~300 Zeilen) nur noch HTTP/WS; Gesprächsfluss in assistant_core.py, TTS in tts.py, Obsidian/Memory in memory.py, Diagnose in health.py | [assistant_core.py](assistant_core.py), [tts.py](tts.py), [memory.py](memory.py), [health.py](health.py) | ✅ neu |
+| 51 | Vault-Kontext-Broker `[ACTION:PROJECT_CONTEXT] frage`: lokale, token-sparsame Vault-Suche (Ranking nach Dateiname/Überschrift/Ordner/Text + Recency/Tags), nur kurze Ausschnitte ans LLM, Secret-Dateien/-Zeilen ausgenommen | [memory.py](memory.py) `get_project_context_sync`, [assistant_core.py](assistant_core.py) `execute_action` | ✅ neu |
+| 52 | App-Launcher `[ACTION:APP_OPEN] app-name`: startet NUR Apps aus der `config.apps`-Registry (Allowlist, kein `shell=True`, keine freien Kommandos vom LLM); Sprachbefehl und UI-Klick (`POST /commands/app/open`) nutzen dieselbe Logik; `autostart`-Flag steuert den Sessionstart | [app_launcher.py](app_launcher.py), [server.py](server.py) `command_app_open`, [actions.py](actions.py) | ✅ neu |
+| 53 | Command Center im Fokus-Modus: drei Spalten (Gespräch · „Heute" mit Tasks/Inbox/letzten Notizen · Apps/Aktionen/System), gespeist aus `GET /dashboard/state` (Token-geschützt); Panel-Modus unverändert | [frontend/main.js](frontend/main.js) `loadDashboardState`, [server.py](server.py) `dashboard_state`, [frontend/style.css](frontend/style.css) | ✅ neu |
 
 ## Hinweise
 
 - **Musik:** Die frühere externe Streaming-Anbindung wurde auf ausdrücklichen Wunsch
   vollständig entfernt. Die Start-Musik läuft weiterhin über die lokale MP3-Logik
   (Punkt 14) — kein Funktionsverlust.
-- **`OPEN`:** bleibt bewusst auf `http`/`https` beschränkt (App-Schemes wie `obsidian://`
-  laufen über den Launcher/`config.apps`, nicht über die Sprach-Aktion).
+- **`OPEN`:** bleibt bewusst auf `http`/`https` beschränkt. App-Schemes wie
+  `obsidian://` laufen über die App-Registry (`config.apps`) — per Sprache via
+  `APP_OPEN` (Punkt 52) oder Klick im Command Center, immer durch die Allowlist
+  in `app_launcher.py`.
 - **Architektur (Punkt 50):** Der Modularisierungs-Pass hat Verhalten und
   Wire-Format (`[ACTION:...]`, WS-Frames, `/health`-Shape) bewusst NICHT
   geändert — nur Code verschoben, Registry eingeführt und Stopp/Memory/

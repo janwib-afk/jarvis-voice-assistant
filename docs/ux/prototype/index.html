@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis — UX-Prototyp Phase 3</title>
+<link rel="stylesheet" href="ux.css">
+</head>
+<body>
+
+<a class="skip-link" href="#main-heading">Zum Gespräch springen</a>
+
+<!-- Prototyp-Steuerung (Meta-UI) -->
+<div class="proto-bar">
+    <span>Phase-3-UX-Prototyp · simuliert · kein Backend</span>
+    <div class="pb-group" role="group" aria-label="Fenstermodus (Simulation)">
+        <button data-mode="fullscreen" aria-pressed="true">Vollbild</button>
+        <button data-mode="focus" aria-pressed="false">Fokus</button>
+        <button data-mode="panel" aria-pressed="false">Panel</button>
+    </div>
+    <div class="pb-group" role="group" aria-label="Zustand (Simulation)">
+        <button data-state="disconnected">disconnected</button>
+        <button data-state="connecting">connecting</button>
+        <button data-state="idle">idle</button>
+        <button data-state="listening" aria-pressed="true">listening</button>
+        <button data-state="processing">processing</button>
+        <button data-state="thinking">thinking</button>
+        <button data-state="action-running">action-running</button>
+        <button data-state="speaking">speaking</button>
+        <button data-state="degraded">degraded</button>
+        <button data-state="error">error</button>
+    </div>
+    <div class="pb-group">
+        <button id="sim-chain">Kette: Frage→Antwort abspielen</button>
+    </div>
+</div>
+
+<div class="stage-wrap">
+<div class="stage mode-fullscreen" id="stage">
+
+    <header class="head">
+        <span class="wordmark">Jarvis<span class="dot">.</span></span>
+        <nav class="nav" aria-label="Bereiche">
+            <button class="nav-tab" data-view="jarvis" aria-selected="true" role="tab">Gespräch</button>
+            <button class="nav-tab" data-view="control" aria-selected="false" role="tab"
+                    title="Öffnet das Kontrollzentrum — im Panel wechselt das Fenster auf ‚Mitte'">Kontrollzentrum</button>
+        </nav>
+        <div class="mode-switch" role="group" aria-label="Fenstergröße">
+            <button class="mode-btn" data-winmode="fullscreen" aria-pressed="true">Vollbild</button>
+            <button class="mode-btn" data-winmode="focus" aria-pressed="false">Mitte</button>
+            <button class="mode-btn" data-winmode="panel" aria-pressed="false">Klein</button>
+        </div>
+        <div class="win-dots">
+            <button class="win-dot" aria-label="Minimieren">–</button>
+            <button class="win-dot" aria-label="Schließen">×</button>
+        </div>
+    </header>
+
+    <!-- ═══ Jarvis / Gespräch ═══ -->
+    <main class="jarvis-view" id="view-jarvis" aria-label="Gespräch">
+        <h1 id="main-heading" tabindex="-1" class="sr-only">Gespräch mit Jarvis</h1>
+        <div class="greeting">
+            <p class="greeting-line">Guten Abend, Jan.</p>
+            <p>Alle Systeme bereit. Das Mikrofon hört auf dein Wort.</p>
+        </div>
+
+        <div class="instrument">
+            <div class="luenette"></div>
+            <button class="orb is-listening" id="orb" aria-label="Zuhören anhalten oder fortsetzen"
+                    style="border: none; cursor: pointer; padding: 0;"></button>
+        </div>
+        <div class="instr-status" id="status-line" role="status">
+            <span class="st-dot"></span>
+            <span id="state-word">Hört zu</span>
+            <span class="running-action" id="running-action"></span>
+            <span class="esc-hint" id="esc-hint" hidden>· Esc stoppt</span>
+        </div>
+
+        <section class="journal" aria-label="Gesprächsprotokoll">
+            <div class="journal-head">
+                <h2>Gespräch</h2>
+                <label class="sr-only" for="search">Verlauf durchsuchen</label>
+                <input class="journal-search" id="search" type="search" placeholder="Verlauf durchsuchen">
+                <span class="search-count" id="search-count" role="status"></span>
+                <button class="btn btn-quiet" id="copy-all">Alles kopieren</button>
+            </div>
+            <div class="journal-body" id="journal">
+                <div class="entry user">
+                    <div class="entry-time">14:31</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Du</div>
+                        <div class="entry-text">Wie weit ist die Recherche zur Reichweite von Elektroautos?</div>
+                    </div>
+                </div>
+                <div class="entry jarvis">
+                    <div class="entry-time">14:32</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Jarvis</div>
+                        <div class="entry-text">
+                            <button class="entry-copy" aria-label="Antwort kopieren">kopieren</button>
+                            Die Recherche ist abgeschlossen. Moderne Elektroautos erreichen im Alltag
+                            350 bis 500 Kilometer — auch der Sonderfall des
+                            Donaudampfschifffahrtsgesellschaftskapitäns ist abgedeckt.
+                            <div class="sources">Quellen: <a href="#">ev-studie-2026.de</a> · <a href="#">reichweite-heute.org</a></div>
+                            <div class="entry-result"><span class="f-dot ok"></span>Notiz in der Inbox abgelegt</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="entry user">
+                    <div class="entry-time">14:35</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Du</div>
+                        <div class="entry-text">Leg eine Notiz an: Reichweiten-Vergleich morgen früh fertig schreiben.</div>
+                    </div>
+                </div>
+                <div class="entry jarvis">
+                    <div class="entry-time">14:35</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Jarvis</div>
+                        <div class="entry-text">
+                            <button class="entry-copy" aria-label="Antwort kopieren">kopieren</button>
+                            Notiert. Die Notiz liegt in deiner Inbox für heute — Obsidian sortiert sie am Abend ein.
+                        </div>
+                    </div>
+                </div>
+                <button class="new-msg-pill" id="new-pill">↓ Neue Nachricht</button>
+            </div>
+        </section>
+
+        <div class="ask">
+            <label class="sr-only" for="ask-field">Nachricht an Jarvis</label>
+            <input class="ask-field" id="ask-field" type="text" placeholder="Nachricht an Jarvis">
+            <span class="ask-hint">Strg+Enter sendet</span>
+        </div>
+
+        <div class="panel-answer">Notiert. Die Notiz liegt in deiner Inbox für heute — Obsidian sortiert sie am Abend ein.</div>
+        <div class="panel-actions">
+            <ul class="action-list">
+                <li><span class="f-dot ok"></span><span class="a-time">14:32</span><span class="a-label">Recherche</span><span class="a-detail">Elektroautos Reichweite</span></li>
+                <li><span class="f-dot err"></span><span class="a-time">14:34</span><span class="a-label">App öffnen</span><span class="a-detail">Obsidian — Pfad nicht gefunden</span></li>
+                <li><span class="f-dot run"></span><span class="a-time">14:35</span><span class="a-label">Inbox-Notiz</span><span class="a-detail">Reichweiten-Vergleich</span></li>
+            </ul>
+        </div>
+    </main>
+
+    <!-- ═══ Kontrollzentrum ═══ -->
+    <main class="control-view" id="view-control" aria-label="Kontrollzentrum" hidden>
+        <section class="cv-left" aria-label="Gespräch (kompakt)">
+            <div class="instrument">
+                <div class="luenette"></div>
+                <div class="orb is-listening" data-orb-mirror></div>
+            </div>
+            <div class="instr-status" role="status"><span class="st-dot"></span><span data-state-word-mirror>Hört zu</span></div>
+            <section class="journal">
+                <div class="journal-body">
+                    <div class="entry jarvis">
+                        <div class="entry-time">14:35</div>
+                        <div class="entry-body">
+                            <div class="entry-speaker">Jarvis</div>
+                            <div class="entry-text">Notiert. Die Notiz liegt in deiner Inbox für heute.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <div class="ask"><label class="sr-only" for="ask2">Nachricht an Jarvis</label><input class="ask-field" id="ask2" type="text" placeholder="Nachricht an Jarvis"></div>
+        </section>
+
+        <section class="cv-mid" aria-label="Werkbank">
+            <h1 id="control-heading" tabindex="-1" class="sr-only">Kontrollzentrum</h1>
+            <div class="profiles" role="tablist" aria-label="Unterbereiche" style="gap:16px;">
+                <button class="p-tab" role="tab" data-sub="overview" aria-selected="true">Übersicht</button>
+                <button class="p-tab" role="tab" data-sub="music" aria-selected="false">Musik</button>
+                <button class="p-tab" role="tab" data-sub="settings" aria-selected="false">Einstellungen</button>
+            </div>
+            <div id="sub-overview">
+            <div class="profiles">
+                <span class="p-label" id="profiles-label">Profil</span>
+                <div class="p-tabs" role="tablist" aria-labelledby="profiles-label">
+                    <button class="p-tab" role="tab" aria-selected="true">Coding</button>
+                    <button class="p-tab" role="tab" aria-selected="false">Research</button>
+                    <button class="p-tab" role="tab" aria-selected="false">Writing</button>
+                </div>
+                <div class="p-inline" id="p-inline">
+                    <label class="sr-only" for="p-name">Profilname</label>
+                    <input id="p-name" type="text" placeholder="Profilname">
+                    <button class="btn btn-quiet" id="p-ok">Anlegen</button>
+                </div>
+                <div class="p-actions">
+                    <button class="btn btn-quiet" id="p-new">Neu</button>
+                    <button class="btn btn-quiet">Duplizieren</button>
+                    <button class="btn btn-quiet">Umbenennen</button>
+                    <button class="btn btn-danger-quiet" id="p-del">Löschen</button>
+                </div>
+                <span class="p-err" id="p-err" role="alert"></span>
+            </div>
+
+            <div class="bay" role="group" aria-label="Monitor-Zuordnung — alternativ per Auswahlfeldern je App">
+                <div class="monitor">
+                    <div class="monitor-label"><span>Monitor links</span><span>1920 × 1080</span></div>
+                    <div class="monitor-zones" id="zones-left">
+                        <button class="zone" aria-label="Monitor links, Zone oben-links — frei"></button>
+                        <button class="zone" aria-label="Monitor links, Zone oben-Mitte — frei"></button>
+                        <button class="zone" aria-label="Monitor links, Zone oben-rechts — frei"></button>
+                        <button class="zone" aria-label="Monitor links, linke Hälfte — belegt: VS Code"><span class="chip">VS Code</span></button>
+                        <button class="zone" aria-label="Monitor links, rechte Hälfte — belegt: Obsidian"><span class="chip selected">Obsidian</span></button>
+                        <button class="zone" aria-label="Monitor links, Zone Mitte-rechts — frei"></button>
+                        <button class="zone" aria-label="Monitor links, Zone unten-links — frei"></button>
+                        <button class="zone" aria-label="Monitor links, Zone unten-Mitte — frei"></button>
+                        <button class="zone" aria-label="Monitor links, Zone unten-rechts — frei"></button>
+                    </div>
+                </div>
+                <div class="monitor">
+                    <div class="monitor-label"><span>Monitor rechts</span><span>1920 × 1080</span></div>
+                    <div class="monitor-zones">
+                        <button class="zone span-all" aria-label="Monitor rechts, Vollbild — belegt: Kalender"><span class="chip">Kalender</span></button>
+                    </div>
+                </div>
+            </div>
+            <div class="bay-msg" id="bay-msg" role="status"></div>
+
+            <div class="today">
+                <div class="t-block"><h3>Offene Aufgaben</h3><ul><li>Reichweiten-Vergleich fertig schreiben</li><li>Profil „Writing" testen</li></ul></div>
+                <div class="t-block"><h3>Inbox heute</h3><ul><li>Recherche: Elektroautos (3 Quellen)</li></ul></div>
+                <div class="t-block"><h3>Zuletzt bearbeitet</h3><p class="t-empty">Kein Vault verbunden. <a href="#">Vault-Pfad festlegen</a></p></div>
+            </div>
+            </div><!-- /sub-overview -->
+
+            <div class="form-view" id="view-music" hidden style="overflow-y:auto; min-height:0; flex:1;">
+                <h2 id="music-heading" tabindex="-1">Musik für den nächsten Sessionstart</h2>
+                <p class="f-note" id="music-current" role="status" style="margin-bottom:12px;">Spielt beim nächsten Start: Ambient Start.mp3</p>
+                <ul class="music-list" id="music-list">
+                    <li><button class="music-item" aria-pressed="true"><span class="m-dot"></span>Ambient Start.mp3<span class="m-meta">spielt beim Start</span></button></li>
+                    <li><button class="music-item" aria-pressed="false"><span class="m-dot"></span>Deep Focus.mp3</button></li>
+                    <li><button class="music-item" aria-pressed="false"><span class="m-dot"></span>Morning Drive.mp3</button></li>
+                </ul>
+                <button class="btn btn-quiet" id="music-clear" style="margin-top:8px;">Keine Musik beim Start</button>
+            </div>
+
+            <div class="form-view" id="view-settings" hidden style="overflow-y:auto; min-height:0; flex:1;">
+                <h2 id="settings-heading" tabindex="-1">Einstellungen</h2>
+                <span class="unsaved-pill" id="unsaved">Nicht gespeicherte Änderungen</span>
+                <div class="form-group"><h3>Persönlichkeit</h3>
+                    <div class="field"><label for="s-name">Name</label><input id="s-name" type="text" value="Jan"></div>
+                    <div class="field" id="f-city-wrap"><label for="s-city">Stadt</label><input id="s-city" type="text" value="Hamburg">
+                        <p class="f-note">Bestimmt Wetter und Tageszeit im Briefing.</p>
+                        <p class="f-err" id="city-err">Stadt darf nicht leer sein — trag deinen Ort ein.</p></div>
+                </div>
+                <div class="form-group"><h3>Speicher &amp; Obsidian</h3>
+                    <div class="field"><label for="s-vault">Obsidian-Vault</label><input id="s-vault" type="text" placeholder="C:\Users\Jan\Obsidian\Vault"></div>
+                </div>
+                <div class="form-group"><h3>Sicherheit</h3>
+                    <div class="field"><label for="s-key">API-Schlüssel</label><input id="s-key" type="text" value="Wird nur in config.json verwaltet" readonly>
+                    <p class="f-note">Aus Sicherheitsgründen nicht über die Oberfläche änderbar.</p></div>
+                </div>
+                <div class="form-group"><h3>Verhalten</h3>
+                    <fieldset class="field"><legend>Mikrofonmodus</legend>
+                        <label><input type="radio" name="mic" checked> Immer zuhören</label>
+                        <label><input type="radio" name="mic"> Push-to-Talk — Leertaste halten</label>
+                        <label><input type="radio" name="mic"> Beim Start stumm</label>
+                    </fieldset>
+                </div>
+                <div class="g-row" style="align-items:center;">
+                    <button class="btn btn-primary" id="s-save">Speichern</button>
+                    <button class="btn btn-secondary" id="s-cancel">Abbrechen</button>
+                    <span class="confirm-row" id="s-confirm">Änderungen verwerfen?
+                        <button class="btn btn-quiet" id="s-discard">Verwerfen</button>
+                        <button class="btn btn-quiet" id="s-keep">Weiter bearbeiten</button></span>
+                </div>
+                <div class="am-msg" id="s-msg" role="status" style="margin-top:8px;"></div>
+            </div>
+        </section>
+
+        <section class="cv-right" aria-label="Module">
+            <div class="rail-section">
+                <h2>Apps</h2>
+                <div class="app-module selected" tabindex="0" id="mod-obsidian">
+                    <div class="am-head"><span class="am-name">Obsidian</span><span class="badge">App</span></div>
+                    <div class="am-row">
+                        <button class="btn btn-quiet" data-open>Öffnen</button>
+                        <button class="switch" role="switch" aria-checked="true"><span class="sw-track"><span class="sw-knob"></span></span>Autostart</button>
+                    </div>
+                    <div class="am-place">links · rechte Hälfte</div>
+                    <div class="am-position">
+                        <div class="row">
+                            <span><label for="sel-mon">Monitor</label>
+                            <select id="sel-mon"><option>links</option><option>rechts</option><option>primär</option></select></span>
+                            <span><label for="sel-zone">Zone</label>
+                            <select id="sel-zone"><option>Vollbild</option><option>linke Hälfte</option><option selected>rechte Hälfte</option><option>oben-links</option><option>Mitte</option><option>unten-rechts</option></select></span>
+                            <button class="btn btn-quiet" id="pos-save">Position speichern</button>
+                        </div>
+                        <div class="am-msg" id="pos-msg" role="status"></div>
+                    </div>
+                </div>
+                <div class="app-module" tabindex="0">
+                    <div class="am-head"><span class="am-name">VS Code</span><span class="badge">App</span></div>
+                    <div class="am-row">
+                        <button class="btn btn-quiet" data-open>Öffnen</button>
+                        <button class="switch" role="switch" aria-checked="true"><span class="sw-track"><span class="sw-knob"></span></span>Autostart</button>
+                    </div>
+                    <div class="am-place">links · linke Hälfte</div>
+                    <div class="am-position"><div class="row"><span><label for="sel-mon2">Monitor</label><select id="sel-mon2"><option selected>links</option><option>rechts</option></select></span><span><label for="sel-zone2">Zone</label><select id="sel-zone2"><option selected>linke Hälfte</option><option>Vollbild</option></select></span><button class="btn btn-quiet">Position speichern</button></div><div class="am-msg" role="status"></div></div>
+                </div>
+            </div>
+            <div class="rail-section" style="flex:1; min-height:0; overflow-y:auto;">
+                <h2>Aktionen</h2>
+                <ul class="action-list">
+                    <li><span class="f-dot ok"></span><span class="a-time">14:32</span><span class="a-label">Recherche</span><span class="a-detail">Elektroautos Reichweite</span></li>
+                    <li><span class="f-dot err"></span><span class="a-time">14:34</span><span class="a-label">App öffnen</span><span class="a-detail">Obsidian — Pfad nicht gefunden</span></li>
+                    <li><span class="f-dot run"></span><span class="a-time">14:35</span><span class="a-label">Inbox-Notiz</span><span class="a-detail">Reichweiten-Vergleich</span></li>
+                </ul>
+            </div>
+            <div class="rail-section">
+                <h2>System</h2>
+                <ul class="sys-list" id="sys-list">
+                    <li><span class="f-dot ok"></span>KI verbunden</li>
+                    <li><span class="f-dot ok"></span>Sprachausgabe bereit</li>
+                    <li><span class="f-dot ok"></span>Browser bereit</li>
+                    <li><span class="f-dot err"></span>Vault getrennt</li>
+                </ul>
+            </div>
+        </section>
+    </main>
+
+    <!-- (Musik- und Einstellungen-Subviews leben in der Werkbank-Spalte, s. oben) -->
+
+    <div class="banner-stack" id="banner-stack"></div>
+
+    <footer class="footer">
+        <span class="f-item"><span class="f-dot ok" id="dot-server"></span><span class="f-label" id="txt-server">Server verbunden</span></span>
+        <span class="f-item"><span class="f-dot ok" id="dot-mic"></span><span class="f-label" id="txt-mic">Mikrofon bereit</span></span>
+        <span class="kbd-hint">Esc = Stopp · „Stopp" sagen · Strg+Enter sendet</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" id="btn-stop" aria-label="Wiedergabe und Aktion stoppen"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1"/></svg></button>
+        <button class="icon-btn" id="btn-mute" aria-label="Mikrofon stummschalten" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="6" y="2" width="4" height="7" rx="2"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></svg></button>
+    </footer>
+</div>
+</div>
+
+<div aria-live="polite" class="sr-only" id="live-polite"></div>
+<div aria-live="assertive" class="sr-only" id="live-assertive"></div>
+
+<script src="ux.js"></script>
+</body>
+</html>

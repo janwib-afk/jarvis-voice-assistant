@@ -1,0 +1,20 @@
+:root {
+  --font-heading: Segoe UI;
+  --font-body: Segoe UI;
+  --space-1: 2px;
+  --space-2: 3px;
+  --space-3: 4px;
+  --space-4: 6px;
+  --space-5: 7px;
+  --space-6: 8px;
+  --space-7: 9px;
+  --space-8: 10px;
+  --space-9: 12px;
+  --space-10: 14px;
+  --space-11: 16px;
+  --space-12: 18px;
+  --space-13: 20px;
+  --space-14: 24px;
+  --space-15: 28px;
+  --space-16: 48px;
+}

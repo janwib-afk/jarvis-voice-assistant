@@ -3,6 +3,7 @@ Jarvis V2 — Browser Tools
 Web search via DuckDuckGo Lite, page visits via Playwright, URL opening.
 """
 
+import contextlib
 import html as html_module
 import logging
 import re
@@ -221,9 +222,86 @@ async def search_links(query: str, limit: int = 4) -> list[dict]:
     return await _search_links_fallback(query, limit)
 
 
+# ── Browserloser Lesefallback (HTTP) ────────────────────────────────────────
+# Fuer die Recherche-Degradation: Script/Style entfernen, <title> ziehen, Rest
+# zu Fliesstext strippen. Bewusst konservativ und ohne Browser/JS-Rendering.
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
+_WS_RE = re.compile(r"\s+")
+
+# Rohe HTTP-Antworten vor der Textextraktion deckeln (Schutz vor Riesenseiten).
+_FALLBACK_MAX_BYTES = 2_000_000
+
+
+def _extract_readable(html: str, max_chars: int = 5000) -> tuple[str, str]:
+    """Zieht ``(titel, fliesstext)`` konservativ aus rohem HTML — ohne Browser.
+
+    Script/Style werden entfernt, Tags gestrippt, HTML-Entities decodiert und
+    Whitespace normalisiert. Der Text wird auf ``max_chars`` gekappt.
+    """
+    title = ""
+    title_match = _TITLE_RE.search(html)
+    if title_match:
+        title = html_module.unescape(_TAG_RE.sub("", title_match.group(1))).strip()
+    body = _SCRIPT_STYLE_RE.sub(" ", html)
+    body = _TAG_RE.sub(" ", body)
+    body = html_module.unescape(body)
+    body = _WS_RE.sub(" ", body).strip()
+    return title, body[:max_chars]
+
+
+async def fetch_page_text_fallback(url: str, max_chars: int = 5000) -> dict:
+    """Liest eine einfache Webseite ohne Browser per HTTP (Recherche-Degradation).
+
+    Akzeptiert nur ``http``/``https``, folgt Redirects, setzt einen Desktop-
+    User-Agent und deckelt die heruntergeladene Groesse. Gibt
+    ``{title, url, content}`` zurueck oder ``{error, url}``.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return {"error": "Ungueltige URL", "url": url}
+    if parsed.scheme not in ("http", "https"):
+        return {"error": f"Nicht unterstuetztes Schema: {parsed.scheme or 'kein'}", "url": url}
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            follow_redirects=True,
+        ) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    return {"error": f"HTTP-Status {resp.status_code}", "url": url}
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total >= _FALLBACK_MAX_BYTES:
+                        break
+                encoding = resp.encoding or "utf-8"
+    except Exception as e:
+        logger.warning("HTTP-Lesefallback fehlgeschlagen fuer %s", url, exc_info=True)
+        return {"error": type(e).__name__, "url": url}
+
+    html = b"".join(chunks).decode(encoding, errors="replace")
+    title, text = _extract_readable(html, max_chars=max_chars)
+    return {"title": title, "url": url, "content": text}
+
+
 async def visit(url: str, max_chars: int = 5000) -> dict:
-    """Visit a URL and extract main text content."""
-    page = await _new_page_capped()
+    """Visit a URL and extract main text content.
+
+    Faellt bei fehlendem/kaputtem Playwright oder einer nicht ladbaren Seite auf
+    den browserlosen HTTP-Lesefallback zurueck — so bleibt die Recherche auch
+    ohne Chromium nutzbar.
+    """
+    try:
+        page = await _new_page_capped()
+    except Exception:
+        logger.info("Playwright nicht verfuegbar — HTTP-Lesefallback fuer %s", url)
+        return await fetch_page_text_fallback(url, max_chars=max_chars)
     try:
         await page.goto(url, timeout=15000, wait_until="domcontentloaded")
         text = await page.evaluate("""
@@ -241,9 +319,14 @@ async def visit(url: str, max_chars: int = 5000) -> dict:
         title = await page.title()
         return {"title": title, "url": url, "content": text[:max_chars]}
     except Exception as e:
+        logger.info("Browser-Besuch fehlgeschlagen — HTTP-Lesefallback fuer %s", url)
+        fallback = await fetch_page_text_fallback(url, max_chars=max_chars)
+        if "error" not in fallback:
+            return fallback
         return {"error": str(e), "url": url}
     finally:
-        await page.close()
+        with contextlib.suppress(Exception):
+            await page.close()
 
 
 async def fetch_news() -> str:

@@ -47,7 +47,7 @@ class SplitIntoChunksTests(unittest.TestCase):
         self.assertEqual(tts.split_into_chunks("Hallo."), ["Hallo."])
 
     def test_long_text_splits_at_sentences(self):
-        text = ("Erster Satz mit einigem Inhalt. " * 10).strip()  # > 250 Zeichen
+        text = ("Erster Satz mit einigem Inhalt. " * 25).strip()  # > MAX_CHUNK_CHARS
         chunks = tts.split_into_chunks(text)
         self.assertGreater(len(chunks), 1)
         for chunk in chunks:
@@ -56,6 +56,32 @@ class SplitIntoChunksTests(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(tts.split_into_chunks(""), [""])
+
+    def test_long_sentence_without_punctuation_capped(self):
+        # Ein einziger "Satz" ohne Satzzeichen, deutlich laenger als max_chars.
+        text = ("Wort " * 200).strip()
+        chunks = tts.split_into_chunks(text)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), tts.MAX_CHUNK_CHARS)
+            self.assertTrue(chunk)  # keine Leerstrings
+
+    def test_single_word_longer_than_max_hard_cut(self):
+        word = "a" * (tts.MAX_CHUNK_CHARS * 2 + 5)
+        chunks = tts.split_into_chunks(word)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), tts.MAX_CHUNK_CHARS)
+            self.assertTrue(chunk)
+        # Hartschnitt ist verlustfrei (kein Trennzeichen eingefuegt).
+        self.assertEqual("".join(chunks), word)
+
+    def test_custom_max_chars_respected(self):
+        text = "Satz eins ist hier. Satz zwei folgt jetzt. Und ein dritter Satz kommt."
+        chunks = tts.split_into_chunks(text, max_chars=20)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), 20)
+            self.assertTrue(chunk)
 
 
 class SynthesizeSpeechTests(unittest.TestCase):
@@ -78,8 +104,9 @@ class SynthesizeSpeechTests(unittest.TestCase):
         self.assertEqual(kwargs["headers"]["xi-api-key"], "test-key")
 
     def test_multi_chunk_audio_concatenated(self):
-        text = ("Langer Satz Nummer eins mit vielen Worten drin. " * 7).strip()
+        text = ("Langer Satz Nummer eins mit vielen Worten drin. " * 15).strip()
         n_chunks = len(tts.split_into_chunks(text))
+        self.assertGreater(n_chunks, 1)  # Verkettung mehrerer MP3-Parts wird geprueft
         client = _FakeClient([_FakeResponse(200, b"A")] * n_chunks)
         audio, err = _run(text, client)
         self.assertEqual(audio, b"A" * n_chunks)
@@ -119,7 +146,7 @@ class SynthesizeSpeechTests(unittest.TestCase):
 
     def test_partial_success_is_no_error(self):
         # Chunk 1 ok, Chunk 2 scheitert => Audio kommt, kein Fehlerhinweis.
-        text = ("Satz eins ist hier ziemlich lang und redet weiter. " * 7).strip()
+        text = ("Satz eins ist hier ziemlich lang und redet weiter. " * 15).strip()
         n_chunks = len(tts.split_into_chunks(text))
         self.assertGreaterEqual(n_chunks, 2)
         responses = [_FakeResponse(200, b"X")] + [_FakeResponse(429)] * (n_chunks - 1)

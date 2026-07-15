@@ -11,10 +11,12 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import secrets
+import time
 
 import anthropic
 import httpx
@@ -23,6 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import actions
+import app_launcher
+import monitors
 import assistant_core
 import config_loader
 import memory
@@ -39,8 +43,13 @@ logger = logging.getLogger("jarvis")
 # Start erzeugt und nur in die ausgelieferte Seite injiziert (Same-Origin).
 SESSION_TOKEN = secrets.token_urlsafe(24)
 
-# Load config (zentrale Validierung mit verständlichen Fehlermeldungen)
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+# Load config (zentrale Validierung mit verständlichen Fehlermeldungen).
+# Produktion nutzt immer die echte config.json; nur kontrollierte Starts/Tests
+# waehlen ueber JARVIS_CONFIG_PATH ausdruecklich eine andere (z.B. synthetische)
+# Config — es gibt keinen stillen Rueckfall.
+CONFIG_PATH = config_loader.resolve_config_path(
+    os.environ, os.path.join(os.path.dirname(__file__), "config.json")
+)
 try:
     config = config_loader.load_config(CONFIG_PATH)
 except config_loader.ConfigError as e:
@@ -57,13 +66,14 @@ for _warning in STARTUP_WARNINGS:
 ai = anthropic.AsyncAnthropic(api_key=config["anthropic_api_key"], timeout=30.0, max_retries=2)
 http = httpx.AsyncClient(timeout=30)
 
-# Module verdrahten: Obsidian-Pfade, Persona/TTS-Werte, API-Clients.
+# Module verdrahten: Obsidian-Pfade, Persona/TTS-Werte, API-Clients, App-Registry.
 memory.configure(
     vault_path=config.get("obsidian_inbox_path", ""),
     inbox_path=config.get("obsidian_inbox_folder", ""),
 )
 assistant_core.configure(config)
 assistant_core.init_clients(ai, http)
+app_launcher.configure(config.get("apps", []), config.get("launcher"))
 
 app = FastAPI()
 
@@ -121,22 +131,33 @@ async def websocket_endpoint(ws: WebSocket):
     # Nachrichten laufen als Task neben der Receive-Loop — so kommt ein "Stopp"
     # auch WÄHREND einer langen Aktion (z.B. 3-Minuten-Recherche) durch.
     # Ein Worker arbeitet die Queue strikt sequenziell ab (wie bisher).
+    #
+    # ``stopping`` trennt die beiden Cancel-Ursachen sauber und racefrei:
+    #   - Stopp  → nur der Child-Task wird gecancelt, der Worker laeuft weiter.
+    #   - Disconnect → das finally setzt stopping=True und cancelt den Worker;
+    #     der Worker nimmt seinen Child-Task dann garantiert mit.
+    # Ohne dieses Flag koennte ein Stopp, der zeitgleich mit einem Disconnect
+    # eintrifft, den Worker seinen eigenen CancelledError schlucken lassen
+    # (task.cancelled() waere True) — der Worker wuerde leaken.
     queue: asyncio.Queue[str] = asyncio.Queue()
-    current: dict = {"task": None}
+    state: dict = {"task": None, "stopping": False}
 
     async def worker():
         while True:
             text = await queue.get()
             task = asyncio.create_task(assistant_core.process_message(session_id, text, ws))
-            current["task"] = task
+            state["task"] = task
             try:
                 await task
             except asyncio.CancelledError:
-                if not task.cancelled():
-                    # Der Worker selbst wurde beendet (Disconnect) — Task mitnehmen.
+                if state["stopping"]:
+                    # Disconnect: Child zuverlaessig mitnehmen und sauber auslaufen
+                    # lassen, dann die Cancellation weiterreichen (Worker endet).
                     task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
                     raise
-                # Task wurde per "Stopp" abgebrochen — weiter mit der naechsten Nachricht.
+                # Reiner Stopp: Child wurde abgebrochen — weiter mit der naechsten Nachricht.
             except Exception:
                 # Unerwartete Fehler beenden nie die Verbindung.
                 logger.exception("Nachrichtenverarbeitung fehlgeschlagen")
@@ -145,7 +166,7 @@ async def websocket_endpoint(ws: WebSocket):
                 except Exception:
                     pass
             finally:
-                current["task"] = None
+                state["task"] = None
 
     worker_task = asyncio.create_task(worker())
 
@@ -157,7 +178,7 @@ async def websocket_endpoint(ws: WebSocket):
             # Stopp: laufende Verarbeitung/Aktion abbrechen, Queue leeren,
             # Frontend stoppt die Audio-Wiedergabe (Frame type=stop).
             if data.get("type") == "stop" or actions.is_stop_command(user_text):
-                task = current["task"]
+                task = state["task"]
                 was_busy = task is not None and not task.done()
                 if was_busy:
                     task.cancel()
@@ -179,7 +200,13 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
+        # Disconnect: Worker markieren, canceln und sauber auslaufen lassen —
+        # so wird auch ein gerade laufender Child-Task garantiert beendet
+        # (kein Task-Leak pro geschlossener Verbindung).
+        state["stopping"] = True
         worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker_task
         ws_clients.discard(ws)
         assistant_core.end_session(session_id)
 
@@ -212,19 +239,25 @@ def _settings_token_ok(request: Request) -> bool:
 
 
 def _public_settings() -> dict:
+    _defaults = {"apps": [], "launcher": {}}
     return {
-        key: config.get(key, [] if key == "apps" else "")
+        key: config.get(key, _defaults.get(key, ""))
         for key in sorted(config_loader.UI_EDITABLE_KEYS)
     }
 
 
-async def broadcast_health():
-    """Frische Warnings an alle verbundenen Clients pushen."""
+async def broadcast_json(payload: dict):
+    """Ein Event an alle verbundenen WS-Clients pushen (tote Clients aufraeumen)."""
     for client in list(ws_clients):
         try:
-            await client.send_json({"type": "health", "warnings": STARTUP_WARNINGS})
+            await client.send_json(payload)
         except Exception:
             ws_clients.discard(client)
+
+
+async def broadcast_health():
+    """Frische Warnings an alle verbundenen Clients pushen."""
+    await broadcast_json({"type": "health", "warnings": STARTUP_WARNINGS})
 
 
 async def apply_settings(merged: dict):
@@ -243,6 +276,7 @@ async def apply_settings(merged: dict):
         vault_path=config.get("obsidian_inbox_path", ""),
         inbox_path=config.get("obsidian_inbox_folder", ""),
     )
+    app_launcher.configure(config.get("apps", []), config.get("launcher"))
     STARTUP_WARNINGS = config_loader.check_runtime_environment(config)
     if needs_refresh:
         # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop laufen lassen.
@@ -276,6 +310,414 @@ async def post_settings(request: Request):
     await apply_settings(merged)
     logger.info("Settings aktualisiert: %s", ", ".join(sorted(updates.keys())))
     return {"ok": True, "applied": sorted(updates.keys()), "warnings": STARTUP_WARNINGS}
+
+
+# ── Musik-API ────────────────────────────────────────────────────────────────
+# Gleiche Token-Sicherung wie /settings. Gespeichert wird NUR der Dateiname
+# (config.selected_music_file); abgespielt wird ausschliesslich aus dem
+# konfigurierten music_folder — launch-session.ps1 prueft beim Sessionstart
+# nochmal Dateiname + .mp3 + Existenz (Defense-in-Depth).
+
+def _scan_music_folder(folder: str) -> dict:
+    """Listet ``.mp3``-Dateien im Musikordner, stabil alphabetisch (casefold).
+
+    Kein Ordner konfiguriert -> ok mit leerer Liste (das UI zeigt den Hinweis);
+    Ordner fehlt/nicht lesbar -> kontrollierter Fehler statt Crash. Pfade sind
+    keine Secrets und duerfen in Meldungen genannt werden.
+    """
+    if not folder:
+        return {"ok": True, "files": [], "error": ""}
+    if not os.path.isdir(folder):
+        return {"ok": False, "files": [], "error": f"Musikordner nicht gefunden: {folder}"}
+    files = []
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if not entry.is_file() or not entry.name.lower().endswith(".mp3"):
+                    continue
+                try:
+                    stat = entry.stat()
+                    files.append({"name": entry.name, "size": stat.st_size,
+                                  "modified": stat.st_mtime})
+                except OSError:
+                    files.append({"name": entry.name, "size": None, "modified": None})
+    except OSError as e:
+        return {"ok": False, "files": [], "error": f"Musikordner konnte nicht gelesen werden: {e}"}
+    files.sort(key=lambda f: f["name"].casefold())
+    return {"ok": True, "files": files, "error": ""}
+
+
+@app.get("/music/files")
+async def music_files(request: Request):
+    """MP3-Liste fuers Kontrollzentrum. HTTP 200 auch bei fehlendem Ordner —
+    die Antwort ist ein Zustandsbericht (ok/error), kein Crash."""
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    folder = config.get("music_folder", "")
+    result = await asyncio.to_thread(_scan_music_folder, folder)
+    return {
+        "ok": result["ok"],
+        "folder": folder,
+        "selected": config.get("selected_music_file", ""),
+        "files": result["files"],
+        "error": result["error"],
+    }
+
+
+@app.post("/music/selection")
+async def music_selection(request: Request):
+    """MP3 fuer den naechsten Sessionstart waehlen ('' = abwaehlen).
+
+    Validiert den Dateinamen (config_loader) UND die Existenz im Musikordner,
+    speichert dann nur den Dateinamen und uebernimmt die Config live.
+    """
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "errors": ["Ungültiges JSON."]}, status_code=400)
+    file = body.get("file") if isinstance(body, dict) else None
+    if not isinstance(file, str):
+        return JSONResponse({"ok": False, "errors": ["Feld 'file' fehlt."]}, status_code=400)
+    file = file.strip()
+    errors = config_loader.validate_music_file_value(file)
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+    if file:
+        folder = config.get("music_folder", "")
+        if not folder or not os.path.isdir(folder):
+            return JSONResponse(
+                {"ok": False, "errors": ["Musikordner ist nicht konfiguriert oder existiert nicht."]},
+                status_code=400,
+            )
+        exists = await asyncio.to_thread(os.path.isfile, os.path.join(folder, file))
+        if not exists:
+            return JSONResponse(
+                {"ok": False, "errors": ["Datei nicht im Musikordner gefunden."]},
+                status_code=400,
+            )
+    try:
+        merged = config_loader.save_settings(CONFIG_PATH, {"selected_music_file": file})
+    except config_loader.ConfigError as e:
+        return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
+    await apply_settings(merged)
+    # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
+    # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
+    await broadcast_json({"type": "music_changed", "selected": file, "ts": time.time()})
+    logger.info("Musik-Auswahl: %s", file or "(keine)")
+    return {"ok": True, "selected": file}
+
+
+# ── Dashboard-/Command-API ───────────────────────────────────────────────────
+# Gleiche Sicherheitslogik wie /settings: Session-Token im x-jarvis-token-Header.
+# UI-Klicks und Sprach-Aktion (APP_OPEN) laufen beide ueber app_launcher.
+
+@app.get("/dashboard/state")
+def dashboard_state(request: Request):
+    """Daten fuer das Command Center (Fokus-Modus). Sync def → Threadpool,
+    da health.build_report Datei-/Pfad-Checks macht. Nutzt die gecachten
+    Kontextdaten aus assistant_core (kein Vault-Scan pro Aufruf)."""
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    return {
+        "ok": True,
+        "health": health.build_report(
+            config, STARTUP_WARNINGS, assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
+        ),
+        "tasks": assistant_core.TASKS_INFO,
+        "today_inbox": assistant_core.TODAY_INBOX,
+        "vault": assistant_core.VAULT_SUMMARY,
+        "apps": app_launcher.list_apps(),
+        "data_loaded": assistant_core.DATA_LOADED,
+        "last_refresh": assistant_core.LAST_REFRESH,
+    }
+
+
+@app.post("/commands/app/open")
+async def command_app_open(request: Request):
+    """App aus der Registry starten (UI-Klick) — dieselbe Allowlist wie APP_OPEN."""
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "errors": ["Ungültiges JSON."]}, status_code=400)
+    app_query = body.get("app") if isinstance(body, dict) else None
+    if not isinstance(app_query, str) or not app_query.strip():
+        return JSONResponse({"ok": False, "errors": ["Feld 'app' fehlt."]}, status_code=400)
+
+    result = await asyncio.to_thread(app_launcher.launch, app_query)
+    await broadcast_json({
+        "type": "app_event",
+        "ok": result["ok"],
+        "app": result["app"],
+        "name": result["name"],
+        "message": result["message"],
+        "ts": time.time(),
+    })
+    status_code = 200 if result["ok"] else (404 if result["app"] is None else 500)
+    return JSONResponse(result, status_code=status_code)
+
+
+# ── Launcher-API ─────────────────────────────────────────────────────────────
+# Session-Profile: autostart/placement pro App leben im aktiven Profil
+# (config.launcher); launch-session.ps1 startet das aktive Profil.
+# Gleiche Token-Sicherung wie /settings; ``command`` verlaesst den Server nie.
+
+async def persist_launcher_block(new_launcher: dict, kind: str) -> list[str]:
+    """Kern-Persistenz fuer Endpunkte UND Sprach-Aktionen (assistant_core).
+
+    validate -> save (pinnt explizite App-IDs, Legacy-Strings -> Objektform,
+    damit PS1 Profil-Keys sicher matchen kann) -> live anwenden -> WS-Event
+    ``launcher_changed`` (Fokus-UI zieht Profile/Toggles/Map nach).
+    Leere Liste = ok, sonst lesbare deutsche Fehler.
+    """
+    app_ids = [a["id"] for a in app_launcher.APPS]
+    errors = config_loader.validate_launcher_value(new_launcher, app_ids=app_ids)
+    if errors:  # konstruktionsbedingt nie — reiner Guard
+        return errors
+    updates = {"launcher": new_launcher,
+               "apps": app_launcher.pin_app_ids(config.get("apps", []))}
+    try:
+        merged = config_loader.save_settings(CONFIG_PATH, updates)
+    except config_loader.ConfigError as e:
+        return [str(e)]
+    await apply_settings(merged)
+    await broadcast_json({
+        "type": "launcher_changed",
+        "kind": kind,
+        "active_profile": app_launcher.ACTIVE_PROFILE,
+        "ts": time.time(),
+    })
+    return []
+
+
+# Sprach-Aktionen (PROFILE_ACTIVATE, APP_AUTOSTART_*, APP_PLACE) persistieren
+# ueber denselben Kern — Injektion vermeidet den Zirkular-Import.
+assistant_core.PERSIST_LAUNCHER = persist_launcher_block
+
+
+async def _persist_launcher(new_launcher: dict, kind: str):
+    """Endpunkt-Wrapper: Fehler des Persist-Kerns als JSONResponse (500)."""
+    errors = await persist_launcher_block(new_launcher, kind)
+    if errors:
+        return None, JSONResponse({"ok": False, "errors": errors}, status_code=500)
+    return True, None
+
+
+def _profiles_response() -> dict:
+    """Einheitliche Antwort der Profil-Endpunkte: Profile + effective Apps."""
+    return {
+        "ok": True,
+        "active_profile": app_launcher.ACTIVE_PROFILE,
+        "profiles": app_launcher.serialize_launcher()["profiles"],
+        "apps": app_launcher.list_apps(),
+    }
+
+
+@app.get("/launcher/apps")
+async def launcher_list_apps(request: Request):
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    return {"ok": True, "active_profile": app_launcher.ACTIVE_PROFILE,
+            "apps": app_launcher.list_apps()}
+
+
+@app.post("/launcher/apps/{app_id}/toggle")
+async def launcher_toggle_autostart(app_id: str, request: Request):
+    """Autostart einer bekannten App setzen — expliziter Boolean statt Flip,
+    damit wiederholte Requests idempotent sind (kein Lost-Update)."""
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "errors": ["Ungültiges JSON."]}, status_code=400)
+    value = body.get("autostart") if isinstance(body, dict) else None
+    if not isinstance(value, bool):
+        return JSONResponse(
+            {"ok": False, "errors": ["Feld 'autostart' muss true oder false sein."]},
+            status_code=400,
+        )
+
+    new_launcher = app_launcher.launcher_with_app_state(app_id, autostart=value)
+    if new_launcher is None:
+        return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
+    _merged, err = await _persist_launcher(new_launcher, "autostart")
+    if err is not None:
+        return err
+    logger.info("Autostart geaendert (%s): %s -> %s", app_launcher.ACTIVE_PROFILE, app_id, value)
+    return {"ok": True, "apps": app_launcher.list_apps()}
+
+
+@app.get("/launcher/monitors")
+async def launcher_list_monitors(request: Request):
+    """Physische Monitore fuer die Monitor-Map. Leere Liste = Erkennung
+    fehlgeschlagen -> das Frontend zeigt die virtuelle Standardansicht."""
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    return {"ok": True, "monitors": monitors.detect_monitors()}
+
+
+@app.post("/launcher/apps/{app_id}/placement")
+async def launcher_set_placement(app_id: str, request: Request):
+    """Monitor/Zone einer bekannten App setzen — beide Felder sind Pflicht,
+    damit wiederholte Requests idempotent sind (kein Lost-Update).
+    launch-session.ps1 wendet die Platzierung beim naechsten Sessionstart an."""
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "errors": ["Ungültiges JSON."]}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "errors": ["'placement' muss ein Objekt sein."]},
+                            status_code=400)
+    errors = [f"Feld '{field}' fehlt." for field in ("monitor", "zone") if field not in body]
+    errors.extend(config_loader.validate_placement_value(body))
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    new_launcher = app_launcher.launcher_with_app_state(
+        app_id, placement={"monitor": body["monitor"], "zone": body["zone"]}
+    )
+    if new_launcher is None:
+        return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
+    _merged, err = await _persist_launcher(new_launcher, "placement")
+    if err is not None:
+        return err
+    # Zu diesem Zeitpunkt sind monitor/zone Allowlist-Konstanten, keine Nutzerdaten.
+    logger.info("Platzierung geaendert (%s): %s -> %s/%s",
+                app_launcher.ACTIVE_PROFILE, app_id, body["monitor"], body["zone"])
+    return {"ok": True, "apps": app_launcher.list_apps()}
+
+
+# ── Profil-API ───────────────────────────────────────────────────────────────
+# Session-Profile verwalten. Antworten einheitlich via _profiles_response().
+
+async def _read_body(request: Request):
+    """JSON-Body lesen; (body, fehler_response)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return None, JSONResponse({"ok": False, "errors": ["Ungültiges JSON."]}, status_code=400)
+    if not isinstance(body, dict):
+        return None, JSONResponse({"ok": False, "errors": ["Body muss ein Objekt sein."]},
+                                  status_code=400)
+    return body, None
+
+
+def _profile_name_from(body: dict):
+    """(name, fehler_response) — 'name' ist bei allen Profil-Mutationen Pflicht."""
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None, JSONResponse({"ok": False, "errors": ["Feld 'name' fehlt."]}, status_code=400)
+    return name.strip(), None
+
+
+@app.get("/launcher/profiles")
+async def launcher_list_profiles(request: Request):
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    return _profiles_response()
+
+
+@app.post("/launcher/profiles")
+async def launcher_create_profile(request: Request):
+    """Neues Profil mit Defaults (alle Apps autostart:true, keine Placements).
+    Aktiviert bewusst NICHT — anlegen ist nicht wechseln."""
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    body, err = await _read_body(request)
+    if err is not None:
+        return err
+    name, err = _profile_name_from(body)
+    if err is not None:
+        return err
+    new_launcher = app_launcher.launcher_with_new_profile(body.get("id"), name)
+    if new_launcher is None:
+        return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
+                            status_code=400)
+    _merged, err = await _persist_launcher(new_launcher, "profile")
+    if err is not None:
+        return err
+    logger.info("Profil angelegt: %s", name)
+    return _profiles_response()
+
+
+@app.post("/launcher/profiles/{profile_id}/activate")
+async def launcher_activate_profile(profile_id: str, request: Request):
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    new_launcher = app_launcher.launcher_with_active(profile_id)
+    if new_launcher is None:
+        return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
+    _merged, err = await _persist_launcher(new_launcher, "profile")
+    if err is not None:
+        return err
+    logger.info("Profil aktiviert: %s", app_launcher.ACTIVE_PROFILE)
+    return _profiles_response()
+
+
+@app.post("/launcher/profiles/{profile_id}/duplicate")
+async def launcher_duplicate_profile(profile_id: str, request: Request):
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    if not app_launcher.profile_exists(profile_id):
+        return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
+    body, err = await _read_body(request)
+    if err is not None:
+        return err
+    name, err = _profile_name_from(body)
+    if err is not None:
+        return err
+    new_launcher = app_launcher.launcher_with_new_profile(body.get("id"), name,
+                                                          copy_from=profile_id)
+    if new_launcher is None:
+        return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
+                            status_code=400)
+    _merged, err = await _persist_launcher(new_launcher, "profile")
+    if err is not None:
+        return err
+    logger.info("Profil dupliziert: %s -> %s", profile_id, name)
+    return _profiles_response()
+
+
+@app.post("/launcher/profiles/{profile_id}/rename")
+async def launcher_rename_profile(profile_id: str, request: Request):
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    body, err = await _read_body(request)
+    if err is not None:
+        return err
+    name, err = _profile_name_from(body)
+    if err is not None:
+        return err
+    new_launcher = app_launcher.launcher_with_renamed(profile_id, name)
+    if new_launcher is None:
+        return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
+    _merged, err = await _persist_launcher(new_launcher, "profile")
+    if err is not None:
+        return err
+    logger.info("Profil umbenannt: %s -> %s", profile_id, name)
+    return _profiles_response()
+
+
+@app.delete("/launcher/profiles/{profile_id}")
+async def launcher_delete_profile(profile_id: str, request: Request):
+    if not _settings_token_ok(request):
+        return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
+    new_launcher, guard = app_launcher.launcher_without_profile(profile_id)
+    if guard is not None:
+        return JSONResponse({"ok": False, "errors": [guard]}, status_code=400)
+    if new_launcher is None:
+        return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
+    _merged, err = await _persist_launcher(new_launcher, "profile")
+    if err is not None:
+        return err
+    logger.info("Profil geloescht: %s", profile_id)
+    return _profiles_response()
 
 
 @app.get("/")

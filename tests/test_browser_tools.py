@@ -217,5 +217,105 @@ class SearchLinksFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results, [{"title": "Browser-Treffer", "url": "https://example.com/browser"}])
 
 
+class ExtractReadableTests(unittest.TestCase):
+    def test_extracts_title_and_text(self):
+        html = ("<html><head><title>Beispiel &amp; Co</title></head>"
+                "<body><p>Hallo Welt</p></body></html>")
+        title, text = browser_tools._extract_readable(html)
+        self.assertEqual(title, "Beispiel & Co")
+        self.assertIn("Hallo Welt", text)
+
+    def test_removes_script_and_style(self):
+        html = ("<body><style>.x{color:red}</style>"
+                "<script>alert('geheim')</script><p>Sichtbar</p></body>")
+        _, text = browser_tools._extract_readable(html)
+        self.assertIn("Sichtbar", text)
+        self.assertNotIn("alert", text)
+        self.assertNotIn("color:red", text)
+
+    def test_decodes_entities_and_normalizes_whitespace(self):
+        _, text = browser_tools._extract_readable("<p>viel\n\n   Abstand &amp; mehr</p>")
+        self.assertEqual(text, "viel Abstand & mehr")
+
+    def test_caps_at_max_chars(self):
+        html = "<p>" + ("A" * 5000) + "</p>"
+        _, text = browser_tools._extract_readable(html, max_chars=100)
+        self.assertLessEqual(len(text), 100)
+
+
+class FetchPageFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rejects_non_http_scheme(self):
+        # Kein Netzaufruf: nicht-http(s)-Schemata werden sofort abgelehnt.
+        for url in ("file:///etc/passwd", "ftp://example.com/x", "javascript:alert(1)"):
+            result = await browser_tools.fetch_page_text_fallback(url)
+            self.assertIn("error", result)
+            self.assertEqual(result["url"], url)
+
+
+class VisitFallbackTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._orig_page = browser_tools._new_page_capped
+        self._orig_fetch = browser_tools.fetch_page_text_fallback
+
+    def tearDown(self):
+        browser_tools._new_page_capped = self._orig_page
+        browser_tools.fetch_page_text_fallback = self._orig_fetch
+
+    async def test_falls_back_when_no_browser(self):
+        async def broken_page():
+            raise RuntimeError("Playwright ist nicht installiert.")
+
+        called = []
+
+        async def fake_fetch(url, max_chars=5000):
+            called.append((url, max_chars))
+            return {"title": "F", "url": url, "content": "browserlos gelesen"}
+
+        browser_tools._new_page_capped = broken_page
+        browser_tools.fetch_page_text_fallback = fake_fetch
+        result = await browser_tools.visit("https://example.com", max_chars=1500)
+        self.assertEqual(result["content"], "browserlos gelesen")
+        self.assertEqual(called, [("https://example.com", 1500)])
+
+    async def test_falls_back_when_page_op_fails(self):
+        class FakePage:
+            async def goto(self, *a, **kw):
+                raise RuntimeError("Navigation failed")
+
+            async def close(self):
+                pass
+
+        async def fake_page():
+            return FakePage()
+
+        async def fake_fetch(url, max_chars=5000):
+            return {"title": "F", "url": url, "content": "fallback nach fehler"}
+
+        browser_tools._new_page_capped = fake_page
+        browser_tools.fetch_page_text_fallback = fake_fetch
+        result = await browser_tools.visit("https://example.com")
+        self.assertEqual(result["content"], "fallback nach fehler")
+
+    async def test_returns_original_error_when_fallback_also_fails(self):
+        class FakePage:
+            async def goto(self, *a, **kw):
+                raise RuntimeError("Navigation kaputt")
+
+            async def close(self):
+                pass
+
+        async def fake_page():
+            return FakePage()
+
+        async def fake_fetch(url, max_chars=5000):
+            return {"error": "auch kaputt", "url": url}
+
+        browser_tools._new_page_capped = fake_page
+        browser_tools.fetch_page_text_fallback = fake_fetch
+        result = await browser_tools.visit("https://example.com")
+        self.assertIn("error", result)
+        self.assertIn("Navigation kaputt", result["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,13 +5,19 @@ Ein Befehl prueft die Grundgesundheit des Projekts, ohne echte API-Aufrufe:
 
     python scripts/smoke-test.py
 
-1. config.json vorhanden und gueltig
-2. Alle Module importierbar
-3. Server startet (TestClient) und /health antwortet
-4. Testsuite gruen (entspricht: python -m unittest discover -s tests)
+1. Alle benoetigten Python-Pakete installiert (mit Installationsbefehl bei Fehlen)
+2. config.json vorhanden und gueltig
+3. Alle Module importierbar
+4. Server startet (TestClient) und /health antwortet
+5. Testsuite gruen (entspricht: python -m unittest discover -s tests)
+
+Es werden KEINE bezahlten APIs angefragt: der Startup-Refresh ist per
+JARVIS_SKIP_STARTUP_REFRESH deaktiviert, /health ist passiv und die Unit-Tests
+mocken alle LLM-/TTS-/Browser-Aufrufe.
 
 Exit-Code 0 = alles ok, 1 = mindestens ein Schritt fehlgeschlagen.
 """
+import importlib.util
 import logging
 import os
 import sys
@@ -22,6 +28,13 @@ os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+
+# Standardmaessig die synthetische Test-Fixture waehlen — der Smoke-Test braucht
+# KEINE persoenliche config.json. setdefault: ein aussen gesetztes
+# JARVIS_CONFIG_PATH (z.B. eigener Fixture-Pfad in CI) bleibt erhalten.
+os.environ.setdefault(
+    "JARVIS_CONFIG_PATH", os.path.join(ROOT, "tests", "fixtures", "config.test.json")
+)
 
 # Windows-Konsole (cp1252) sicher auf UTF-8 stellen fuer die Haekchen.
 try:
@@ -45,15 +58,47 @@ def report(ok, name, detail=""):
         _failures.append(name)
 
 
+# import-Name -> pip-Paketname (fuer verstaendliche Meldungen bei Fehlen).
+_REQUIRED_PACKAGES = {
+    "anthropic": "anthropic",
+    "httpx": "httpx",
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "starlette": "starlette",
+    "playwright": "playwright",
+}
+
+
+def check_dependencies():
+    """Prueft die Third-Party-Pakete VOR den Modul-Importen — so wird ein reiner
+    Setup-Fehler (fehlendes Paket) klar als solcher benannt, nicht als Codefehler."""
+    missing = [
+        (module, pip)
+        for module, pip in sorted(_REQUIRED_PACKAGES.items())
+        if importlib.util.find_spec(module) is None
+    ]
+    if not missing:
+        report(True, "Dependencies", f"{len(_REQUIRED_PACKAGES)} Pakete installiert")
+        return
+    report(False, "Dependencies", "fehlen: " + ", ".join(m for m, _ in missing))
+    print("      → Installiere alle auf einmal: pip install -r requirements.txt")
+    if any(module == "playwright" for module, _ in missing):
+        print("      → Browser danach installieren: python -m playwright install chromium")
+
+
 def check_config():
     import config_loader
-    path = os.path.join(ROOT, "config.json")
+    # Die AKTIVE Config pruefen (per JARVIS_CONFIG_PATH gewaehlt = Test-Fixture),
+    # nicht zwingend die persoenliche config.json. Nur den Dateinamen ausgeben
+    # (kein persoenlicher Pfad in der Ausgabe).
+    path = config_loader.resolve_config_path(os.environ, os.path.join(ROOT, "config.json"))
+    name = os.path.basename(path)
     if not os.path.exists(path):
-        report(False, "Config", f"config.json fehlt ({path})")
+        report(False, "Config", f"aktive Config fehlt ({name})")
         return
     try:
         config_loader.load_config(path)
-        report(True, "Config", "config.json vorhanden und gueltig")
+        report(True, "Config", f"{name} vorhanden und gueltig")
     except config_loader.ConfigError as e:
         report(False, "Config", str(e).replace("\n", " "))
 
@@ -89,6 +134,7 @@ def check_health():
 
 
 def check_tests():
+    import smoke_lib
     suite = unittest.TestLoader().discover(os.path.join(ROOT, "tests"))
     logging.disable(logging.CRITICAL)  # Test-Logs nicht in die ✓/✗-Ausgabe mischen
     try:
@@ -96,11 +142,27 @@ def check_tests():
             result = unittest.TextTestRunner(verbosity=0, stream=devnull).run(suite)
     finally:
         logging.disable(logging.NOTSET)
-    detail = f"{result.testsRun} Tests, {len(result.failures)} Failures, {len(result.errors)} Errors"
+    # Unerwartete Skips (alles ausser den bekannten Umgebungs-Skips) lassen den
+    # Smoke-Test fehlschlagen — verhindert, dass die Suite "still gruen" wirkt,
+    # obwohl z.B. server.py wegen kaputter Config nicht importiert werden konnte
+    # (dann skippen ganze Testklassen).
+    unexpected = smoke_lib.classify_skips(result.skipped)
+    ok = smoke_lib.suite_ok(result.testsRun, len(result.failures),
+                            len(result.errors), len(unexpected))
+    detail = (f"{result.testsRun} Tests, {len(result.failures)} Failures, "
+              f"{len(result.errors)} Errors, {len(result.skipped)} Skips")
+    report(ok, "Testsuite", detail)
+    # ALLE Skip-Gruende vollstaendig melden, mit erwartet/unerwartet-Kennzeichen.
     if result.skipped:
-        detail += f", {len(result.skipped)} uebersprungen"
-    report(result.wasSuccessful(), "Testsuite", detail)
-    if not result.wasSuccessful():
+        reasons: dict[str, int] = {}
+        for _test, reason in result.skipped:
+            reasons[reason] = reasons.get(reason, 0) + 1
+        for reason, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+            tag = "unerwartet" if smoke_lib.classify_skips([("", reason)]) else "erwartet"
+            print(f"      ⚠ {n}× uebersprungen ({tag}): {reason}")
+    if unexpected:
+        print(f"      {FAIL} {len(unexpected)} unerwartete Skip(s) → Smoke faellt fehl.")
+    if result.failures or result.errors:
         for test, _ in result.failures + result.errors:
             print(f"      {FAIL} {test.id()}")
         print("      Details: python -m unittest discover -s tests -v")
@@ -108,6 +170,7 @@ def check_tests():
 
 def main():
     print("Jarvis Smoke-Test")
+    check_dependencies()
     check_config()
     check_imports()
     check_health()

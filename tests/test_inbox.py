@@ -16,6 +16,7 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 
 try:
     import server  # verdrahtet assistant_core (configure/init_clients)
@@ -137,7 +138,7 @@ class RunResearchThinSourcesTests(unittest.TestCase):
         result = asyncio.run(assistant_core.run_research("ssd"))
         self.assertIn("QUELLE: ", result)
         self.assertIn("Nur 1 Quelle(n)", result)
-        self.assertIn("duenn", result)
+        self.assertIn("dünn", result)
 
     def test_three_sources_no_hint(self):
         links = [{"title": t, "url": f"https://{t}.example"} for t in ("a", "b", "c")]

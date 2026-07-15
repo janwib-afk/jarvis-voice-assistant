@@ -6,7 +6,7 @@ Dieses Workspace ist **Jarvis** — ein persoenlicher KI-Assistent mit Sprachste
 
 ## Fuer Claude Code: Setup-Modus
 
-Wenn der Nutzer nach dem Setup fragt oder "Richte Jarvis ein" sagt, folge den Anweisungen in `SETUP.md`. Frage den Nutzer nach seinem Namen, seiner Taetigkeit, und wie er angesprochen werden moechte — diese Infos gehoeren in `config.json` (`user_name`, `user_role`, `user_address`). Der Systemprompt in `server.py` liest sie automatisch aus der Config; im Code muss nichts ersetzt werden. Spaeter sind sie auch im Jarvis-UI ueber die Einstellungen (Zahnrad-Symbol) aenderbar.
+Wenn der Nutzer nach dem Setup fragt oder "Richte Jarvis ein" sagt, folge den Anweisungen in `SETUP.md`. Frage den Nutzer nach seinem Namen, seiner Taetigkeit, und wie er angesprochen werden moechte — diese Infos gehoeren in `config.json` (`user_name`, `user_role`, `user_address`). Der Systemprompt in `server.py` liest sie automatisch aus der Config; im Code muss nichts ersetzt werden. Spaeter sind sie auch im Jarvis-UI aenderbar: Kontrollzentrum → Einstellungen.
 
 **WICHTIG — Pruefe und installiere zuerst alle Voraussetzungen:**
 
@@ -33,12 +33,14 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 ├── config.json            # Persoenliche Config (gitignored)
 ├── config.example.json    # Template mit Platzhaltern
 ├── requirements.txt       # Python Dependencies
-├── server.py              # FastAPI: Routen, WS-Endpoint (Origin/Token, Stopp-Handling), Settings-API
+├── server.py              # FastAPI: Routen, WS-Endpoint (Origin/Token, Stopp-Handling), Settings-/Dashboard-/Command-API
 ├── assistant_core.py      # Gespraechsfluss: System-Prompt, LLM-Calls, Verlauf, Action-Ausfuehrung
-├── config_loader.py       # Config laden/validieren/speichern (Settings-Whitelist)
+├── config_loader.py       # Config laden/validieren/speichern (Settings-Whitelist, apps-Registry)
 ├── actions.py             # Action-Registry (ActionSpec) + Parsing + URL/Origin-Policies + Stop-Woerter
+├── app_launcher.py        # Allowlist-App-Launcher (config.apps) — Sprach-Aktion APP_OPEN + UI-Klick
 ├── tts.py                 # ElevenLabs-TTS (Chunking, Retries) — pur und testbar
 ├── memory.py              # Tages-Inbox, Vault-Helfer + Langzeit-Gedaechtnis ("Jarvis Memory.md")
+├── monitors.py            # Monitor-Erkennung (ctypes) fuer die Monitor-Map — GET /launcher/monitors
 ├── health.py              # /health-Report (Key-/Browser-/Vault-Checks, passiv)
 ├── browser_tools.py       # Playwright Browser-Steuerung + HTML-Fallback fuer Quellensuche
 ├── screen_capture.py      # Screenshot + Claude Vision (optionale Kontextfrage)
@@ -46,9 +48,10 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 ├── jarvis-launcher.pyw    # Natives pywebview-Fenster + Tray + Panel-/Fokus-Modus
 ├── frontend/
 │   ├── index.html         # Jarvis Web-UI
-│   ├── main.js            # Speech Recognition + WebSocket + Audio + Orb-Zustaende
-│   ├── settings.js        # Einstellungen-Overlay (GET/POST /settings)
-│   └── style.css          # Dark Theme mit Orb-Animation, Panel-/Fokus-Layouts
+│   ├── main.js            # Speech Recognition + WebSocket + Audio + Orb + Seiten-Nav + Command Center
+│   ├── settings.js        # Einstellungen im Kontrollzentrum (GET/POST /settings)
+│   ├── music.js           # Musik-Sub-View: MP3-Auswahl fuer den Sessionstart (GET/POST /music/*)
+│   └── style.css          # Dark Theme mit Orb-Animation, Panel-/Fokus-Layouts + Command Center
 ├── tests/                 # unittest-Suite (python -m unittest discover -s tests)
 └── scripts/
     ├── clap-trigger.py    # Doppelklatschen-Erkennung

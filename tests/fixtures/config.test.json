@@ -1,0 +1,25 @@
+{
+  "_comment": "SYNTHETISCHE TEST-FIXTURE — keine echten API-Keys, keine persoenlichen Pfade. Wird ausschliesslich ueber JARVIS_CONFIG_PATH von der Testsuite/dem Smoke-Test ausgewaehlt. NIEMALS in Produktion verwenden.",
+  "anthropic_api_key": "sk-ant-test-dummy-not-a-real-key",
+  "elevenlabs_api_key": "sk_test_dummy_not_a_real_key",
+  "elevenlabs_voice_id": "test-voice-id",
+  "user_name": "Testfixture Nutzer",
+  "user_address": "Testfixture",
+  "user_role": "Automatisierte Tests",
+  "city": "Teststadt",
+  "workspace_path": "",
+  "obsidian_inbox_path": "",
+  "obsidian_inbox_folder": "",
+  "music_folder": "",
+  "selected_music_file": "",
+  "music_volume": 0.25,
+  "apps": [
+    { "id": "testapp", "name": "Test App", "command": "https://example.invalid/testapp", "type": "url", "autostart": false }
+  ],
+  "launcher": {
+    "active_profile": "default",
+    "profiles": [
+      { "id": "default", "name": "Default", "apps": {} }
+    ]
+  }
+}

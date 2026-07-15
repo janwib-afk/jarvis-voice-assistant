@@ -9,13 +9,16 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 
 try:
     import server  # verdrahtet assistant_core (configure/init_clients)
+    import app_launcher
     import assistant_core
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     server = None
+    app_launcher = None
     assistant_core = None
     _IMPORT_ERROR = e
 
@@ -37,7 +40,7 @@ class SystemPromptTests(unittest.TestCase):
         assistant_core.USER_ADDRESS = "Mylady"
         assistant_core.USER_ROLE = "Qualitätssicherung"
         prompt = assistant_core.build_system_prompt()
-        self.assertIn("der persoenliche KI-Assistent von Unit-Tester, Qualitätssicherung.", prompt)
+        self.assertIn("der persönliche KI-Assistent von Unit-Tester, Qualitätssicherung.", prompt)
         self.assertIn('mit "Mylady" angesprochen', prompt)
         self.assertIn('WENN Unit-Tester "Jarvis activate" sagt', prompt)
 
@@ -54,7 +57,55 @@ class SystemPromptTests(unittest.TestCase):
         assistant_core.USER_NAME = "Unit-Tester"
         assistant_core.USER_ROLE = ""
         prompt = assistant_core.build_system_prompt()
-        self.assertIn("der persoenliche KI-Assistent von Unit-Tester.", prompt)
+        self.assertIn("der persönliche KI-Assistent von Unit-Tester.", prompt)
+
+    def test_app_open_listed_when_apps_configured(self):
+        saved_apps = app_launcher.APPS
+        self.addCleanup(lambda: setattr(app_launcher, "APPS", saved_apps))
+        app_launcher.configure([{"name": "Obsidian", "command": "obsidian://open"}])
+        prompt = assistant_core.build_system_prompt()
+        self.assertIn("[ACTION:APP_OPEN]", prompt)
+        self.assertIn("Verfügbare Apps: Obsidian", prompt)
+
+    def test_app_open_absent_without_apps(self):
+        saved_apps = app_launcher.APPS
+        self.addCleanup(lambda: setattr(app_launcher, "APPS", saved_apps))
+        app_launcher.configure([])
+        prompt = assistant_core.build_system_prompt()
+        self.assertNotIn("[ACTION:APP_OPEN]", prompt)
+
+    def _save_launcher_state(self):
+        saved = (app_launcher.APPS, app_launcher.PROFILES, app_launcher.ACTIVE_PROFILE)
+        self.addCleanup(lambda: (
+            setattr(app_launcher, "APPS", saved[0]),
+            setattr(app_launcher, "PROFILES", saved[1]),
+            setattr(app_launcher, "ACTIVE_PROFILE", saved[2]),
+        ))
+
+    def test_launcher_actions_listed_with_profiles(self):
+        self._save_launcher_state()
+        app_launcher.configure(
+            [{"name": "Obsidian", "command": "obsidian://open"}],
+            {"active_profile": "coding", "profiles": [
+                {"id": "coding", "name": "Coding", "apps": {}},
+                {"id": "writing", "name": "Writing", "apps": {}},
+            ]},
+        )
+        prompt = assistant_core.build_system_prompt()
+        for tag in ("[ACTION:PROFILE_ACTIVATE]", "[ACTION:PROFILE_STATUS]",
+                    "[ACTION:APP_AUTOSTART_ON]", "[ACTION:APP_AUTOSTART_OFF]",
+                    "[ACTION:APP_PLACE]"):
+            self.assertIn(tag, prompt)
+        self.assertIn("Verfügbare Profile: Coding, Writing", prompt)
+        self.assertIn("[ACTION:APP_PLACE] Obsidian | left | right_half", prompt)
+        self.assertIn("frag nach statt zu raten", prompt)
+
+    def test_launcher_actions_absent_without_apps(self):
+        self._save_launcher_state()
+        app_launcher.configure([])
+        prompt = assistant_core.build_system_prompt()
+        self.assertNotIn("[ACTION:PROFILE_ACTIVATE]", prompt)
+        self.assertNotIn("[ACTION:APP_PLACE]", prompt)
 
 
 if __name__ == "__main__":

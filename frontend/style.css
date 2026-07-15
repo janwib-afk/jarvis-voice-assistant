@@ -9,10 +9,11 @@ html, body {
 }
 
 body {
-    background-color: #0d0b09;
-    color: #c4b49a;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-weight: 300;
+    background-color: var(--color-bg-canvas);
+    color: var(--color-text-primary);
+    font-family: var(--font-family-base);
+    font-weight: var(--font-weight-light);
+    font-kerning: normal;
     height: 100vh;
     overflow: hidden;
     display: flex;
@@ -32,7 +33,7 @@ body {
     align-items: center;
     justify-content: flex-end;
     padding: 0 10px;
-    z-index: 1000;
+    z-index: var(--z-titlebar);
     -webkit-app-region: drag;
 }
 
@@ -44,46 +45,129 @@ body {
 #win-buttons {
     -webkit-app-region: no-drag;
     display: flex;
-    gap: 2px;
+    gap: var(--space-2);
     align-items: center;
 }
 
 #btn-min,
-#btn-close,
-#btn-mode,
-#btn-settings {
+#btn-close {
     width: 30px;
     height: 26px;
     background: transparent;
     border: none;
-    color: #2a1e12;
-    font-size: 18px;
+    color: var(--color-text-chrome);
+    font-size: var(--font-size-2xl);
     cursor: pointer;
-    border-radius: 5px;
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.2s, color 0.2s;
+    transition: background var(--duration-fast), color var(--duration-fast);
     line-height: 1;
-    font-family: 'Segoe UI', sans-serif;
+    font-family: var(--font-family-chrome);
     -webkit-app-region: no-drag;
 }
 
-#btn-mode,
-#btn-settings {
-    font-size: 14px;
+/* #btn-settings-Regeln entfernt (Phase 4): Element existiert seit dem
+   Kontrollzentrum-Umbau nicht mehr — Guard test_settings_gear_removed_from_
+   title_bar belegt die Nichtverwendung. */
+#btn-min:hover {
+    background: var(--color-bg-chrome-hover);
+    color: var(--color-text-chrome-hover);
 }
 
-#btn-min:hover,
-#btn-mode:hover,
-#btn-settings:hover {
-    background: rgba(200, 155, 50, 0.10);
-    color: #8a6030;
+/* Fenstergröße-Auswahl: kompakte Drei-Wege-Kontrolle in der Titelleiste. */
+#window-mode-switch {
+    -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    height: 26px;
+    gap: 1px;
+    margin-right: 4px;
+    padding: 2px;
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-chrome-track);
+}
+
+.wm-btn {
+    -webkit-app-region: no-drag;
+    height: 22px;
+    padding: 0 8px;
+    background: transparent;
+    border: none;
+    color: var(--color-text-chrome);
+    font-size: var(--font-size-base);
+    line-height: 1;
+    letter-spacing: var(--tracking-micro);
+    font-family: var(--font-family-chrome);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.wm-btn:hover {
+    background: var(--color-bg-chrome-hover);
+    color: var(--color-text-chrome-hover);
+}
+
+.wm-btn.active {
+    background: var(--color-bg-chrome-active);
+    color: var(--color-text-chrome-active);
+}
+
+/* Hauptnavigation: Jarvis-Seite / Kontrollzentrum — links in der Titelleiste,
+   gleiche Optik wie die Fenstergröße-Auswahl. */
+#page-nav {
+    -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    height: 26px;
+    gap: 1px;
+    margin-left: 4px;
+    padding: 2px;
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-chrome-track);
+}
+
+.pn-btn {
+    -webkit-app-region: no-drag;
+    height: 22px;
+    padding: 0 10px;
+    background: transparent;
+    border: none;
+    color: var(--color-text-chrome);
+    font-size: var(--font-size-base);
+    line-height: 1;
+    letter-spacing: 0.04em;
+    font-family: var(--font-family-chrome);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.pn-btn:hover {
+    background: var(--color-bg-chrome-hover);
+    color: var(--color-text-chrome-hover);
+}
+
+.pn-btn.active {
+    background: var(--color-bg-chrome-active);
+    color: var(--color-text-chrome-active);
+}
+
+/* Im kleinen Panel (420px) kompakter, damit die Titelleiste nicht überläuft. */
+html.mode-panel .pn-btn {
+    padding: 0 6px;
+    font-size: var(--font-size-sm);
 }
 
 #btn-close:hover {
-    background: rgba(175, 45, 35, 0.14);
-    color: #c05050;
+    background: var(--color-bg-danger-chrome);
+    color: var(--color-state-danger-strong);
 }
 
 /* Warm lamp glow — lower right, like the desk lamp in the image */
@@ -94,7 +178,7 @@ body::before {
     right: -100px;
     width: 700px;
     height: 550px;
-    background: radial-gradient(ellipse at center, rgba(195, 115, 30, 0.10) 0%, rgba(160, 85, 15, 0.05) 40%, transparent 70%);
+    background: radial-gradient(ellipse at center, var(--lamp-primary) 0%, var(--lamp-primary-fade) 40%, transparent 70%);
     pointer-events: none;
     z-index: 0;
 }
@@ -108,7 +192,7 @@ body::after {
     transform: translateX(-50%);
     width: 1000px;
     height: 280px;
-    background: radial-gradient(ellipse at bottom, rgba(180, 100, 20, 0.05) 0%, transparent 70%);
+    background: radial-gradient(ellipse at bottom, var(--lamp-ground) 0%, transparent 70%);
     pointer-events: none;
     z-index: 0;
 }
@@ -143,20 +227,20 @@ body::after {
     position: fixed;
     bottom: 16px;
     right: 16px;
-    z-index: 999;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(200, 155, 70, 0.12);
-    border-radius: 50%;
+    z-index: var(--z-chrome);
+    background: var(--color-bg-input);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-round);
     width: 34px;
     height: 34px;
     cursor: pointer;
     opacity: 0.35;
-    transition: opacity 0.3s, background 0.3s, border-color 0.3s;
+    transition: opacity var(--duration-fade), background var(--duration-fade), border-color var(--duration-fade);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 8px;
-    color: #a08060;
+    color: var(--color-text-soft);
 }
 
 #mute-btn svg {
@@ -167,15 +251,15 @@ body::after {
 
 #mute-btn:hover {
     opacity: 0.75;
-    background: rgba(200, 150, 50, 0.08);
-    border-color: rgba(200, 150, 50, 0.25);
+    background: var(--color-hover-bg-soft);
+    border-color: var(--color-hover-border-mute);
 }
 
 #mute-btn.muted {
     opacity: 0.90;
-    background: rgba(140, 35, 25, 0.22);
-    border-color: rgba(190, 55, 45, 0.38);
-    color: #c06060;
+    background: var(--color-bg-danger-soft);
+    border-color: var(--color-danger-border-mute);
+    color: var(--color-state-danger);
 }
 
 /* Stopp-Button: gleiche Optik wie der Mute-Button, links daneben */
@@ -183,20 +267,20 @@ body::after {
     position: fixed;
     bottom: 16px;
     right: 58px;
-    z-index: 999;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(200, 155, 70, 0.12);
-    border-radius: 50%;
+    z-index: var(--z-chrome);
+    background: var(--color-bg-input);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-round);
     width: 34px;
     height: 34px;
     cursor: pointer;
     opacity: 0.35;
-    transition: opacity 0.3s, background 0.3s, border-color 0.3s;
+    transition: opacity var(--duration-fade), background var(--duration-fade), border-color var(--duration-fade);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 9px;
-    color: #a08060;
+    color: var(--color-text-soft);
 }
 
 #stop-btn svg {
@@ -207,20 +291,20 @@ body::after {
 
 #stop-btn:hover {
     opacity: 0.85;
-    background: rgba(140, 35, 25, 0.22);
-    border-color: rgba(190, 55, 45, 0.38);
-    color: #c06060;
+    background: var(--color-bg-danger-soft);
+    border-color: var(--color-danger-border-mute);
+    color: var(--color-state-danger);
 }
 
 #orb {
     width: 160px;
     height: 160px;
-    border-radius: 50%;
-    transition: background 0.5s ease, box-shadow 0.5s ease;
+    border-radius: var(--radius-round);
+    transition: background var(--duration-orb) var(--ease-standard), box-shadow var(--duration-orb) var(--ease-standard);
 }
 
 #orb.idle {
-    background: radial-gradient(circle at 38% 38%, #2e1e0c, #130d07);
+    background: radial-gradient(circle at 38% 38%, var(--orb-idle-core), var(--orb-idle-edge));
     box-shadow:
         0 0 50px rgba(175, 100, 25, 0.14),
         0 0 100px rgba(140, 70, 10, 0.05),
@@ -228,55 +312,35 @@ body::after {
 }
 
 #orb.listening {
-    background: radial-gradient(circle at 38% 38%, #c07830, #6e3e12);
+    background: radial-gradient(circle at 38% 38%, var(--orb-listening-core), var(--orb-listening-edge));
     box-shadow:
         0 0 60px rgba(200, 130, 45, 0.50),
         0 0 120px rgba(175, 100, 25, 0.20),
         inset 0 0 25px rgba(255, 185, 90, 0.08);
-    animation: pulse-listen 1.8s ease-in-out infinite;
+    /* Bewegung: Phase-5-Block (orb-listen) — Glow laeuft auf #orb::after. */
 }
 
 #orb.thinking {
-    background: radial-gradient(circle at 38% 38%, #d4a032, #7c5a18);
+    background: radial-gradient(circle at 38% 38%, var(--orb-thinking-core), var(--orb-thinking-edge));
     box-shadow:
         0 0 60px rgba(220, 170, 55, 0.52),
         0 0 130px rgba(195, 140, 35, 0.20);
-    animation: pulse-think 0.85s ease-in-out infinite;
 }
 
 #orb.speaking {
-    background: radial-gradient(circle at 38% 38%, #c87840, #6e3e1c);
+    background: radial-gradient(circle at 38% 38%, var(--orb-speaking-core), var(--orb-speaking-edge));
     box-shadow:
         0 0 65px rgba(210, 130, 60, 0.58),
         0 0 130px rgba(175, 100, 40, 0.22),
         inset 0 0 20px rgba(255, 205, 120, 0.07);
-    animation: pulse-speak 0.65s ease-in-out infinite;
 }
 
-@keyframes pulse-listen {
-    0%, 100% {
-        transform: scale(1);
-        box-shadow: 0 0 60px rgba(200, 130, 45, 0.50), 0 0 120px rgba(175, 100, 25, 0.20);
-    }
-    50% {
-        transform: scale(1.055);
-        box-shadow: 0 0 80px rgba(200, 130, 45, 0.65), 0 0 160px rgba(175, 100, 25, 0.28);
-    }
-}
-
-@keyframes pulse-think {
-    0%, 100% { transform: scale(1); }
-    50%       { transform: scale(1.09); }
-}
-
-@keyframes pulse-speak {
-    0%, 100% { transform: scale(1); }
-    50%       { transform: scale(1.12); }
-}
+/* Alt-Keyframes pulse-listen/-think/-speak entfernt (Phase 5): ersetzt durch
+   orb-listen/-think/-speak + Glow-Layer — nur transform/opacity, Token-Farben. */
 
 /* Stumm: entsaettigt mit mattem rotem Ring — bewusst OHNE Animation */
 #orb.muted {
-    background: radial-gradient(circle at 38% 38%, #241a10, #100c08);
+    background: radial-gradient(circle at 38% 38%, var(--orb-muted-core), var(--orb-muted-edge));
     box-shadow:
         0 0 0 2px rgba(190, 55, 45, 0.35),
         0 0 40px rgba(120, 60, 20, 0.10),
@@ -285,34 +349,48 @@ body::after {
 
 /* Fehler: rotes Gluehen, zwei Pulse, dann statisch — keine Endlos-Animation */
 #orb.error {
-    background: radial-gradient(circle at 38% 38%, #7c2a20, #2a0f0a);
+    background: radial-gradient(circle at 38% 38%, var(--orb-error-core), var(--orb-error-edge));
     box-shadow:
         0 0 60px rgba(190, 55, 45, 0.45),
         0 0 120px rgba(150, 40, 30, 0.18);
-    animation: flash-error 1.1s ease-in-out 2;
+    animation: flash-error var(--duration-flash-error) var(--ease-pulse) 2;
 }
 
+/* Fehlerimpuls: zwei kontrollierte Pulse, endet statisch (nur transform). */
 @keyframes flash-error {
     0%, 100% { transform: scale(1); }
-    50% {
-        transform: scale(1.06);
-        box-shadow: 0 0 85px rgba(190, 55, 45, 0.62), 0 0 150px rgba(150, 40, 30, 0.26);
-    }
+    50%      { transform: scale(1.05); }
 }
 
 #status {
-    font-size: 10px;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: #3a2e22;
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-display);
+    color: var(--color-text-dim);
     margin-bottom: 28px;
     min-height: 16px;
-    font-weight: 400;
-    transition: color 0.4s ease;
+    font-weight: var(--font-weight-regular);
+    transition: color var(--duration-slow) var(--ease-standard);
 }
 
 #status.active {
-    color: #7a5c38;
+    color: var(--color-text-secondary);
+}
+
+/* "Nächste Musik"-Status (Jarvis-Seite) — dezent; ohne Auswahl kollabiert
+   das Element (:empty), die Verwaltung liegt im Kontrollzentrum. */
+#music-status {
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-caps-wide);
+    color: var(--color-text-muted);
+    margin-bottom: 16px;
+    max-width: 420px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#music-status:empty {
+    display: none;
 }
 
 #transcript {
@@ -324,7 +402,7 @@ body::after {
     overflow-y: auto;
     padding: 0 28px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(180, 130, 60, 0.12) transparent;
+    scrollbar-color: var(--color-scrollbar) transparent;
 }
 
 #transcript::-webkit-scrollbar {
@@ -336,19 +414,19 @@ body::after {
 }
 
 #transcript::-webkit-scrollbar-thumb {
-    background: rgba(180, 130, 60, 0.18);
+    background: var(--color-scrollbar-thumb);
     border-radius: 1px;
 }
 
 #transcript .msg {
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    gap: var(--space-8);
 }
 
 #transcript .msg-time {
-    font-size: 9px;
-    color: #3a2e22;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-dim);
     flex-shrink: 0;
     letter-spacing: 0.05em;
 }
@@ -363,9 +441,9 @@ body::after {
     visibility: hidden;
     background: none;
     border: none;
-    color: #7a5c38;
+    color: var(--color-text-secondary);
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--font-size-base);
     flex-shrink: 0;
     padding: 0 2px;
 }
@@ -376,7 +454,7 @@ body::after {
 
 #transcript .msg-copy.copied {
     visibility: visible;
-    color: #b08850;
+    color: var(--color-accent-primary);
 }
 
 #transcript .msg.user {
@@ -384,8 +462,8 @@ body::after {
 }
 
 #transcript .msg.user .msg-text {
-    color: #3e3026;
-    font-size: 11px;
+    color: var(--color-text-user-msg);
+    font-size: var(--font-size-base);
     letter-spacing: 0.03em;
 }
 
@@ -394,10 +472,10 @@ body::after {
 }
 
 #transcript .msg.jarvis .msg-text {
-    color: #b08850;
-    font-size: 13px;
+    color: var(--color-accent-primary);
+    font-size: var(--font-size-lg);
     letter-spacing: 0.01em;
-    line-height: 1.65;
+    line-height: var(--line-height-body);
 }
 
 /* ── Transcript-Toolbar: Suche + Alles kopieren ─────────────────────────── */
@@ -408,7 +486,7 @@ body::after {
     padding: 0 28px;
     box-sizing: border-box;
     display: flex;
-    gap: 10px;
+    gap: var(--space-10);
     align-items: center;
 }
 
@@ -416,44 +494,43 @@ body::after {
     flex: 1;
     background: transparent;
     border: none;
-    border-bottom: 1px solid rgba(200, 155, 70, 0.12);
-    color: #b08850;
-    font-size: 11px;
-    letter-spacing: 0.03em;
+    border-bottom: 1px solid var(--color-border-subtle);
+    color: var(--color-accent-primary);
+    font-size: var(--font-size-base);
+    letter-spacing: var(--tracking-micro);
     padding: 4px 2px;
     opacity: 0.45;
     outline: none;
-    transition: opacity 0.3s, border-color 0.3s;
+    transition: opacity var(--duration-fade), border-color var(--duration-fade);
 }
 
 #transcript-search::placeholder {
-    color: #3a2e22;
+    color: var(--color-text-dim);
 }
 
 #transcript-search:focus {
     opacity: 0.9;
-    border-color: rgba(200, 150, 50, 0.35);
+    border-color: var(--color-focus-border-input);
 }
 
 #btn-copy-all {
     background: transparent;
-    border: 1px solid rgba(200, 155, 70, 0.15);
-    color: #7a5c38;
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
+    border: 1px solid var(--color-border-copy);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-button);
     padding: 3px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     opacity: 0.6;
-    transition: opacity 0.3s, border-color 0.3s;
+    transition: opacity var(--duration-fade), border-color var(--duration-fade);
     flex-shrink: 0;
 }
 
 #btn-copy-all:hover,
 #btn-copy-all.copied {
     opacity: 1;
-    border-color: rgba(200, 150, 50, 0.35);
+    border-color: var(--color-focus-border-input);
 }
 
 #text-form {
@@ -468,36 +545,35 @@ body::after {
     width: 100%;
     background: transparent;
     border: none;
-    border-bottom: 1px solid rgba(200, 155, 70, 0.12);
-    color: #b08850;
-    font-size: 12px;
-    letter-spacing: 0.03em;
+    border-bottom: 1px solid var(--color-border-subtle);
+    color: var(--color-accent-primary);
+    font-size: var(--font-size-md);
+    letter-spacing: var(--tracking-micro);
     padding: 6px 2px;
     opacity: 0.35;
     outline: none;
-    transition: opacity 0.3s, border-color 0.3s;
+    transition: opacity var(--duration-fade), border-color var(--duration-fade);
 }
 
 #text-input::placeholder {
-    color: #3a2e22;
+    color: var(--color-text-dim);
 }
 
 #text-input:focus {
     opacity: 0.9;
-    border-color: rgba(200, 150, 50, 0.35);
+    border-color: var(--color-focus-border-input);
 }
 
 #status-center {
     position: fixed;
     bottom: 16px;
     left: 20px;
-    z-index: 999;
-    font-size: 10px;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: #7a5c38;
+    z-index: var(--z-chrome);
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-display);
+    color: var(--color-text-secondary);
     opacity: 0.45;
-    transition: opacity 0.3s;
+    transition: opacity var(--duration-fade);
 }
 
 #status-center:hover {
@@ -507,30 +583,30 @@ body::after {
 #status-center .sc-item {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-6);
     margin-right: 16px;
 }
 
 #status-center .sc-dot {
     width: 6px;
     height: 6px;
-    border-radius: 50%;
-    background: #3a2e22;
-    transition: background 0.3s, box-shadow 0.3s;
+    border-radius: var(--radius-round);
+    background: var(--color-dot-off);
+    transition: background var(--duration-fade), box-shadow var(--duration-fade);
 }
 
 #status-center .sc-dot.ok {
-    background: #b08850;
-    box-shadow: 0 0 6px rgba(200, 155, 70, 0.4);
+    background: var(--color-dot-ok);
+    box-shadow: var(--glow-dot-ok);
 }
 
 #status-center .sc-dot.off {
-    background: #3a2e22;
+    background: var(--color-dot-off);
 }
 
 #status-center .sc-dot.err {
-    background: #c06060;
-    box-shadow: 0 0 6px rgba(190, 55, 45, 0.4);
+    background: var(--color-dot-err);
+    box-shadow: var(--glow-dot-err);
 }
 
 #sc-error {
@@ -538,16 +614,16 @@ body::after {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: #c06060;
+    color: var(--color-state-danger);
     opacity: 0.7;
-    font-size: 9px;
-    letter-spacing: 0.1em;
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-button);
     margin-top: 4px;
     min-height: 12px;
 }
 
 #sc-error.warn {
-    color: #7a5c38;
+    color: var(--color-text-secondary);
 }
 
 /* ── Fehler-Banner (dismissible, oben rechts) ───────────────────────────── */
@@ -555,40 +631,38 @@ body::after {
     position: fixed;
     top: 44px;
     right: 12px;
-    z-index: 1100;
+    z-index: var(--z-banner);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-8);
     max-width: 320px;
     -webkit-app-region: no-drag;
 }
 
 .error-banner {
     position: relative;
-    background: rgba(30, 16, 12, 0.94);
-    border: 1px solid rgba(190, 55, 45, 0.35);
-    border-left: 3px solid rgba(190, 55, 45, 0.8);
-    border-radius: 6px;
+    background: var(--color-bg-banner);
+    border: 1px solid var(--color-danger-border-soft);
+    border-radius: var(--radius-lg);
     padding: 8px 26px 8px 10px;
-    font-size: 11px;
-    color: #c4a284;
+    font-size: var(--font-size-base);
+    color: var(--color-text-banner);
     text-align: left;
-    animation: banner-in 0.25s ease;
+    animation: banner-in var(--motion-duration-standard) var(--motion-ease-enter);
 }
 
 .error-banner .eb-label {
     display: block;
-    color: #c06060;
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    color: var(--color-state-danger);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--tracking-micro);
     margin-bottom: 2px;
 }
 
 .error-banner .eb-hint {
-    color: #7a5c38;
-    font-size: 10px;
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
     margin-top: 4px;
 }
 
@@ -598,19 +672,19 @@ body::after {
     right: 6px;
     background: none;
     border: none;
-    color: #8a6050;
+    color: var(--color-text-banner-dim);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--font-size-xl);
     line-height: 1;
     padding: 2px;
 }
 
 .error-banner .eb-close:hover {
-    color: #c06060;
+    color: var(--color-state-danger);
 }
 
 @keyframes banner-in {
-    from { opacity: 0; transform: translateX(12px); }
+    from { opacity: 0; transform: translateX(var(--motion-distance-medium)); }
     to   { opacity: 1; transform: none; }
 }
 
@@ -624,12 +698,11 @@ body::after {
     overflow: hidden;
 }
 
-#action-history h3 {
-    font-size: 10px;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: #3a2e22;
-    font-weight: 400;
+#action-history h2 {
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-display);
+    color: var(--color-text-dim);
+    font-weight: var(--font-weight-regular);
     margin-bottom: 14px;
 }
 
@@ -638,58 +711,58 @@ body::after {
     max-height: calc(100vh - 140px);
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: rgba(180, 130, 60, 0.12) transparent;
+    scrollbar-color: var(--color-scrollbar) transparent;
 }
 
 #action-list .ae {
     display: flex;
     align-items: baseline;
-    gap: 7px;
+    gap: var(--space-7);
     margin-bottom: 9px;
-    font-size: 11px;
+    font-size: var(--font-size-base);
     min-width: 0;
 }
 
 #action-list .ae-dot {
     width: 6px;
     height: 6px;
-    border-radius: 50%;
-    background: #3a2e22;
+    border-radius: var(--radius-round);
+    background: var(--color-dot-off);
     flex-shrink: 0;
     align-self: center;
-    transition: background 0.3s, box-shadow 0.3s;
+    transition: background var(--duration-fade), box-shadow var(--duration-fade);
 }
 
 #action-list .ae.run .ae-dot {
-    background: #d4a032;
-    box-shadow: 0 0 6px rgba(220, 170, 55, 0.5);
-    animation: pulse-listen 1.2s ease-in-out infinite;
+    background: var(--color-dot-run);
+    box-shadow: var(--glow-dot-run);
+    animation: run-dot var(--duration-pulse-run) var(--motion-ease-ambient) infinite;
 }
 
 #action-list .ae.ok .ae-dot {
-    background: #b08850;
-    box-shadow: 0 0 6px rgba(200, 155, 70, 0.4);
+    background: var(--color-dot-ok);
+    box-shadow: var(--glow-dot-ok);
 }
 
 #action-list .ae.err .ae-dot {
-    background: #c06060;
-    box-shadow: 0 0 6px rgba(190, 55, 45, 0.4);
+    background: var(--color-dot-err);
+    box-shadow: var(--glow-dot-err);
 }
 
 #action-list .ae-time {
-    font-size: 9px;
-    color: #3a2e22;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-dim);
     flex-shrink: 0;
 }
 
 #action-list .ae-label {
-    color: #b08850;
+    color: var(--color-accent-primary);
     flex-shrink: 0;
 }
 
 #action-list .ae-detail {
-    color: #6a5030;
-    font-size: 10px;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -710,12 +783,13 @@ html.mode-focus #app {
 }
 
 html.mode-focus #main-col {
-    flex: 1;
+    flex: 0 0 340px;
     min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding-top: 18px;
+    padding: 18px 16px 0;
+    border-right: 1px solid var(--color-border-column);
 }
 
 html.mode-focus #orb {
@@ -734,7 +808,8 @@ html.mode-focus #status {
 html.mode-focus #transcript,
 html.mode-focus #transcript-toolbar,
 html.mode-focus #text-form {
-    max-width: 720px;
+    width: 100%;
+    max-width: 100%;
 }
 
 html.mode-focus #transcript {
@@ -768,11 +843,11 @@ html.mode-panel #action-history {
     display: block;
     width: 100%;
     max-width: 380px;
-    padding: 10px 24px 0;
+    padding: 10px 24px 6px;
     box-sizing: border-box;
 }
 
-html.mode-panel #action-history h3 {
+html.mode-panel #action-history h2 {
     display: none;
 }
 
@@ -783,7 +858,7 @@ html.mode-panel #action-list {
 
 html.mode-panel #action-list .ae {
     margin-bottom: 5px;
-    font-size: 10px;
+    font-size: var(--font-size-sm);
 }
 
 html.mode-panel #orb {
@@ -805,14 +880,14 @@ html.mode-panel #panel-answer {
     width: 100%;
     padding: 0 24px;
     box-sizing: border-box;
-    color: #b08850;
-    font-size: 12.5px;
-    line-height: 1.6;
+    color: var(--color-accent-primary);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-panel);
     text-align: left;
     max-height: 9.6em; /* ~6 Zeilen */
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: rgba(180, 130, 60, 0.12) transparent;
+    scrollbar-color: var(--color-scrollbar) transparent;
 }
 
 html.mode-panel #text-form {
@@ -822,18 +897,14 @@ html.mode-panel #text-form {
 }
 
 html.mode-panel #text-input {
-    font-size: 11px;
+    font-size: var(--font-size-base);
 }
 
-/* Status-Center im Panel: nur Dots + Zustand, kein Fehlertext (Banner uebernehmen) */
+/* Status-Center im Panel: nur Dots, kein Fehlertext (Banner uebernehmen) */
 html.mode-panel #status-center .sc-item {
     font-size: 0;
     gap: 0;
     margin-right: 10px;
-}
-
-html.mode-panel #status-center #sc-state {
-    font-size: 9px;
 }
 
 html.mode-panel #sc-error {
@@ -853,49 +924,162 @@ html.mode-panel body::after {
     height: 160px;
 }
 
-/* ── Einstellungen (Overlay) ────────────────────────────────────────────── */
+/* ── Einstellungen (inline im Kontrollzentrum) ──────────────────────────── */
+/* Grundzustand: versteckt. Nur der Einstellungen-Sub-View des Kontrollzentrums
+   (html.mode-focus.cc-view-settings) blendet den Bereich ein. */
 #settings-view {
-    position: fixed;
-    inset: 0;
-    z-index: 1200;
-    background: rgba(8, 6, 4, 0.72);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    -webkit-app-region: no-drag;
-}
-
-#settings-view.hidden {
     display: none;
 }
 
-#settings-card {
-    background: #14100b;
-    border: 1px solid rgba(200, 155, 70, 0.18);
-    border-radius: 10px;
-    padding: 22px 24px;
-    width: min(420px, calc(100vw - 40px));
-    max-height: calc(100vh - 60px);
+html.mode-focus.cc-view-settings #settings-view {
+    display: block;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    padding: 18px 20px 60px;
     text-align: left;
     scrollbar-width: thin;
-    scrollbar-color: rgba(180, 130, 60, 0.12) transparent;
+    scrollbar-color: var(--color-scrollbar) transparent;
+}
+
+#settings-card {
+    max-width: 460px;
+}
+
+/* ── Musik (inline im Kontrollzentrum) ──────────────────────────────────── */
+/* Grundzustand: versteckt — nur der Musik-Sub-View des Kontrollzentrums
+   (html.mode-focus.cc-view-music) blendet den Bereich ein. */
+#music-view {
+    display: none;
+}
+
+html.mode-focus.cc-view-music #music-view {
+    display: block;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px 20px 60px;
+    text-align: left;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scrollbar) transparent;
+}
+
+#music-card {
+    max-width: 560px;
+}
+
+#music-card h2 {
+    font-size: var(--font-size-base);
+    letter-spacing: var(--tracking-display);
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-regular);
+    margin-bottom: 16px;
+}
+
+.music-row {
+    font-size: var(--font-size-base);
+    color: var(--color-text-secondary);
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.music-row span {
+    color: var(--color-accent-primary);
+}
+
+#music-msg {
+    min-height: 16px;
+    font-size: var(--font-size-base);
+    margin: 8px 0;
+    color: var(--color-text-muted);
+}
+
+#music-msg.err {
+    color: var(--color-state-danger);
+}
+
+#music-list {
+    list-style: none;
+    margin: 6px 0 12px;
+    max-height: calc(100vh - 340px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scrollbar) transparent;
+}
+
+#music-list li {
+    margin-bottom: 6px;
+}
+
+.music-item {
+    width: 100%;
+    max-width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid var(--color-border-input);
+    border-radius: var(--radius-sm);
+    color: var(--color-accent-primary);
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-micro);
+    padding: 7px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color var(--duration-hover), color var(--duration-hover), box-shadow var(--duration-hover);
+}
+
+.music-item:hover {
+    border-color: var(--color-hover-border);
+    color: var(--color-accent-bright);
+}
+
+.music-item.selected {
+    color: var(--color-accent-bright);
+    border-color: var(--color-selected-border);
+    box-shadow: var(--glow-selected);
+}
+
+.music-actions {
+    display: flex;
+    gap: var(--space-10);
+}
+
+.music-actions button {
+    background: transparent;
+    border: 1px solid var(--color-border-button);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-micro);
+    padding: 6px 14px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.music-actions button:hover {
+    background: var(--color-hover-bg-soft);
+    border-color: var(--color-hover-border-button);
+    color: var(--color-accent-primary);
 }
 
 #settings-card h2 {
-    font-size: 11px;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: #7a5c38;
-    font-weight: 400;
+    font-size: var(--font-size-base);
+    letter-spacing: var(--tracking-display);
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-regular);
     margin-bottom: 16px;
 }
 
 #settings-form label {
     display: block;
-    font-size: 10px;
-    color: #7a5c38;
-    letter-spacing: 0.08em;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    letter-spacing: var(--tracking-label);
     margin-bottom: 10px;
 }
 
@@ -904,21 +1088,21 @@ html.mode-panel body::after {
     display: block;
     width: 100%;
     margin-top: 3px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(200, 155, 70, 0.14);
-    border-radius: 4px;
-    color: #b08850;
-    font-size: 12px;
+    background: var(--color-bg-input);
+    border: 1px solid var(--color-border-input);
+    border-radius: var(--radius-sm);
+    color: var(--color-accent-primary);
+    font-size: var(--font-size-md);
     font-family: inherit;
     padding: 6px 8px;
     outline: none;
     box-sizing: border-box;
-    transition: border-color 0.3s;
+    transition: border-color var(--duration-fade);
 }
 
 #settings-form input[type="text"]:focus,
 #settings-form textarea:focus {
-    border-color: rgba(200, 150, 50, 0.35);
+    border-color: var(--color-focus-border-input);
 }
 
 #settings-form textarea {
@@ -926,79 +1110,1824 @@ html.mode-panel body::after {
 }
 
 #mic-mode {
-    border: 1px solid rgba(200, 155, 70, 0.14);
-    border-radius: 6px;
+    border: 1px solid var(--color-border-input);
+    border-radius: var(--radius-lg);
     padding: 10px 12px 6px;
     margin: 14px 0;
 }
 
 #mic-mode legend {
-    font-size: 10px;
-    color: #7a5c38;
-    letter-spacing: 0.08em;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    letter-spacing: var(--tracking-label);
     padding: 0 4px;
 }
 
 #mic-mode label {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 11.5px;
-    color: #a08060;
-    letter-spacing: 0.02em;
+    gap: var(--space-8);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-soft);
+    letter-spacing: var(--tracking-micro);
     margin-bottom: 6px;
     cursor: pointer;
 }
 
 #mic-mode input[type="radio"] {
-    accent-color: #b08850;
+    accent-color: var(--color-accent-primary);
     margin: 0;
 }
 
 .settings-note {
-    font-size: 10px;
-    color: #5a4630;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-note);
     margin: 10px 0;
 }
 
 #settings-msg {
     min-height: 16px;
-    font-size: 11px;
+    font-size: var(--font-size-base);
     margin-bottom: 8px;
 }
 
 #settings-msg.error {
-    color: #c06060;
+    color: var(--color-state-danger);
 }
 
 #settings-msg.ok {
-    color: #8fa35c;
+    color: var(--color-state-success);
 }
 
 .settings-actions {
     display: flex;
-    gap: 10px;
+    gap: var(--space-10);
 }
 
 .settings-actions button {
     background: transparent;
-    border: 1px solid rgba(200, 155, 70, 0.20);
-    color: #b08850;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
+    border: 1px solid var(--color-border-button);
+    color: var(--color-accent-primary);
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-micro);
     padding: 6px 14px;
-    border-radius: 5px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background 0.2s, border-color 0.2s;
 }
 
 .settings-actions button:hover {
-    background: rgba(200, 150, 50, 0.08);
-    border-color: rgba(200, 150, 50, 0.40);
+    background: var(--color-hover-bg-soft);
+    border-color: var(--color-hover-border-button);
 }
 
 #btn-settings-cancel {
-    color: #7a5c38;
-    border-color: rgba(200, 155, 70, 0.10);
+    color: var(--color-text-secondary);
+    border-color: var(--color-border-dim);
+}
+
+/* ── Command Center (Fokus-Modus) ───────────────────────────────────────────
+   Grundzustand: alles versteckt; nur html.mode-focus blendet die Spalten ein.
+   #cc-right ist ausserhalb des Fokus-Modus layoutneutral (display:contents),
+   damit #action-history im Panel-Modus exakt wie bisher funktioniert.
+   Dieser Abschnitt steht bewusst am Dateiende: die Media-Queries am Schluss
+   muessen die Fokus-Regeln hier ueberschreiben koennen. */
+
+#cc-map,
+#cc-today,
+#cc-apps,
+#cc-sys,
+#cc-subnav {
+    display: none;
+}
+
+/* Wrapper sind ausserhalb des Kontrollzentrums layoutneutral, damit
+   #action-history im Panel-Modus exakt wie bisher fliesst. */
+#cc-right,
+#cc-shell,
+#cc-content {
+    display: contents;
+}
+
+/* Kontrollzentrum-Shell: Sub-Nav oben, darunter Übersicht ODER Einstellungen.
+   cc-view-overview braucht keine eigenen Regeln — Übersicht ist der Default,
+   nur cc-view-settings schaltet um. */
+html.mode-focus #cc-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+html.mode-focus #cc-content {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+html.mode-focus.cc-view-settings #cc-content,
+html.mode-focus.cc-view-music #cc-content {
+    display: none;
+}
+
+/* Sub-Nav: schlanke Tab-Leiste im Stil der Profil-Tabs */
+html.mode-focus #cc-subnav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    padding: 10px 18px 9px;
+    border-bottom: 1px solid var(--color-border-divider);
+}
+
+/* Gemeinsame Tab-Basis (Phase-1-Konsolidierung): Sub-Nav-Tabs und Profil-Tabs
+   waren byte-identisch. .profile-tab.deletable ergaenzt weiter unten den
+   Loeschmodus und muss NACH .active stehen (gleiche Spezifitaet). */
+.cc-tab,
+.profile-tab {
+    background: transparent;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+    font-family: inherit;
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-button);
+    padding: 4px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color var(--duration-hover), color var(--duration-hover), box-shadow var(--duration-hover);
+}
+
+.cc-tab:hover,
+.profile-tab:hover {
+    border-color: var(--color-hover-border);
+    color: var(--color-accent-bright);
+}
+
+.cc-tab.active,
+.profile-tab.active {
+    color: var(--color-accent-bright);
+    border-color: var(--color-selected-border);
+    box-shadow: var(--glow-selected);
+    cursor: default;
+}
+
+/* Mittlere Spalte: Monitor-Map (Command Overlay) + "Heute"-Streifen darunter */
+html.mode-focus #cc-map {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+}
+
+/* Profil-Leiste: Arbeitsmodi als kompakte Tabs, Aktionen als Micro-Controls */
+#cc-profiles {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    padding: 10px 18px 9px;
+    border-bottom: 1px solid var(--color-border-divider);
+}
+
+#cc-profile-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-6);
+    min-width: 0;
+}
+
+/* .profile-tab-Basis/-Hover/-Active: siehe gemeinsame Tab-Basis bei .cc-tab
+   (Phase-1-Konsolidierung, identische Regeln zusammengefuehrt). */
+
+.profile-tab.deletable {
+    border-color: var(--color-danger-border-deletable);
+    color: var(--color-state-danger);
+    cursor: pointer;
+}
+
+#cc-profile-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    flex-shrink: 0;
+}
+
+.profile-action {
+    background: transparent;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-xs);
+    color: var(--color-text-secondary);
+    font-family: inherit;
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--tracking-micro);
+    padding: 3px 7px;
+    cursor: pointer;
+    transition: border-color var(--duration-hover), color var(--duration-hover);
+}
+
+.profile-action:hover,
+.profile-action:focus {
+    border-color: var(--color-hover-border);
+    color: var(--color-accent-bright);
+}
+
+.profile-action.confirm {
+    border-color: var(--color-danger-border-strong);
+    color: var(--color-state-danger);
+}
+
+#cc-profile-input {
+    background: var(--color-bg-input);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    font-family: inherit;
+    font-size: var(--font-size-base);
+    padding: 4px 8px;
+    width: 160px;
+}
+
+#cc-profile-input:focus {
+    outline: none;
+    border-color: var(--color-hover-border);
+}
+
+#cc-map-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Feines technisches Raster — die Buehne des Overlays */
+    background-image:
+        repeating-linear-gradient(0deg,
+            var(--color-grid-line) 0, var(--color-grid-line) 1px,
+            transparent 1px, transparent 26px),
+        repeating-linear-gradient(90deg,
+            var(--color-grid-line) 0, var(--color-grid-line) 1px,
+            transparent 1px, transparent 26px);
+}
+
+#cc-map-status {
+    padding: 6px 18px 8px;
+    min-height: 26px;
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-micro);
+    color: var(--color-text-muted);
+    border-top: 1px solid var(--color-border-divider);
+}
+
+#cc-map-status.err {
+    color: var(--color-state-danger);
+}
+
+/* "Heute" als kompakter Streifen unter der Map (3 Bloecke nebeneinander) */
+html.mode-focus #cc-today {
+    display: flex;
+    height: 150px;
+    flex-shrink: 0;
+    padding: 12px 8px 14px;
+    border-top: 1px solid var(--color-border-divider);
+    overflow: hidden;
+    text-align: left;
+}
+
+html.mode-focus #cc-today .cc-block {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 2px 14px 0;
+    border-bottom: none;
+    overflow: hidden;
+}
+
+html.mode-focus #cc-today .cc-block + .cc-block {
+    border-left: 1px solid var(--color-border-divider);
+}
+
+html.mode-focus #cc-today #cc-inbox-text {
+    max-height: 104px;
+}
+
+#cc-apps h2,
+#cc-sys h2 {
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-display);
+    color: var(--color-text-dim);
+    font-weight: var(--font-weight-regular);
+    margin-bottom: 14px;
+}
+
+.cc-block {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--color-border-divider);
+}
+
+.cc-block:last-child {
+    border-bottom: none;
+}
+
+.cc-block h3 {
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-caps-wide);
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-regular);
+    margin-bottom: 8px;
+}
+
+#cc-task-list,
+#cc-note-list {
+    list-style: none;
+}
+
+#cc-task-list li,
+#cc-note-list li {
+    position: relative;
+    padding-left: 12px;
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-list);
+    color: var(--color-accent-primary);
+    margin-bottom: 6px;
+}
+
+#cc-task-list li::before,
+#cc-note-list li::before {
+    content: "–";
+    position: absolute;
+    left: 0;
+    color: var(--color-text-dim);
+}
+
+#cc-note-list li {
+    color: var(--color-text-muted);
+}
+
+#cc-inbox-text {
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-inbox);
+    color: var(--color-text-tertiary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    hyphens: auto;
+    max-height: 180px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scrollbar) transparent;
+}
+
+.cc-empty {
+    font-size: var(--font-size-base);
+    color: var(--color-text-muted);
+}
+
+#cc-task-list li.cc-empty,
+#cc-note-list li.cc-empty {
+    padding-left: 0;
+    color: var(--color-text-muted);
+}
+
+#cc-task-list li.cc-empty::before,
+#cc-note-list li.cc-empty::before {
+    content: none;
+}
+
+/* Rechte Spalte: Apps, Aktionshistorie, System */
+html.mode-focus #cc-right {
+    display: flex;
+    flex-direction: column;
+    width: 250px;
+    flex-shrink: 0;
+    padding-bottom: 60px; /* Freiraum fuer Stop-/Mute-Buttons (fixed, unten rechts) */
+    border-left: 1px solid var(--color-border-column);
+}
+
+html.mode-focus #cc-apps {
+    display: block;
+    padding: 24px 20px 16px 18px;
+    border-bottom: 1px solid var(--color-border-divider);
+}
+
+#cc-app-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-8);
+}
+
+.app-btn {
+    background: transparent;
+    border: 1px solid var(--color-border-default);
+    color: var(--color-accent-primary);
+    font-family: inherit;
+    font-weight: var(--font-weight-regular);
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-button);
+    padding: 8px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color var(--duration-hover), color var(--duration-hover), box-shadow var(--duration-hover);
+}
+
+.app-btn:hover {
+    border-color: var(--color-hover-border);
+    color: var(--color-accent-bright);
+}
+
+.app-btn.busy {
+    border-color: var(--color-accent-bright);
+    color: var(--color-accent-bright);
+    box-shadow: var(--glow-busy);
+}
+
+.app-btn.ok {
+    border-color: var(--color-border-ok);
+}
+
+.app-btn.err {
+    border-color: var(--color-danger-border-strong);
+    color: var(--color-state-danger);
+}
+
+#cc-app-msg {
+    margin-top: 8px;
+    min-height: 14px;
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-tight);
+    color: var(--color-text-muted);
+}
+
+#cc-app-msg.err {
+    color: var(--color-state-danger);
+}
+
+/* App-Module: Name + Typ-Tag oben, Öffnen-Button + Autostart-Toggle darunter.
+   Nur im Fokus-Modus sichtbar (#cc-apps ist ausserhalb display:none). */
+.app-module {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-7);
+    padding: 8px 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+}
+
+.app-module-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-8);
+}
+
+.app-module-name {
+    font-size: var(--font-size-base);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-accent-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.app-module-type {
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-xs);
+    padding: 1px 5px;
+    flex-shrink: 0;
+}
+
+.app-module-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-8);
+}
+
+.app-module-actions .app-btn {
+    flex: 0 0 auto;
+    min-width: 64px;
+}
+
+.app-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-6);
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: color var(--duration-hover);
+}
+
+.app-toggle.on {
+    color: var(--color-accent-primary);
+}
+
+.app-toggle:disabled,
+.app-toggle.busy {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.app-toggle-track {
+    position: relative;
+    width: 26px;
+    height: 14px;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-xl);
+    flex-shrink: 0;
+    transition: border-color var(--duration-hover);
+}
+
+.app-toggle:hover .app-toggle-track {
+    border-color: var(--color-hover-border);
+}
+
+.app-toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-round);
+    background: var(--color-dot-off);
+    transition: left var(--duration-hover), background var(--duration-hover), box-shadow var(--duration-hover);
+}
+
+.app-toggle.on .app-toggle-knob {
+    left: 14px;
+    background: var(--color-dot-ok);
+    box-shadow: var(--glow-dot-ok);
+}
+
+/* Placement-Label: gespeicherte Zone im Klartext — die Zuweisung selbst
+   laeuft ueber die Monitor-Map (Click-to-Assign). */
+.app-module-place {
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Modul-Zustaende: klickbar (selektiert fuer Zuweisung), aus, ausgewaehlt */
+.app-module {
+    cursor: pointer;
+    transition: border-color var(--duration-hover), box-shadow var(--duration-hover);
+}
+
+.app-module:hover {
+    border-color: var(--color-border-hover-soft);
+}
+
+.app-module:focus {
+    border-color: var(--color-focus-border);
+}
+
+.app-module.off .app-module-name,
+.app-module.off .app-module-place {
+    color: var(--color-text-muted);
+}
+
+.app-module.selected {
+    border-color: var(--color-selected-border);
+    box-shadow: var(--glow-selected),
+                inset 0 0 12px rgba(220, 170, 55, 0.05);
+}
+
+/* ── Monitor-Map: Monitore, Zonenraster, Ghost, Chips ─────────────────────── */
+.map-canvas {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.map-monitor {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-monitor);
+    overflow: hidden;
+}
+
+.map-monitor.unassignable {
+    opacity: 0.45;
+}
+
+.map-monitor-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    padding: 5px 9px;
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-caps-wide);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--color-border-dim);
+    background: var(--color-bg-monitor-label);
+}
+
+.map-monitor-label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.map-zone-full {
+    background: transparent;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-xs);
+    color: var(--color-text-secondary);
+    font-family: inherit;
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--tracking-micro);
+    padding: 2px 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color var(--duration-hover), color var(--duration-hover);
+}
+
+.map-zone-full:hover,
+.map-zone-full:focus {
+    border-color: var(--color-hover-border);
+    color: var(--color-accent-bright);
+}
+
+.map-monitor-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Ghost: zeigt beim Hovern die ECHTE Zonen-Geometrie als gluehende Flaeche */
+.map-ghost {
+    position: absolute;
+    z-index: 1;
+    background: var(--color-ghost-bg);
+    border: 1px solid var(--color-ghost-border);
+    box-shadow: var(--glow-ghost);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast), left var(--duration-ghost), top var(--duration-ghost), width var(--duration-ghost), height var(--duration-ghost);
+}
+
+.map-ghost.on {
+    opacity: 1;
+}
+
+.map-grid {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+}
+
+.map-zone {
+    border: 1px dashed transparent;
+    transition: border-color var(--duration-hover), background var(--duration-hover);
+}
+
+.map-zone[role="button"] {
+    cursor: pointer;
+}
+
+.map-zone:focus {
+    border-color: var(--color-focus-border);
+}
+
+/* Beim Zuweisen heben sich die Zellen als Ziele sichtbar an */
+.assigning .map-zone {
+    border-color: var(--color-border-input);
+}
+
+.assigning .map-zone:hover {
+    background: var(--color-zone-hover-bg);
+}
+
+.map-zone.saving {
+    border-color: var(--color-hover-border-strong);
+}
+
+@keyframes map-pulse {
+    0% { box-shadow: inset 0 0 0 rgba(220, 170, 55, 0); }
+    30% { box-shadow: inset 0 0 26px rgba(220, 170, 55, 0.35); }
+    100% { box-shadow: inset 0 0 0 rgba(220, 170, 55, 0); }
+}
+
+.map-zone.pulse,
+.map-zone-full.pulse {
+    animation: map-pulse var(--duration-map-pulse) var(--ease-exit);
+}
+
+/* Chips: aktivierte Apps auf ihrer Zone. pointer-events ist vererbt —
+   der Layer blockt nichts, nur die Chips selbst sind klickbar. */
+.map-chips {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+}
+
+.map-chip-group {
+    position: absolute;
+    display: flex;
+    flex-wrap: wrap;
+    /* Zentriert in der Zone — Chips verschiedener Zonen (z.B. fullscreen vs.
+       left_half) landen so nicht auf demselben Ursprung. */
+    align-content: center;
+    justify-content: center;
+    gap: var(--space-4);
+    padding: 8px;
+    overflow: hidden;
+}
+
+.map-chip {
+    pointer-events: auto;
+    max-width: 100%;
+    background: var(--color-bg-chip);
+    border: 1px solid var(--color-border-chip);
+    border-radius: var(--radius-sm);
+    color: var(--color-accent-primary);
+    font-family: inherit;
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-label);
+    padding: 3px 7px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: var(--shadow-chip);
+    transition: border-color var(--duration-hover), color var(--duration-hover), box-shadow var(--duration-hover);
+}
+
+.map-chip:hover {
+    border-color: var(--color-hover-border-strong);
+    color: var(--color-accent-bright);
+}
+
+.map-chip.selected {
+    border-color: var(--color-accent-bright);
+    color: var(--color-accent-bright);
+    box-shadow: var(--glow-selected-strong);
+}
+
+.map-chip-more {
+    pointer-events: auto;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    padding: 3px 4px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PHASE 4 — „Warm Analog Intelligence" (produktive Gestaltungsschicht)
+   Überschreibt die Alt-Optik komponentenweise; Selektoren/IDs der Logik
+   bleiben unangetastet. Quelle: docs/design-direction/DESIGN.md + docs/ux/*.
+   Steht bewusst NACH allen Komponenten und VOR den Media-Queries am Ende.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Grundfläche & Utilities ────────────────────────────────────────────── */
+body {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-light);
+    line-height: var(--line-height-list);
+}
+
+::selection { background: var(--color-selection-bg); color: var(--color-text-primary); }
+
+.sr-only {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+#skip-link { position: absolute; left: -9999px; z-index: 1200; }
+#skip-link:focus-visible {
+    left: 12px; top: 46px;
+    background: var(--color-bg-raised); color: var(--color-text-primary);
+    padding: 8px 14px; border-radius: var(--radius-md);
+    border: 1px solid var(--color-brass-bright); text-decoration: none;
+}
+
+/* Sichtbarer Tastaturfokus — überall (Messing-Ring, DESIGN §15) */
+:focus-visible {
+    outline: 2px solid var(--color-brass-bright);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+h1[tabindex="-1"]:focus { outline: none; }
+
+/* Nur die aktive Seite exponiert ihre Bereichs-h1 im A11y-Baum — sonst wären
+   „Gespräch mit Jarvis" und „Kontrollzentrum" (beide sr-only) gleichzeitig als
+   zwei h1 sichtbar. Rein a11y-strukturell, kein visueller Effekt. */
+html.page-jarvis #control-heading,
+html.page-control #jarvis-heading { display: none; }
+
+a { color: var(--color-copper); text-decoration: underline; text-underline-offset: 2px; }
+a:hover { color: var(--color-state-info); }
+
+/* ── Kopfleiste: Wortmarke + Text-Tab-Navigation + Geräteschalter ──────── */
+#win-bar {
+    background: var(--color-bg-canvas);
+    border-bottom: 1px solid var(--color-border-divider);
+    justify-content: flex-start;
+    gap: var(--space-20);
+    padding: 0 var(--space-16);
+}
+
+#wordmark {
+    font-family: var(--font-family-display);
+    font-weight: 500;
+    font-size: var(--font-size-xl);
+    color: var(--color-text-primary);
+    letter-spacing: 0.01em;
+    -webkit-app-region: drag;
+}
+#wordmark .wm-dot { color: var(--color-accent-primary); }
+
+#page-nav { background: transparent; padding: 0; gap: var(--space-16); height: 100%; }
+.pn-btn {
+    height: 100%;
+    padding: 0 2px;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-regular);
+    color: var(--color-text-secondary);
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    letter-spacing: var(--tracking-label);
+}
+.pn-btn:hover { background: transparent; color: var(--color-text-primary); border-bottom-color: var(--color-border-subtle); }
+.pn-btn.active { background: transparent; color: var(--color-text-primary); border-bottom-color: var(--color-brass-bright); }
+
+#window-mode-switch {
+    background: var(--color-bg-chrome-track);
+    box-shadow: var(--shadow-inset);
+    border-radius: var(--radius-md);
+    padding: 3px;
+    gap: 2px;
+    height: auto;
+}
+.wm-btn {
+    height: auto; padding: 4px 12px;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+    border-radius: var(--radius-sm);
+}
+.wm-btn.active {
+    background: var(--color-bg-chrome-active);
+    color: var(--color-text-chrome-active);
+    box-shadow: inset 0 1px 0 var(--color-edge-light), 0 1px 3px rgba(5, 3, 2, 0.35);
+}
+
+#btn-min, #btn-close {
+    width: 26px; height: 26px;
+    border-radius: var(--radius-round);
+    background: var(--color-bg-chrome-track);
+    border: 1px solid var(--color-border-divider);
+    font-size: var(--font-size-md);
+}
+#btn-min:hover { background: var(--color-bg-chrome-hover); color: var(--color-text-primary); border-color: var(--color-border-strong); }
+
+/* ── Signature: Orb in gedrehter Messing-Lünette ────────────────────────── */
+#orb-container {
+    width: 196px; height: 196px;
+    margin-bottom: var(--space-16);
+}
+#orb-container .luenette {
+    position: absolute; inset: 0;
+    border-radius: var(--radius-round);
+    background: conic-gradient(from 215deg,
+        #6b573a, #a98f5d 11%, #7c6642 24%, #55452d 38%,
+        #94794a 52%, #6b573a 66%, #bda275 84%, #6b573a);
+    box-shadow:
+        inset 0 1px 0 var(--color-edge-light),
+        0 10px 26px rgba(5, 3, 2, 0.35),
+        0 0 0 1px rgba(5, 3, 2, 0.5);
+    pointer-events: none;
+}
+#orb-container .luenette::before {
+    content: ''; position: absolute; inset: 6px;
+    border-radius: var(--radius-round);
+    background: repeating-conic-gradient(rgba(17, 11, 7, 0.5) 0deg 1.1deg, transparent 1.1deg 6deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+}
+#orb-container .luenette::after {
+    content: ''; position: absolute; inset: 13px;
+    border-radius: var(--radius-round);
+    background: var(--color-bg-inset);
+    box-shadow: inset 0 3px 9px rgba(5, 3, 2, 0.55), inset 0 0 0 1px rgba(5, 3, 2, 0.6);
+}
+#orb {
+    position: absolute; inset: 21px;
+    width: auto; height: auto;
+    z-index: 1;
+}
+/* Glaskern: kleiner Kern-Falloff — Licht IM Glas statt Goldkugel */
+#orb.idle      { background: radial-gradient(circle at 34% 30%, var(--orb-idle-core), var(--orb-idle-edge) 60%); box-shadow: inset 0 -10px 20px rgba(5,3,2,0.5), inset 0 2px 6px rgba(231,221,200,0.07); }
+#orb.listening { background: radial-gradient(circle at 34% 30%, var(--orb-listening-core), var(--orb-listening-edge) 60%); box-shadow: inset 0 -10px 20px rgba(5,3,2,0.5), inset 0 2px 6px rgba(231,221,200,0.07); }
+#orb.thinking  { background: radial-gradient(circle at 34% 30%, var(--orb-thinking-core), var(--orb-thinking-edge) 60%); box-shadow: inset 0 -10px 20px rgba(5,3,2,0.5), inset 0 2px 6px rgba(231,221,200,0.07); }
+#orb.speaking  { background: radial-gradient(circle at 34% 30%, var(--orb-speaking-core), var(--orb-speaking-edge) 60%); box-shadow: inset 0 -10px 20px rgba(5,3,2,0.5), inset 0 2px 6px rgba(231,221,200,0.07); }
+#orb.muted     { background: radial-gradient(circle at 34% 30%, var(--orb-muted-core), var(--orb-muted-edge) 60%); box-shadow: inset 0 -10px 20px rgba(5,3,2,0.5), 0 0 0 2px var(--color-danger-border-mute); }
+#orb.error     { background: radial-gradient(circle at 34% 30%, var(--orb-error-core), var(--orb-error-edge) 60%); box-shadow: inset 0 -10px 20px rgba(5,3,2,0.5); }
+
+/* ── Statuszeile: Zustandswort + laufende Aktion (Instrumenten-Mono) ────── */
+#status-row {
+    display: flex; align-items: baseline; gap: var(--space-8);
+    justify-content: center; flex-wrap: wrap;
+    max-width: 640px;
+    margin-bottom: var(--space-16);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    min-height: 18px;
+}
+#status-dot {
+    width: 7px; height: 7px; border-radius: var(--radius-round);
+    background: var(--color-dot-run);
+    box-shadow: var(--glow-dot-run);
+    align-self: center;
+    flex-shrink: 0;
+}
+#status-row.s-idle #status-dot { background: var(--color-dot-ok); box-shadow: none; }
+#status-row.s-muted #status-dot, #status-row.s-error #status-dot,
+#status-row.s-disconnected #status-dot { background: var(--color-dot-err); box-shadow: none; }
+#status-row.s-connecting #status-dot { background: var(--color-dot-off); box-shadow: none; }
+#status { margin: 0; min-height: 0; font-size: inherit; letter-spacing: inherit; color: inherit; font-weight: var(--font-weight-light); }
+#status.active { color: var(--color-text-secondary); }
+#status-action { color: var(--color-text-muted); }
+#status-action:empty { display: none; }
+#status-esc { color: var(--color-text-muted); font-size: var(--font-size-2xs); }
+
+/* ── Journal (Gesprächsprotokoll auf ruhiger Fläche) ────────────────────── */
+#journal-panel {
+    width: min(660px, calc(100% - 32px));
+    display: flex; flex-direction: column; min-height: 0;
+    background: var(--color-bg-surface);
+    border-radius: 12px;
+    box-shadow: inset 0 1px 0 var(--color-edge-light), var(--shadow-soft);
+    position: relative;
+    text-align: left;
+}
+#transcript-toolbar {
+    max-width: none; width: auto; margin: 0; padding: var(--space-12) var(--space-16);
+    border-bottom: 1px solid var(--color-border-divider);
+    align-items: center;
+}
+#journal-title {
+    font-weight: var(--font-weight-regular);
+    font-size: var(--font-size-base);
+    color: var(--color-text-secondary);
+    margin-right: auto;
+}
+#transcript-search {
+    flex: 0 1 220px;
+    background: var(--color-bg-inset);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-inset);
+    padding: 5px 10px;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-primary);
+    opacity: 1;
+}
+#transcript-search:focus { border-color: var(--color-focus-border-input); }
+#search-count {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+#btn-copy-all {
+    opacity: 1;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 5px 10px;
+}
+#btn-copy-all:hover, #btn-copy-all.copied { color: var(--color-text-primary); border-color: var(--color-border-strong); }
+
+#transcript {
+    /* Gespräch (Kernaufgabe) nutzt die Höhe: viewport-relativ statt fixer 300px,
+       damit auf 1080p keine tote Fläche unter der Eingabe entsteht. */
+    max-width: none; margin: 0; max-height: min(46vh, 520px);
+    padding: var(--space-16) var(--space-16) var(--space-12);
+}
+#transcript:empty::before {
+    content: 'Noch kein Gespräch. Sag „Jarvis" — oder schreib unten die erste Nachricht.';
+    display: block;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-base);
+    padding: var(--space-8) 0 var(--space-16);
+}
+#transcript .msg { gap: var(--space-12); }
+#transcript .msg-time {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    color: var(--color-text-muted);
+    letter-spacing: 0;
+    width: 42px; text-align: right; flex-shrink: 0;
+}
+#transcript .msg-speaker {
+    display: block;
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    letter-spacing: 0;
+    color: var(--color-text-muted);
+    margin-bottom: 1px;
+}
+#transcript .msg-words { display: block; }
+#transcript .msg.jarvis .msg-speaker { color: var(--color-brass); }
+#transcript .msg.user { margin-bottom: var(--space-10); }
+#transcript .msg.user .msg-text {
+    color: var(--color-text-user-msg);
+    font-size: var(--font-size-md);
+    letter-spacing: 0;
+}
+#transcript .msg.jarvis { margin-bottom: var(--space-20); }
+#transcript .msg.jarvis .msg-text {
+    font-family: var(--font-family-display);
+    font-weight: 350;
+    font-variation-settings: 'opsz' 17;
+    color: var(--color-text-primary);
+    font-size: var(--font-size-lg);
+    line-height: var(--line-height-body);
+    letter-spacing: var(--tracking-display);
+    text-wrap: pretty;
+    hyphens: auto;
+}
+#transcript .msg-copy {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    color: var(--color-text-muted);
+    opacity: 0;
+    visibility: visible;
+}
+#transcript .msg:hover .msg-copy, #transcript .msg-copy:focus-visible { opacity: 1; }
+#transcript .msg-copy:hover { color: var(--color-text-primary); }
+#transcript .msg-copy.copied { opacity: 1; color: var(--color-state-success); }
+
+#new-msg-pill {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-xs); font-weight: var(--font-weight-regular);
+    color: var(--color-bg-canvas);
+    background: var(--color-brass-bright);
+    border: none; border-radius: 999px;
+    padding: 5px 12px; cursor: pointer;
+    box-shadow: 0 4px 12px rgba(5, 3, 2, 0.35);
+}
+
+/* Eingabezeile: eingelassene Instrumentenzeile + sichtbarer Hint */
+#text-form {
+    display: flex; align-items: center; gap: var(--space-10);
+    max-width: 660px; padding: 0 var(--space-16);
+    margin-top: var(--space-14);
+}
+#text-input {
+    background: var(--color-bg-inset);
+    border: 1px solid transparent;
+    border-bottom: 1px solid transparent;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-inset);
+    padding: 10px 14px;
+    font-size: var(--font-size-md);
+    color: var(--color-text-primary);
+    opacity: 1;
+}
+#text-input:focus {
+    border-color: var(--color-focus-border-input);
+    box-shadow: var(--shadow-inset), 0 0 0 3px var(--color-focus-halo);
+}
+#ask-hint {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+/* ── Gerätefußleiste: Klartext-Status + Stop/Mute (≥44px, immer da) ─────── */
+#device-bar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    z-index: var(--z-chrome);
+    display: flex; align-items: center; gap: var(--space-16);
+    padding: var(--space-8) var(--space-16);
+    background: var(--color-bg-canvas);
+    border-top: 1px solid var(--color-border-divider);
+    min-height: 60px;
+}
+#db-spacer { flex: 1; }
+#kbd-hint {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+#device-bar #status-center {
+    position: static;
+    opacity: 1;
+    font-size: var(--font-size-2xs);
+    letter-spacing: 0;
+    font-family: var(--font-family-mono);
+    color: var(--color-text-muted);
+    display: flex; align-items: center; gap: var(--space-14); flex-wrap: wrap;
+}
+#status-center .sc-item { margin-right: 0; gap: var(--space-6); }
+#status-center .sc-dot { background: var(--color-dot-off); }
+#status-center .sc-dot.ok { background: var(--color-dot-ok); box-shadow: none; }
+#status-center .sc-dot.err { background: var(--color-dot-err); box-shadow: none; }
+#sc-error { margin-top: 0; font-size: var(--font-size-2xs); letter-spacing: 0; max-width: 340px; }
+
+#device-bar #stop-btn, #device-bar #mute-btn {
+    position: static;
+    width: 44px; height: 44px;
+    opacity: 1;
+    padding: 12px;
+    background: var(--color-bg-inset);
+    box-shadow: var(--shadow-inset);
+    color: var(--color-text-secondary);
+}
+#device-bar #stop-btn:hover, #device-bar #mute-btn:hover {
+    color: var(--color-text-primary);
+    border-color: var(--color-border-strong);
+    background: var(--color-bg-inset);
+}
+#stop-btn.primary-now {
+    color: var(--color-accent-primary);
+    border-color: rgba(231, 168, 84, 0.55);
+}
+#mute-btn.muted {
+    opacity: 1;
+    color: var(--color-state-danger);
+    background: var(--color-bg-danger-soft);
+    border-color: var(--color-danger-border-mute);
+}
+/* Inhalte enden oberhalb der Fußleiste */
+#app { padding-bottom: 64px; }
+
+/* ── Aktions-Dedupe: volle Historie nur im Kontrollzentrum ──────────────── */
+html.mode-focus #action-history { display: none; }
+html.mode-focus #cc-right #action-history { display: flex; }
+
+/* ── Kontrollzentrum: Werkbank ──────────────────────────────────────────── */
+.cc-tab, .profile-tab {
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-regular);
+    color: var(--color-text-secondary);
+    padding: 6px 2px;
+    letter-spacing: var(--tracking-label);
+}
+.cc-tab:hover, .profile-tab:hover {
+    color: var(--color-text-primary);
+    border-bottom-color: var(--color-border-subtle);
+    box-shadow: none;
+}
+.cc-tab.active, .profile-tab.active {
+    color: var(--color-text-primary);
+    border-bottom-color: var(--color-brass-bright);
+    box-shadow: none;
+}
+.profile-tab.deletable {
+    border-bottom-color: var(--color-state-danger);
+    color: var(--color-state-danger);
+}
+html.mode-focus #cc-subnav { gap: var(--space-16); padding: var(--space-8) var(--space-18) 0; }
+#cc-profiles { gap: var(--space-8) var(--space-16); flex-wrap: wrap; }
+#cc-profile-tabs { gap: var(--space-14); }
+
+.profile-action {
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-regular);
+    border-radius: var(--radius-sm);
+    border-color: var(--color-border-subtle);
+    color: var(--color-text-secondary);
+    padding: 4px 9px;
+    letter-spacing: var(--tracking-micro);
+}
+.profile-action:hover, .profile-action:focus { color: var(--color-text-primary); border-color: var(--color-border-strong); }
+.profile-action.confirm { border-color: var(--color-danger-border-strong); color: var(--color-state-danger); }
+
+/* Monitor-Bucht: eingelassene Instrumentenfläche */
+html.mode-focus #cc-map-stage {
+    margin: var(--space-12) var(--space-16);
+    border-radius: 12px;
+    background-color: var(--color-bg-inset);
+    background-image:
+        repeating-linear-gradient(0deg, var(--color-grid-line) 0, var(--color-grid-line) 1px, transparent 1px, transparent 26px),
+        repeating-linear-gradient(90deg, var(--color-grid-line) 0, var(--color-grid-line) 1px, transparent 1px, transparent 26px);
+    box-shadow: var(--shadow-inset), inset 0 0 0 1px rgba(5, 3, 2, 0.4);
+}
+#cc-map-status {
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-xs);
+    letter-spacing: 0;
+    color: var(--color-text-secondary);
+    border-top: none;
+    padding: 2px var(--space-18) var(--space-8);
+}
+.map-monitor { border-radius: var(--radius-md); }
+.map-monitor-label {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--tracking-micro);
+    color: var(--color-text-secondary);
+}
+.map-zone-full {
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--tracking-micro);
+    border-radius: var(--radius-xs);
+}
+.map-chip {
+    background: var(--color-bg-raised);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    color: var(--color-text-primary);
+    letter-spacing: 0;
+    box-shadow: var(--shadow-chip);
+    border-radius: var(--radius-sm);
+}
+.map-chip.selected { border-color: var(--color-brass-bright); color: var(--color-text-primary); }
+
+/* Heute-Streifen: flache Blöcke, Einladung statt Leere */
+.cc-block h3 {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-text-secondary);
+}
+#cc-apps h2, #cc-sys h2, #action-history h2 {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-regular);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-text-secondary);
+}
+#cc-task-list li, #cc-note-list li { color: var(--color-text-primary); font-size: var(--font-size-base); }
+#cc-note-list li { color: var(--color-text-secondary); }
+#cc-inbox-text { color: var(--color-text-tertiary); font-size: var(--font-size-base); }
+.cc-empty { color: var(--color-text-muted); font-size: var(--font-size-base); }
+
+/* Apps: erhöhte Modul-Kacheln */
+.app-module {
+    background: var(--color-bg-surface);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 0 var(--color-edge-light), 0 2px 8px rgba(5, 3, 2, 0.35);
+    padding: var(--space-10) var(--space-12);
+}
+.app-module:hover { border-color: var(--color-border-subtle); }
+.app-module:focus { border-color: var(--color-focus-border); }
+.app-module.selected { border-color: var(--color-brass-bright); box-shadow: inset 0 1px 0 var(--color-edge-light), var(--glow-selected); }
+.app-module-name { font-size: var(--font-size-base); font-weight: var(--font-weight-regular); color: var(--color-text-primary); letter-spacing: 0; }
+.app-module-type {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--tracking-micro);
+    color: var(--color-text-muted);
+    border-radius: var(--radius-xs);
+}
+.app-btn {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+    letter-spacing: var(--tracking-button);
+    color: var(--color-text-primary);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+}
+.app-btn:hover { color: var(--color-text-primary); border-color: var(--color-border-strong); }
+.app-btn.busy { border-color: var(--color-accent-primary); color: var(--color-accent-primary); }
+.app-btn.ok { border-color: var(--color-border-ok); color: var(--color-state-success); }
+.app-toggle { font-size: var(--font-size-xs); letter-spacing: 0; color: var(--color-text-secondary); }
+.app-toggle.on { color: var(--color-text-primary); }
+.app-toggle-track { border-radius: 8px; background: var(--color-bg-inset); box-shadow: var(--shadow-inset); }
+.app-toggle.on .app-toggle-knob { background: var(--color-accent-primary); box-shadow: 0 0 7px var(--glow-amber); }
+.app-module-place {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--tracking-micro);
+    color: var(--color-text-muted);
+}
+
+/* Positions-Selects (nicht-visuelle Zuweisung, Weg B) */
+.app-position { margin-top: var(--space-8); padding-top: var(--space-8); border-top: 1px solid var(--color-border-divider); display: none; }
+.app-module.selected .app-position, .app-module:focus-within .app-position { display: block; }
+.app-position .ap-row { display: flex; gap: var(--space-8); align-items: flex-end; flex-wrap: wrap; }
+.app-position label {
+    display: block;
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-regular);
+    color: var(--color-text-secondary);
+    margin-bottom: 3px;
+}
+.app-position select {
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-primary);
+    background: var(--color-bg-inset);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-xs);
+    padding: 5px 8px;
+    min-height: 32px;
+}
+.app-position .ap-save {
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-primary);
+    background: transparent;
+    border: 1px solid var(--color-border-button);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    cursor: pointer;
+}
+.app-position .ap-save:hover { border-color: var(--color-border-strong); }
+.app-position .ap-msg { min-height: 15px; font-size: var(--font-size-2xs); color: var(--color-state-success); margin-top: 4px; }
+.app-position .ap-msg.err { color: var(--color-state-danger); }
+
+/* Aktions- & Systemlisten: Mono-Zeiten, matte Ok-Punkte */
+#action-list .ae-time, .music-row, #cc-sys-list li {
+    font-family: var(--font-family-mono);
+    letter-spacing: var(--tracking-micro);
+}
+#cc-sys-list li { font-size: var(--font-size-2xs); color: var(--color-text-secondary); }
+#action-list .ae { font-size: var(--font-size-base); }
+#action-list .ae-label { color: var(--color-text-primary); font-weight: var(--font-weight-regular); }
+#action-list .ae-detail { color: var(--color-text-muted); font-size: var(--font-size-xs); }
+#action-list .ae.ok .ae-dot { box-shadow: none; }
+#action-list .ae.err .ae-dot { box-shadow: none; }
+
+/* ── Einstellungen: Gruppen, ruhige Felder, klare Aktionen ──────────────── */
+.settings-group {
+    border: none;
+    border-top: 1px solid var(--color-border-divider);
+    border-radius: 0;
+    padding: var(--space-12) 0 var(--space-4);
+    margin: var(--space-16) 0 0;
+}
+.settings-group legend {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-regular);
+    color: var(--color-text-secondary);
+    padding-right: var(--space-8);
+    letter-spacing: var(--tracking-label);
+}
+#settings-card h2, #music-card h2 {
+    font-family: var(--font-family-display);
+    font-weight: 400;
+    font-size: var(--font-size-2xl);
+    letter-spacing: var(--tracking-display);
+    color: var(--color-text-primary);
+    text-wrap: balance;
+}
+#settings-form label { font-size: var(--font-size-sm); color: var(--color-text-secondary); letter-spacing: 0; }
+#settings-form input[type="text"], #settings-form textarea {
+    background: var(--color-bg-inset);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-inset);
+    color: var(--color-text-primary);
+    font-size: var(--font-size-md);
+    padding: 8px 12px;
+}
+#settings-form input[type="text"]:focus, #settings-form textarea:focus {
+    border-color: var(--color-focus-border-input);
+    box-shadow: var(--shadow-inset), 0 0 0 3px var(--color-focus-halo);
+}
+#mic-mode { border: 1px solid var(--color-border-divider); border-radius: var(--radius-md); }
+#mic-mode label { color: var(--color-text-primary); font-size: var(--font-size-base); }
+.settings-note { color: var(--color-text-muted); font-size: var(--font-size-xs); }
+#settings-msg { font-size: var(--font-size-base); }
+
+.settings-actions { align-items: center; flex-wrap: wrap; }
+.settings-actions button, .music-actions button {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+    letter-spacing: var(--tracking-button);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    color: var(--color-text-primary);
+    border-color: var(--color-border-button);
+}
+.settings-actions button:hover, .music-actions button:hover {
+    background: var(--color-hover-bg-soft);
+    border-color: var(--color-border-strong);
+    color: var(--color-text-primary);
+}
+/* „Neu laden" ist reine Wartung (Ordner neu einlesen) — leiser als „Auswahl
+   entfernen": randlos + gedaempft, Rahmen erst bei Hover. */
+#btn-music-reload {
+    border-color: transparent;
+    color: var(--color-text-secondary);
+}
+#btn-settings-save {
+    background: var(--color-accent-primary);
+    border-color: transparent;
+    color: var(--color-text-on-accent);
+    font-weight: var(--font-weight-semibold);
+    box-shadow: 0 2px 8px rgba(5, 3, 2, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+#btn-settings-save:hover { background: var(--color-accent-bright); border-color: transparent; }
+#btn-settings-save:active { background: var(--color-accent-deep); }
+#btn-settings-save:disabled { opacity: 0.45; cursor: default; }
+#btn-settings-cancel { color: var(--color-text-secondary); }
+#settings-dirty {
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-regular);
+    color: var(--color-state-warning);
+    border: 1px solid var(--color-state-warning);
+    border-radius: 999px;
+    padding: 3px 10px;
+}
+#settings-confirm { font-size: var(--font-size-sm); color: var(--color-state-warning); display: inline-flex; gap: var(--space-8); align-items: center; }
+#settings-confirm button {
+    font-size: var(--font-size-sm); color: var(--color-text-primary);
+    background: transparent; border: 1px solid var(--color-border-button);
+    border-radius: var(--radius-sm); padding: 5px 10px; cursor: pointer;
+}
+
+/* ── Musik ──────────────────────────────────────────────────────────────── */
+.music-row { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.music-row span { color: var(--color-text-primary); }
+.music-item {
+    background: var(--color-bg-surface);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 0 var(--color-edge-light), 0 2px 6px rgba(5, 3, 2, 0.3);
+    color: var(--color-text-primary);
+    font-size: var(--font-size-base);
+    letter-spacing: 0;
+    padding: 9px 12px;
+}
+.music-item:hover { border-color: var(--color-border-subtle); color: var(--color-text-primary); }
+.music-item.selected { border-color: var(--color-brass-bright); color: var(--color-text-primary); box-shadow: inset 0 1px 0 var(--color-edge-light), var(--glow-selected); }
+
+/* ── Fehlerbanner: vier Familien, warme erhöhte Fläche ──────────────────── */
+/* Familie = volle 1px-Statusborder (Hairline) + farbiges Label — kein
+   Side-Stripe (Impeccable-Ban border-left>1px). */
+.error-banner {
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-state-danger);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-soft), inset 0 1px 0 var(--color-edge-light);
+    color: var(--color-text-primary);
+    font-size: var(--font-size-base);
+}
+.error-banner .eb-label {
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-state-danger);
+}
+.error-banner .eb-hint { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.error-banner.eb-warning { border-color: var(--color-state-warning); }
+.error-banner.eb-warning .eb-label { color: var(--color-state-warning); }
+.error-banner.eb-info { border-color: var(--color-state-info); }
+.error-banner.eb-info .eb-label { color: var(--color-state-info); }
+.error-banner.eb-success { border-color: var(--color-state-success); }
+.error-banner.eb-success .eb-label { color: var(--color-state-success); }
+
+/* ── Panel & Fokus: Kompositionen der Sichtbarkeitsmatrix ───────────────── */
+html.mode-focus #orb-container { width: 132px; height: 132px; }
+html.mode-focus #orb { inset: 15px; }
+html.mode-focus #orb-container .luenette::after { inset: 9px; }
+html.mode-focus #orb-container .luenette::before { inset: 4px; }
+html.mode-panel #orb-container { width: 92px; height: 92px; margin: 6px 0 10px; }
+html.mode-panel #orb { inset: 11px; }
+html.mode-panel #orb-container .luenette::after { inset: 7px; }
+html.mode-panel #orb-container .luenette::before { inset: 3px; }
+
+html.mode-focus #journal-panel { flex: 1; min-height: 0; width: 100%; max-width: 100%; min-width: 0; }
+html.mode-focus #transcript { flex: 1; max-height: none; min-height: 0; }
+html.mode-focus #text-form { width: 100%; max-width: none; margin-bottom: var(--space-10); }
+/* Schmale Gespraechsspalte: Toolbar darf die Spalte nicht aufdruecken */
+html.mode-focus #transcript-toolbar { flex-wrap: wrap; gap: var(--space-6); padding: var(--space-8) var(--space-12); }
+html.mode-focus #transcript-search { flex: 1 1 120px; min-width: 0; }
+html.mode-focus #btn-copy-all { flex-shrink: 0; padding: 4px 8px; font-size: var(--font-size-xs); }
+html.mode-focus #journal-title { flex-basis: 100%; }
+#journal-panel, #transcript-toolbar, #transcript { min-width: 0; }
+
+html.mode-panel #panel-answer {
+    font-family: var(--font-family-display);
+    font-weight: 350;
+    font-variation-settings: 'opsz' 15;
+    /* 14.5px: optische Zwischengroesse der Serife fuer die 420px-Panelspalte */
+    font-size: 14.5px;
+    line-height: var(--line-height-panel);
+    color: var(--color-text-primary);
+    text-wrap: pretty;
+    hyphens: auto;
+}
+html.mode-panel #kbd-hint { display: none; }
+html.mode-panel #device-bar { min-height: 56px; padding: var(--space-6) var(--space-10); gap: var(--space-8); }
+html.mode-panel #device-bar #stop-btn, html.mode-panel #device-bar #mute-btn { width: 40px; height: 40px; padding: 10px; }
+html.mode-panel #status-center .sc-item { font-size: var(--font-size-2xs); gap: 4px; margin-right: 6px; }
+html.mode-panel #app { padding-bottom: 58px; }
+html.mode-panel #win-bar { padding: 0 var(--space-8); gap: var(--space-8); }
+html.mode-panel #wordmark { font-size: var(--font-size-md); }
+html.mode-panel #ask-hint { display: none; }
+
+/* Vollbild: kontrollierte Maximalbreiten auf sehr breiten Displays */
+html.mode-fullscreen #app { max-width: 1520px; margin: 0 auto; }
+
+/* Mittlere Höhe (u.a. „Mitte"-Fenstermodus ~800px und 200 % Zoom): den großen
+   Basis-Orb schrumpfen, damit die zentrierte Lünette nicht unter die fixe
+   38px-Titelleiste rutscht. Fenstermodi Panel/Fokus behalten ihre eigenen
+   Orb-Größen (höhere Spezifität); Vollbild (>860px) bleibt unberührt. */
+@media (max-height: 860px) {
+    #orb-container { width: 132px; height: 132px; margin-bottom: var(--space-10); }
+    #orb { inset: 15px; }
+    #orb-container .luenette::after { inset: 9px; }
+    #orb-container .luenette::before { inset: 4px; }
+}
+
+/* Kleine Höhe (u.a. 200 % Zoom): Sekundäres weicht zuerst, Orb weiter
+   verkleinert. Bei sehr niedriger Höhe (<~600px, praktisch nur 200 % Zoom des
+   ohnehin kleinen Fensters — kein realer Desktop-Fensterpfad) bleibt ein
+   Restbeschnitt des dekorativen (aria-hidden) Orbs möglich; Statuswort,
+   Eingabe-Kernbereich und die fixe Stop/Mute-Leiste bleiben sichtbar. */
+@media (max-height: 650px) {
+    html.mode-focus #cc-today { display: none; }
+    #orb-container { width: 96px; height: 96px; margin-bottom: var(--space-8); }
+    #orb { inset: 11px; }
+    #orb-container .luenette::after { inset: 7px; }
+    #orb-container .luenette::before { inset: 3px; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PHASE 5 — Motion: „präzises analoges Instrument" (emil-design-eng)
+   Nur transform/opacity; Ambient-Loops am Orb, Feedback sofort, Enter-only-
+   Übergänge; Doku: docs/motion/MOTION_SYSTEM.md.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Orb: Glow-Layer (GPU-freundlich statt box-shadow-Puls) ─────────────── */
+#orb { --orb-glow-color: transparent; }
+#orb::after {
+    content: '';
+    position: absolute;
+    inset: -16%;
+    border-radius: var(--radius-round);
+    background: radial-gradient(circle, var(--orb-glow-color) 0%, transparent 62%);
+    opacity: 0;
+    transition: opacity 160ms var(--motion-ease-exit);
+    pointer-events: none;
+}
+#orb.listening, #orb.thinking, #orb.speaking { --orb-glow-color: var(--glow-amber); }
+#orb.error { --orb-glow-color: var(--glow-error); }
+#orb.listening::after { opacity: 0.7; animation: glow-breathe var(--motion-duration-ambient-listen) var(--motion-ease-ambient) infinite; }
+#orb.thinking::after  { opacity: 0.8; animation: glow-focus var(--motion-duration-ambient-think) var(--motion-ease-ambient) infinite; }
+#orb.speaking::after  { opacity: 0.85; animation: glow-pulse var(--motion-duration-ambient-speak) var(--motion-ease-ambient) infinite; }
+#orb.error::after     { opacity: 0.8; }
+
+/* Kern-Bewegung je Zustand: kleine, unterscheidbare Amplituden/Frequenzen */
+#orb.idle      { animation: orb-breathe var(--motion-duration-ambient-idle) var(--motion-ease-ambient) infinite; }
+#orb.listening { animation: orb-listen var(--motion-duration-ambient-listen) var(--motion-ease-ambient) infinite; }
+#orb.thinking  { animation: orb-think var(--motion-duration-ambient-think) var(--motion-ease-ambient) infinite; }
+#orb.speaking  { animation: orb-speak var(--motion-duration-ambient-speak) var(--motion-ease-ambient) infinite; }
+/* muted/degraded: bewusst statisch; error: flash-error (2×) aus dem Alt-Block */
+
+@keyframes orb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.012); } }
+@keyframes orb-listen  { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
+@keyframes orb-think   { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.015); } }
+@keyframes orb-speak   { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045); } }
+@keyframes glow-breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.75; } }
+@keyframes glow-focus   { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.9; } }
+@keyframes glow-pulse   { 0%, 100% { opacity: 0.5; }  50% { opacity: 0.95; } }
+@keyframes run-dot      { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+/* Zustandswechsel: sofort ersetzend, kurze Farb-/Lichtblende (Stop < 200ms) */
+#orb { transition: background var(--motion-duration-standard) var(--motion-ease-exit); }
+
+/* ── action-running: umlaufender Skalen-Glanz an der Lünette ────────────── */
+#orb-container .luenette-sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-round);
+    background: conic-gradient(from 0deg,
+        transparent 0deg 300deg,
+        rgba(231, 168, 84, 0.30) 330deg,
+        transparent 358deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 13px), #000 calc(100% - 12px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 13px), #000 calc(100% - 12px));
+    opacity: 0;
+    transition: opacity var(--motion-duration-standard) var(--motion-ease-exit);
+    pointer-events: none;
+}
+#orb-container.action-running .luenette-sweep {
+    opacity: 1;
+    animation: sweep var(--motion-duration-ambient-run) linear infinite;
+}
+@keyframes sweep { to { transform: rotate(360deg); } }
+
+/* ── Press-Feedback: Pressables bestätigen den Druck (scale, sofort) ────── */
+.pn-btn, .wm-btn, .cc-tab, .profile-tab, .profile-action,
+.app-btn, .app-toggle, .music-item, .map-zone-full, .map-chip,
+.settings-actions button, .music-actions button, #btn-copy-all,
+#settings-confirm button, .ap-save, #new-msg-pill,
+#device-bar #stop-btn, #device-bar #mute-btn, #btn-min, #btn-close {
+    transition:
+        transform var(--motion-duration-fast) var(--motion-ease-exit),
+        color var(--duration-hover) var(--motion-ease-standard),
+        border-color var(--duration-hover) var(--motion-ease-standard),
+        background var(--duration-hover) var(--motion-ease-standard),
+        opacity var(--duration-fade) var(--motion-ease-standard),
+        box-shadow var(--duration-hover) var(--motion-ease-standard);
+}
+.pn-btn:active, .wm-btn:active, .cc-tab:active, .profile-tab:active,
+.profile-action:active, .app-btn:active, .app-toggle:active,
+.music-item:active, .map-zone-full:active, .map-chip:active,
+.settings-actions button:active, .music-actions button:active,
+#btn-copy-all:active, #settings-confirm button:active, .ap-save:active,
+#new-msg-pill:active, #device-bar #stop-btn:active, #device-bar #mute-btn:active,
+#btn-min:active, #btn-close:active {
+    transform: scale(var(--motion-scale-press));
+}
+.app-module:active, .map-zone:active {
+    transform: scale(var(--motion-scale-press-soft));
+}
+button:disabled:active { transform: none; }
+
+/* Orb ist klickbar (Zuhören pausieren/fortsetzen) — Press am unanimierten
+   Container, damit das Atmen des inneren Orbs ungestört weiterläuft. */
+#orb-container { transition: transform var(--motion-duration-fast) var(--motion-ease-exit); }
+#orb-container:active { transform: scale(var(--motion-scale-press-soft)); }
+
+/* ── Enter-Bewegungen: Ansicht, neue Nachricht, Pill, Formular-Hinweise ── */
+@keyframes enter-fade {
+    from { opacity: 0; transform: translateY(var(--motion-distance-small)); }
+}
+#main-col.view-enter,
+#cc-shell.view-enter > * {
+    animation: enter-fade var(--motion-duration-view) var(--motion-ease-enter);
+}
+#transcript .msg.msg-new {
+    animation: enter-fade 180ms var(--motion-ease-enter);
+}
+#new-msg-pill:not([hidden]),
+#settings-dirty:not([hidden]),
+#settings-confirm:not([hidden]) {
+    animation: enter-fade var(--motion-duration-fast) var(--motion-ease-enter);
+}
+
+/* Ghost-Feinschliff: Erscheinen mit Exit-Kurve (Geometrie bleibt bewusst) */
+.map-ghost { transition-timing-function: var(--motion-ease-exit); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PHASE 6 — Delight: zwei gezielte Momente. Nur Phase-5-Tokens/Kurven,
+   ausschließlich opacity/transform, ≤240ms, reduced-safe. Doku: docs/polish.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* (a) Instrument erwacht — einmaliger Glow-Bloom beim ERSTEN Verbinden.
+   Höhere Spezifität als #orb.thinking::after, damit der Bloom kurz führt;
+   JS nimmt .awakening nach animationend zurück → Zustands-Glow übernimmt. */
+#orb-container.awakening #orb::after {
+    animation: orb-awaken var(--motion-duration-view) var(--motion-ease-enter);
+}
+@keyframes orb-awaken {
+    0%   { opacity: 0; }
+    55%  { opacity: 0.95; }
+    100% { opacity: 0.8; }
+}
+
+/* (b) Chip landet — nur der eben zugewiesene Chip skaliert einmal ein
+   (Abschluss-Moment; ersetzt nichts Funktionales, Zonen-Puls bleibt). */
+.map-chip.chip-landed {
+    animation: chip-land var(--motion-duration-fast) var(--motion-ease-enter);
+}
+@keyframes chip-land {
+    from { opacity: 0; transform: scale(var(--motion-scale-press)); }
+}
+
+/* ── Reduzierte Bewegung: gleichwertig, gezielt — Farben bleiben ────────── */
+@media (prefers-reduced-motion: reduce) {
+    /* Ambient-/Loop-/Impuls-Animationen aus (Orb, Sweep, Run-Dot, Map-Puls,
+       Banner-Einflug, Enter-Fades) — Zustand traegt ueber Farbe + Wort. */
+    #orb, #orb::after,
+    #orb-container.awakening #orb::after,
+    #orb-container .luenette-sweep,
+    #action-list .ae.run .ae-dot,
+    .map-zone.pulse, .map-zone-full.pulse,
+    .map-chip.chip-landed,
+    .error-banner,
+    #main-col.view-enter, #cc-shell.view-enter > *,
+    #transcript .msg.msg-new,
+    #new-msg-pill, #settings-dirty, #settings-confirm {
+        animation: none !important;
+    }
+    /* Zustands-Glow als statische Information erhalten */
+    #orb.listening::after, #orb.thinking::after,
+    #orb.speaking::after, #orb.error::after { opacity: 0.7; }
+    /* Bewegungs-Feedback aus, Farb-Feedback bleibt (kurz) */
+    .pn-btn:active, .wm-btn:active, .cc-tab:active, .profile-tab:active,
+    .profile-action:active, .app-btn:active, .app-toggle:active,
+    .music-item:active, .map-zone-full:active, .map-chip:active,
+    .settings-actions button:active, .music-actions button:active,
+    #btn-copy-all:active, #settings-confirm button:active, .ap-save:active,
+    #new-msg-pill:active, #device-bar #stop-btn:active,
+    #device-bar #mute-btn:active, #btn-min:active, #btn-close:active,
+    .app-module:active, .map-zone:active, #orb-container:active {
+        transform: none;
+    }
+    /* Ghost: nur Ein-/Ausblenden, keine Positionsbewegung */
+    .map-ghost { transition: opacity 120ms var(--motion-ease-standard); }
+    /* Uebergaenge kurz und ruhig */
+    #orb { transition-duration: 120ms; }
+    .app-toggle-knob { transition-duration: 120ms; }
+}
+
+/* Aktionshistorie fuellt die Mitte der rechten Spalte */
+html.mode-focus #cc-right #action-history {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: auto;
+    padding: 18px 20px 0 18px;
+}
+
+html.mode-focus #cc-right #action-list {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+}
+
+html.mode-focus #cc-sys {
+    display: block;
+    padding: 14px 20px 0 18px;
+    border-top: 1px solid var(--color-border-divider);
+}
+
+#cc-sys-list {
+    list-style: none;
+}
+
+#cc-sys-list li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-7);
+    font-size: var(--font-size-sm);
+    letter-spacing: var(--tracking-label);
+    color: var(--color-text-secondary);
+    margin-bottom: 7px;
+}
+
+.cc-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-round);
+    background: var(--color-dot-off);
+    flex-shrink: 0;
+}
+
+.cc-dot.ok {
+    background: var(--color-dot-ok);
+    box-shadow: var(--glow-dot-ok);
+}
+
+.cc-dot.err {
+    background: var(--color-dot-err);
+    box-shadow: var(--glow-dot-err);
+}
+
+/* Degradation: erst den Heute-Streifen, dann die Map, dann die rechte Spalte.
+   Muss NACH den Fokus-Regeln stehen (gleiche Spezifitaet, letzte gewinnt). */
+@media (max-width: 1100px) {
+    html.mode-focus #cc-today {
+        display: none;
+    }
+}
+
+@media (max-width: 960px) {
+    html.mode-focus #cc-map {
+        display: none;
+    }
+    html.mode-focus #main-col {
+        flex: 1;
+    }
+    /* Shell schrumpft auf die rechte Spalte — #main-col bekommt den Rest. */
+    html.mode-focus #cc-shell {
+        flex: 0 0 auto;
+    }
+}
+
+@media (max-width: 700px) {
+    html.mode-focus #cc-right {
+        display: none;
+    }
 }

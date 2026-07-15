@@ -1,0 +1,79 @@
+name: PR
+
+# Schnelle PR-Pipeline (Phase 3B). Keine echten Provider, keine Secrets, keine
+# persoenliche Config — alle Tests nutzen die synthetische Test-Fixture bzw. den
+# gestubbten E2E-Server. Vollstaendige Visual-Regression, Native-Hardware, Soak,
+# Fault-Injection und Installer folgen als Nightly/Release (Phase 11/13).
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Veraltete Runs desselben Branches abbrechen.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+  # Kein JARVIS_CONFIG_PATH gesetzt -> die Test-Suite waehlt selbst die
+  # synthetische Fixture (tests/__init__.py). Keine echte config.json im Runner.
+
+jobs:
+  fast:
+    name: Fast gates (syntax/unit/contract/integration/skip/native)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (fresh)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Gate 1 - Syntax/Import
+        run: python -m compileall -q server.py assistant_core.py actions.py config_loader.py app_launcher.py memory.py browser_tools.py monitors.py tts.py health.py screen_capture.py clipboard_tools.py
+      - name: Gate 2-4,6 - Unit + Contract + Integration + Skip-Policy (Smoke)
+        run: python scripts/smoke-test.py
+      - name: Gate 2-4 - Full unittest suite
+        run: python -m unittest discover -s tests
+      - name: Gate 7 - Safe Windows-native adapter smokes
+        run: python tests/native/windows_native_smoke.py
+
+  browser:
+    name: Browser gates (Chromium)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      JARVIS_E2E_ARTIFACTS: ${{ github.workspace }}\e2e-artifacts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (fresh)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Install Chromium
+        run: python -m playwright install chromium
+      - name: Gate 5 - Browser smoke (functional subset)
+        run: python tests/browser/e2e_functional.py --smoke
+      - name: Accessibility + keyboard
+        run: python tests/browser/e2e_a11y.py
+      - name: Reduced motion
+        run: python tests/browser/e2e_reduced_motion.py
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-artifacts
+          path: ${{ github.workspace }}\e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7

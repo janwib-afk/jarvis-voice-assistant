@@ -3,100 +3,279 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#19120c">
     <title>J.A.R.V.I.S.</title>
+    <style>
+        /* Reines Dark-Theme: color-scheme faerbt native Controls (Selects,
+           Scrollbars, Fokus-Chrome) dunkel — schon vor der externen CSS. */
+        html {
+            color-scheme: dark;
+        }
+        html, body {
+            background: #0d0b09;
+            color: #c4b49a;
+        }
+        #boot-fallback {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0d0b09;
+            color: #7a5c38;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-size: 11px;
+            letter-spacing: 0.24em;
+            text-transform: uppercase;
+        }
+        body.jarvis-ready #boot-fallback {
+            display: none;
+        }
+        #boot-fallback.error {
+            align-items: flex-start;
+            justify-content: flex-start;
+            padding: 64px 28px;
+            color: #c06060;
+            letter-spacing: 0.06em;
+            text-transform: none;
+            white-space: pre-wrap;
+        }
+    </style>
+    <link rel="stylesheet" href="/static/design-tokens.css">
     <link rel="stylesheet" href="/static/style.css">
     <script>
-        // UI-Modus vor dem ersten Paint setzen — verhindert Layout-Flackern.
-        document.documentElement.className =
-            'mode-' + (localStorage.getItem('jarvis.uiMode') === 'panel' ? 'panel' : 'focus');
+        // UI-Zustand vor dem ersten Paint setzen — verhindert Layout-Flackern.
+        // Kein localStorage: jeder Launcher-Start beginnt im Vollbild auf der
+        // Jarvis-Seite (mode-fullscreen ist reiner Marker fuer die Fenstergroesse).
+        document.documentElement.className = 'page-jarvis mode-fullscreen';
+        // Sichtbarer Boot-Fallback: verhindert ein weißes WebView-Fenster und
+        // zeigt Frontend-Crashes direkt an, statt still leer zu bleiben.
+        function jarvisBootFail(message) {
+            var el = document.getElementById('boot-fallback');
+            if (!el) return;
+            if (document.body) document.body.classList.remove('jarvis-ready');
+            el.className = 'error';
+            el.textContent = 'Jarvis-Frontend konnte nicht starten.\n\n' + message;
+        }
+        window.addEventListener('error', function (event) {
+            jarvisBootFail(event.message || 'Unbekannter JavaScript-Fehler.');
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+            var reason = event.reason && (event.reason.stack || event.reason.message || event.reason);
+            jarvisBootFail(String(reason || 'Unbehandelte Promise-Ablehnung.'));
+        });
     </script>
 </head>
 <body>
+    <a id="skip-link" href="#text-input">Zur Eingabe springen</a>
+    <div id="boot-fallback" role="status" aria-live="polite">J.A.R.V.I.S. lädt…</div>
+
     <!-- Titelleiste zum Ziehen des rahmenlosen Fensters -->
-    <div id="win-bar">
+    <div id="win-bar" role="banner">
+        <span id="wordmark" aria-hidden="true">Jarvis<span class="wm-dot">.</span></span>
+        <!-- Hauptnavigation: Jarvis-Seite / Kontrollzentrum -->
+        <nav id="page-nav" aria-label="Bereich">
+            <button type="button" class="pn-btn" data-app-page="jarvis" title="Jarvis" aria-pressed="true">Jarvis</button>
+            <button type="button" class="pn-btn" data-app-page="control" title="Kontrollzentrum" aria-pressed="false">Kontrollzentrum</button>
+        </nav>
         <div id="drag-region"></div>
         <div id="win-buttons">
-            <button id="btn-mode" title="Panel-Modus"></button>
-            <button id="btn-settings" title="Einstellungen">&#9881;</button>
-            <button id="btn-min" title="Minimieren">&#8722;</button>
-            <button id="btn-close" title="Ausblenden">&#215;</button>
+            <div id="window-mode-switch" role="group" aria-label="Fenstergröße">
+                <button type="button" class="wm-btn" data-window-mode="fullscreen" title="Vollbild" aria-pressed="false">Vollbild</button>
+                <button type="button" class="wm-btn" data-window-mode="focus" title="Mitte" aria-pressed="false">Mitte</button>
+                <button type="button" class="wm-btn" data-window-mode="panel" title="Klein" aria-pressed="false">Klein</button>
+            </div>
+            <button id="btn-min" type="button" title="Minimieren" aria-label="Minimieren">&#8722;</button>
+            <button id="btn-close" type="button" title="Ausblenden" aria-label="Fenster ausblenden">&#215;</button>
         </div>
     </div>
 
-    <!-- Dismissible Fehler-Banner (max. 3 gestapelt) -->
-    <div id="error-stack" aria-live="polite"></div>
+    <!-- Dismissible Fehler-Banner (max. 3 gestapelt). Jeder Banner ist selbst
+         eine Live-Region (role=alert/status) — der Container traegt keine. -->
+    <div id="error-stack"></div>
 
     <div id="app">
-        <div id="main-col">
+        <main id="main-col" aria-label="Gespräch">
+            <h1 id="jarvis-heading" class="sr-only" tabindex="-1">Gespräch mit Jarvis</h1>
             <div id="orb-container">
-                <div id="orb" class="idle"></div>
+                <div class="luenette" aria-hidden="true"></div>
+                <div class="luenette-sweep" aria-hidden="true"></div>
+                <div id="orb" class="idle" title="Zuhören pausieren oder fortsetzen"></div>
             </div>
-            <div id="status"></div>
+            <div id="status-row" role="status">
+                <span id="status-dot" aria-hidden="true"></span>
+                <div id="status"></div>
+                <span id="status-action"></span>
+                <span id="status-esc" hidden>· Esc stoppt</span>
+            </div>
+            <!-- Naechste Session-Musik — dezenter Status, Verwaltung im Kontrollzentrum -->
+            <div id="music-status" title="Musik für den nächsten Sessionstart — Auswahl im Kontrollzentrum"></div>
             <!-- Letzte Jarvis-Antwort — nur im Panel-Modus sichtbar -->
             <div id="panel-answer"></div>
-            <div id="transcript-toolbar">
-                <input id="transcript-search" type="search"
-                       placeholder="Verlauf durchsuchen…"
-                       aria-label="Verlauf durchsuchen">
-                <button id="btn-copy-all" title="Sichtbaren Verlauf kopieren">Alles kopieren</button>
+            <div id="journal-panel">
+                <div id="transcript-toolbar">
+                    <span id="journal-title">Gespräch</span>
+                    <input id="transcript-search" type="search"
+                           placeholder="Verlauf durchsuchen…"
+                           aria-label="Verlauf durchsuchen">
+                    <span id="search-count" role="status"></span>
+                    <button id="btn-copy-all" title="Sichtbaren Verlauf kopieren">Alles kopieren</button>
+                </div>
+                <div id="transcript"></div>
+                <button id="new-msg-pill" type="button" hidden>↓ Neue Nachricht</button>
             </div>
-            <div id="transcript"></div>
             <form id="text-form" autocomplete="off">
                 <input id="text-input" type="text"
-                       placeholder="Nachricht tippen — Strg+Enter zum Senden"
+                       placeholder="Nachricht an Jarvis…"
                        aria-label="Textnachricht an Jarvis">
+                <span id="ask-hint" aria-hidden="true">Strg+Enter sendet</span>
             </form>
-        </div>
-        <!-- Aktionshistorie — nur im Fokus-Modus sichtbar -->
-        <aside id="action-history">
-            <h3>Aktionen</h3>
-            <ul id="action-list"></ul>
-        </aside>
-    </div>
-    <button id="mute-btn" title="Mikrofon stumm schalten"></button>
-    <button id="stop-btn" title="Stopp — Wiedergabe und laufende Aktion abbrechen (Esc)">
-        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-    </button>
-
-    <!-- Status-Center: Verbindung, Mikro, Jarvis-Zustand, letzter Fehler -->
-    <div id="status-center">
-        <span class="sc-item"><span id="sc-conn" class="sc-dot"></span>Server</span>
-        <span class="sc-item"><span id="sc-mic" class="sc-dot"></span>Mikro</span>
-        <span class="sc-item" id="sc-state">Bereit</span>
-        <div id="sc-error" title=""></div>
-    </div>
-
-    <!-- Einstellungen (API-Keys bleiben bewusst in config.json) -->
-    <div id="settings-view" class="hidden" role="dialog" aria-modal="true" aria-label="Einstellungen">
-        <div id="settings-card">
-            <h2>Einstellungen</h2>
-            <form id="settings-form">
-                <label>Name<input name="user_name" type="text"></label>
-                <label>Anrede<input name="user_address" type="text" placeholder="Sir"></label>
-                <label>Tätigkeit<input name="user_role" type="text" placeholder="Softwareentwickler"></label>
-                <label>Stadt<input name="city" type="text"></label>
-                <label>ElevenLabs Voice-ID<input name="elevenlabs_voice_id" type="text"></label>
-                <label>Obsidian-Vault<input name="obsidian_inbox_path" type="text"></label>
-                <label>Inbox-Ordner<input name="obsidian_inbox_folder" type="text"></label>
-                <label>Start-Apps (eine pro Zeile)<textarea name="apps" rows="3"></textarea></label>
-                <fieldset id="mic-mode">
-                    <legend>Mikrofonmodus</legend>
-                    <label><input type="radio" name="micMode" value="auto">Immer zuhören</label>
-                    <label><input type="radio" name="micMode" value="ptt">Push-to-Talk (Leertaste halten)</label>
-                    <label><input type="radio" name="micMode" value="off">Beim Start stumm</label>
-                </fieldset>
-                <p class="settings-note">API-Keys werden aus Sicherheitsgründen nur in config.json verwaltet.</p>
-                <div id="settings-msg" aria-live="polite"></div>
-                <div class="settings-actions">
-                    <button type="submit" id="btn-settings-save">Speichern</button>
-                    <button type="button" id="btn-settings-cancel">Abbrechen</button>
+        </main>
+        <!-- Kontrollzentrum: Sub-Nav (Übersicht/Einstellungen) + Inhalt.
+             Außerhalb des Kontrollzentrums layoutneutral (display:contents),
+             damit #action-history im Panel-Modus exakt wie bisher fließt. -->
+        <div id="cc-shell">
+            <h1 id="control-heading" class="sr-only" tabindex="-1">Kontrollzentrum</h1>
+            <div id="cc-subnav" role="tablist" aria-label="Kontrollzentrum-Bereich">
+                <button type="button" class="cc-tab" role="tab" data-cc-view="overview" aria-selected="true">Übersicht</button>
+                <button type="button" class="cc-tab" role="tab" data-cc-view="music" aria-selected="false">Musik</button>
+                <button type="button" class="cc-tab" role="tab" data-cc-view="settings" aria-selected="false">Einstellungen</button>
+            </div>
+            <div id="cc-content">
+                <!-- Command Overlay: Monitor-Map (Click-to-Assign) + "Heute"-Streifen -->
+                <section id="cc-map">
+                    <!-- Session-Profile: Arbeitsmodi als Tabs, Aktionen als Inline-Controls -->
+                    <div id="cc-profiles">
+                        <div id="cc-profile-tabs" role="tablist" aria-label="Session-Profile"></div>
+                        <div id="cc-profile-actions"></div>
+                    </div>
+                    <div id="cc-map-stage" aria-label="Monitor-Übersicht"></div>
+                    <div id="cc-map-status" aria-live="polite"></div>
+                    <section id="cc-today" aria-labelledby="cc-today-heading">
+                        <h2 id="cc-today-heading" class="sr-only">Heute</h2>
+                        <div class="cc-block">
+                            <h3>Offene Aufgaben</h3>
+                            <ul id="cc-task-list"></ul>
+                        </div>
+                        <div class="cc-block">
+                            <h3>Inbox heute</h3>
+                            <div id="cc-inbox-text"></div>
+                        </div>
+                        <div class="cc-block">
+                            <h3>Zuletzt bearbeitet</h3>
+                            <ul id="cc-note-list"></ul>
+                        </div>
+                    </section>
+                </section>
+                <!-- Rechte Spalte: App-Launcher, Aktionshistorie, Systemstatus. -->
+                <aside id="cc-right">
+                    <div id="cc-apps">
+                        <h2>Apps</h2>
+                        <div id="cc-app-grid"></div>
+                        <div id="cc-app-msg" aria-live="polite"></div>
+                    </div>
+                    <aside id="action-history">
+                        <h2>Aktionen</h2>
+                        <ul id="action-list"></ul>
+                    </aside>
+                    <div id="cc-sys">
+                        <h2>System</h2>
+                        <ul id="cc-sys-list"></ul>
+                    </div>
+                </aside>
+            </div>
+            <!-- Musik — MP3-Auswahl fuer den naechsten Sessionstart (Clap-Trigger).
+                 Nur Dateien aus dem konfigurierten music_folder, keine freien Pfade. -->
+            <div id="music-view" role="tabpanel" aria-label="Musik">
+                <div id="music-card">
+                    <h2>Musik für den nächsten Sessionstart</h2>
+                    <div class="music-row">Ordner: <span id="music-folder">—</span></div>
+                    <div class="music-row">Ausgewählt: <span id="music-selected">Keine Musik</span></div>
+                    <div id="music-msg" aria-live="polite"></div>
+                    <ul id="music-list"></ul>
+                    <div class="music-actions">
+                        <button type="button" id="btn-music-clear">Auswahl entfernen</button>
+                        <button type="button" id="btn-music-reload">Neu laden</button>
+                    </div>
+                    <p class="settings-note">Der Musikordner wird unter Einstellungen konfiguriert. Gespielt wird die Auswahl beim nächsten Sessionstart.</p>
                 </div>
-            </form>
+            </div>
+            <!-- Einstellungen — inline im Kontrollzentrum (API-Keys bleiben bewusst
+                 in config.json und tauchen hier nie auf) -->
+            <div id="settings-view" role="tabpanel" aria-label="Einstellungen">
+                <div id="settings-card">
+                    <h2>Einstellungen</h2>
+                    <form id="settings-form" autocomplete="off" spellcheck="false">
+                        <fieldset class="settings-group">
+                            <legend>Persönlichkeit</legend>
+                            <label>Name<input name="user_name" type="text"></label>
+                            <label>Anrede<input name="user_address" type="text" placeholder="Sir"></label>
+                            <label>Tätigkeit<input name="user_role" type="text" placeholder="Softwareentwickler"></label>
+                        </fieldset>
+                        <fieldset class="settings-group">
+                            <legend>Standort</legend>
+                            <label>Stadt<input name="city" type="text"></label>
+                            <p class="settings-note">Bestimmt Wetter und Tageszeit im Briefing.</p>
+                        </fieldset>
+                        <fieldset class="settings-group">
+                            <legend>Stimme</legend>
+                            <label>ElevenLabs Voice-ID<input name="elevenlabs_voice_id" type="text"></label>
+                        </fieldset>
+                        <fieldset class="settings-group">
+                            <legend>Speicher &amp; Obsidian</legend>
+                            <label>Obsidian-Vault<input name="obsidian_inbox_path" type="text"></label>
+                            <label>Inbox-Ordner<input name="obsidian_inbox_folder" type="text"></label>
+                        </fieldset>
+                        <fieldset class="settings-group">
+                            <legend>Musik</legend>
+                            <label>Musikordner (MP3s für den Sessionstart)<input name="music_folder" type="text"></label>
+                        </fieldset>
+                        <fieldset class="settings-group">
+                            <legend>Apps &amp; Workspace</legend>
+                            <label>Apps (eine pro Zeile: Name = Befehl oder nur Befehl)<textarea name="apps" rows="3"></textarea></label>
+                        </fieldset>
+                        <fieldset id="mic-mode" class="settings-group">
+                            <legend>Verhalten — Mikrofonmodus</legend>
+                            <label><input type="radio" name="micMode" value="auto">Immer zuhören</label>
+                            <label><input type="radio" name="micMode" value="ptt">Push-to-Talk (Leertaste halten)</label>
+                            <label><input type="radio" name="micMode" value="off">Beim Start stumm</label>
+                        </fieldset>
+                        <p class="settings-note">API-Schlüssel werden aus Sicherheitsgründen nur in config.json verwaltet und erscheinen nie in dieser Oberfläche.</p>
+                        <div id="settings-msg" aria-live="polite"></div>
+                        <div class="settings-actions">
+                            <button type="submit" id="btn-settings-save">Speichern</button>
+                            <button type="button" id="btn-settings-cancel">Abbrechen</button>
+                            <span id="settings-dirty" hidden>Nicht gespeicherte Änderungen</span>
+                            <span id="settings-confirm" hidden>Änderungen verwerfen?
+                                <button type="button" id="btn-discard">Verwerfen</button>
+                                <button type="button" id="btn-keep">Weiter bearbeiten</button>
+                            </span>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
     </div>
+    <!-- Gerätefußleiste: Verbindung/Mikro in Klartext + Stop/Mute (immer sichtbar) -->
+    <footer id="device-bar" aria-label="Gerätestatus und Steuerung">
+        <div id="status-center">
+            <span class="sc-item"><span id="sc-conn" class="sc-dot"></span><span id="sc-conn-text">Server</span></span>
+            <span class="sc-item"><span id="sc-mic" class="sc-dot"></span><span id="sc-mic-text">Mikro</span></span>
+            <div id="sc-error" title=""></div>
+        </div>
+        <span id="kbd-hint" aria-hidden="true">Esc stoppt · „Stopp" sagen</span>
+        <span id="db-spacer"></span>
+        <button id="stop-btn" title="Stopp — Wiedergabe und laufende Aktion abbrechen (Esc)"
+                aria-label="Wiedergabe und laufende Aktion stoppen">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+        <button id="mute-btn" title="Mikrofon stumm schalten" aria-label="Mikrofon stummschalten" aria-pressed="false"></button>
+    </footer>
 
     <script src="/static/main.js"></script>
     <script src="/static/settings.js"></script>
+    <script src="/static/music.js"></script>
     <script>
         // Fenster-Buttons via pywebview API (nur im nativen Fenster aktiv)
         document.getElementById('btn-min').addEventListener('click', () => {

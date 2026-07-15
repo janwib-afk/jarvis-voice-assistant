@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 
 try:
     import server  # verdrahtet assistant_core (configure/init_clients)

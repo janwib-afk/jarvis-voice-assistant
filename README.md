@@ -111,9 +111,10 @@ You (speak) → Chrome Browser (Web Speech API) → FastAPI Server (local)
      "user_address": "Your Name",
      "city": "Hamburg",
      "workspace_path": "C:\\path\\to\\jarvis-voice-assistant",
-     "browser_url": "https://your-website.com",
      "obsidian_inbox_path": "C:\\path\\to\\obsidian\\inbox",
-     "apps": ["obsidian://open"]
+     "apps": [
+       { "id": "obsidian", "name": "Obsidian", "command": "obsidian://open", "type": "url", "autostart": true }
+     ]
    }
    ```
 
@@ -173,9 +174,10 @@ Clap twice → VS Code opens, Obsidian opens, Chrome opens with Jarvis. All wind
 
 ```
 jarvis-voice-assistant/
-├── server.py              # FastAPI layer — routes, WebSocket, settings API
+├── server.py              # FastAPI layer — routes, WebSocket, settings + dashboard/command API
 ├── assistant_core.py      # The brain — system prompt, LLM calls, actions
 ├── actions.py             # Action registry + parsing + safety policies
+├── app_launcher.py        # Allowlist app launcher (voice + UI use the same registry)
 ├── tts.py                 # ElevenLabs text-to-speech
 ├── memory.py              # Obsidian inbox/vault + long-term memory file
 ├── health.py              # /health diagnostics
@@ -206,14 +208,20 @@ jarvis-voice-assistant/
 ### Change Jarvis's personality
 Edit the system prompt in `assistant_core.py` → `build_system_prompt()`. The personality, greeting behavior, and action instructions are all defined there. Name, role, and how Jarvis addresses you come from `config.json` (editable in the settings UI).
 
-### Change which apps launch
-Edit `config.json`:
+### Configure apps (launcher + voice command)
+Apps in `config.json` are shown as buttons in the focus-mode command center and can be opened by voice ("Öffne Obsidian") — both go through the same allowlist launcher (`app_launcher.py`), so Jarvis can never run arbitrary shell commands:
 ```json
 {
-  "browser_url": "https://your-website.com",
-  "apps": ["obsidian://open", "slack://"]
+  "apps": [
+    { "id": "obsidian", "name": "Obsidian", "command": "obsidian://open", "type": "url", "autostart": true },
+    { "id": "vscode", "name": "VS Code", "command": "code", "type": "process" }
+  ]
 }
 ```
+- `type`: `"url"` for protocol links (`obsidian://open`), `"process"` for executables (path only, no arguments).
+- `autostart: true` → launched by `scripts/launch-session.ps1` at session start (default: `true`).
+- Legacy entries as plain strings (`"apps": ["obsidian://open"]`) keep working and count as autostart.
+- Editable in the settings UI too — one app per line as `Name = command` or just `command`.
 
 ### Change the voice
 Find a voice on [elevenlabs.io](https://elevenlabs.io), copy the Voice ID, and set it in `config.json`:
@@ -245,8 +253,25 @@ Everything runs locally; only Claude (thinking/vision) and ElevenLabs (voice) re
 
 - **Daily notes** go into today's *Brain Dump* file in your Obsidian inbox (`[ACTION:INBOX_WRITE]`).
 - **Long-term memory** lives in `Jarvis Memory.md` in your vault (or `memory.md` in the workspace if no vault is configured). Jarvis writes to it **only when you explicitly ask** ("Merk dir dauerhaft …"). It's plain Markdown — read, edit, or delete it anytime; its content is shown to the model as part of the system prompt.
+  - **See what it remembers:** ask *"Was weißt du über mich?"* — Jarvis reads back the stored entries (`[ACTION:MEMORY_READ]`).
+  - **Make it forget:** say *"Vergiss …"* — Jarvis finds the matching entries and, **after a spoken yes/no confirmation**, deletes them permanently from the file (`[ACTION:MEMORY_FORGET]`). Nothing is deleted if no entry matches, and your hand-written notes / the file header are never touched.
 - **Session history** is kept in memory only (capped) and discarded on disconnect.
 - **API keys** never leave `config.json` — the settings API refuses to read or write them.
+
+---
+
+## Voice UX — manual checklist
+
+Browser/mic behaviour can't be meaningfully unit-tested, so run this quick pass after any change to `frontend/main.js`, the stop flow, or TTS:
+
+- [ ] **Stop by voice** — while Jarvis is speaking, say *"Stopp"* (or *"Jarvis, hör auf"*): audio stops instantly and the mic starts listening again (auto mode).
+- [ ] **Stop by Esc / button** — both stop playback immediately, same as the voice command.
+- [ ] **Stop during a long action** — start a research query, then stop mid-run: the server aborts the action (action-history entry turns to *abgebrochen*) and the connection stays up.
+- [ ] **Stop when idle** — pressing stop with nothing playing shows no confusing *"Gestoppt."* flash.
+- [ ] **New request after stop** — after stopping, a new spoken request is processed normally.
+- [ ] **No self-listening** — Jarvis does not transcribe its own TTS while speaking.
+- [ ] **TTS failure stays usable** — with a wrong ElevenLabs voice-id, the answer still appears as text and the app stays responsive (a *Sprachausgabe* error banner explains why).
+- [ ] **Mute / unmute by voice** — *"stumm"* mutes the mic, *"Mikrofon an"* un-mutes; the orb reflects the muted state.
 
 ---
 

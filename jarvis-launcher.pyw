@@ -16,7 +16,28 @@ import traceback
 
 WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 SERVER_PORT = 8340
-SERVER_URL = f"http://localhost:{SERVER_PORT}"
+SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}"
+
+
+def _envflag(name):
+    """Diagnose-/Bisect-Schalter per Umgebungsvariable — ohne Code-Aenderung setzbar."""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# JARVIS_DEBUG=1  -> webview.start(debug=True) + WebView2-Verbose-Logging (DevTools)
+# JARVIS_NO_MICA=1 / JARVIS_NO_HOTKEY=1 / JARVIS_NO_TRAY=1 -> Verdaechtigen einzeln
+# abschalten, um die Ursache des GUI-Thread-Haengers einzugrenzen (Bisect).
+DEBUG = _envflag("JARVIS_DEBUG")
+DISABLE_MICA = _envflag("JARVIS_NO_MICA")
+DISABLE_HOTKEY = _envflag("JARVIS_NO_HOTKEY")
+DISABLE_TRAY = _envflag("JARVIS_NO_TRAY")
+
+# Persistenter WebView2-User-Data-Ordner statt Private-Mode-Temp pro Start.
+# private_mode=True legt sonst bei jedem Start %TEMP%\tmp*\EBWebView an und
+# raeumt es nur bei sauberem Exit weg — haengende/gekillte Laeufe leaken sonst.
+WEBVIEW_DATA_DIR = os.path.join(
+    os.environ.get("LOCALAPPDATA", WORKSPACE), "Jarvis", "WebView2"
+)
 
 # Error-Log für silent execution (pythonw.exe)
 _LOG_PATH = os.path.join(WORKSPACE, "jarvis-launcher.log")
@@ -178,6 +199,8 @@ def get_rightmost_monitor():
 # ── Win11 Mica ───────────────────────────────────────────────────────────────
 
 def apply_mica(hwnd):
+    if DISABLE_MICA:
+        return
     try:
         import win32mica
         win32mica.ApplyMica(hwnd, True)
@@ -303,7 +326,8 @@ class JarvisAPI:
             pass
 
     def set_window_mode(self, mode):
-        """'panel': kompakt, unten rechts, always-on-top. Sonst Fokus: groß, zentriert."""
+        """'fullscreen': fuellt den Arbeitsbereich des rechtesten Monitors.
+        'focus': groß, zentriert. 'panel': kompakt, unten rechts, always-on-top."""
         try:
             win = self._win[0]
             mx, my, mw, mh = get_rightmost_monitor()
@@ -313,16 +337,22 @@ class JarvisAPI:
                 win.resize(w, h)
                 win.move(mx + mw - w - WINDOW_MARGIN, my + mh - h - WINDOW_MARGIN)
                 set_always_on_top(win, True)
+            elif mode == "fullscreen":
+                # Fuellt den kompletten Arbeitsbereich — erst positionieren, dann
+                # auf volle Groesse wachsen, damit der Frame im Monitor bleibt.
+                win.move(mx, my)
+                win.resize(mw, mh)
+                set_always_on_top(win, False)
             else:
                 w, h = min(FOCUS_SIZE[0], mw), min(FOCUS_SIZE[1], mh)
                 # Erst positionieren, dann wachsen — bleibt innerhalb des Monitors.
                 win.move(mx + (mw - w) // 2, my + (mh - h) // 2)
                 win.resize(w, h)
                 set_always_on_top(win, False)
-            # Mica haengt am hwnd — nach Resize erneut anwenden (idempotent).
-            hwnd = ctypes.windll.user32.FindWindowW(None, "J.A.R.V.I.S.")
-            if hwnd:
-                apply_mica(hwnd)
+            # Mica NICHT erneut anwenden: der DWM-Backdrop bleibt ueber Resizes
+            # erhalten. Ein Reapply auf die laufende WebView2-DirectComposition-
+            # Flaeche (hier vom pywebview-Worker-Thread) laesst das Fenster weiss
+            # werden — genau der Bug beim Wechsel in den Dashboard-/Fokus-Modus.
             return {"ok": True, "mode": mode}
         except Exception as e:
             print(f"[jarvis] set_window_mode fehlgeschlagen: {e}", flush=True)
@@ -362,14 +392,23 @@ def main():
         print("[jarvis] Server bereit.", flush=True)
 
     import webview
-    os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--use-fake-ui-for-media-stream'
+    _wv2_args = '--use-fake-ui-for-media-stream'
+    if DEBUG:
+        # WebView2 in ein Logfile schreiben lassen (native Fehler/Crashes sichtbar).
+        _wv2_log = os.path.join(WORKSPACE, "webview2.log")
+        _wv2_args += f' --enable-logging="{_wv2_log}" --log-level=0 --v=1'
+        # DevTools-Protocol-Port (nur im Debug-Modus, localhost) — erlaubt das
+        # Anstossen/Inspizieren der WebView2-Seite von aussen zur Fehlersuche.
+        _wv2_args += ' --remote-debugging-port=9222'
+        print(f"[jarvis] DEBUG aktiv — WebView2-Log: {_wv2_log}, CDP: http://127.0.0.1:9222", flush=True)
+    os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = _wv2_args
 
-    # Fensterposition: rechtester Monitor
+    # Fensterposition: rechtester Monitor — Start immer im Vollbild-Modus
+    # (fuellt den Arbeitsbereich), damit kein JS-Resize das Layout nachziehen
+    # muss und nichts flackert.
     mx, my, mw, mh = get_rightmost_monitor()
-    ww = min(1000, mw)
-    wh = min(800, mh)
-    wx = mx + (mw - ww) // 2
-    wy = my + (mh - wh) // 2
+    ww, wh = mw, mh
+    wx, wy = mx, my
 
     window_ref = [None]
     api = JarvisAPI(window_ref)
@@ -392,12 +431,17 @@ def main():
     api._win = window_ref
 
     def on_shown():
-        # Mica anwenden
+        # Mica anwenden (idempotent; No-Op bei JARVIS_NO_MICA)
         hwnd = ctypes.windll.user32.FindWindowW(None, "J.A.R.V.I.S.")
         if hwnd:
             apply_mica(hwnd)
-        # Hotkey registrieren
-        setup_hotkey(window_ref)
+        # Hotkey NICHT auf dem GUI-Thread registrieren: der globale keyboard-
+        # Low-Level-Hook kann sonst die WebView2-Message-Pump blockieren
+        # (weisses Fenster + "Not Responding"). Eigener Daemon-Thread.
+        if not DISABLE_HOTKEY:
+            threading.Thread(
+                target=setup_hotkey, args=(window_ref,), daemon=True
+            ).start()
 
     def on_closing():
         # X-Button versteckt nur, beendet nicht
@@ -408,10 +452,20 @@ def main():
     window.events.closing += on_closing
 
     # Tray-Icon im Hintergrund
-    threading.Thread(target=run_tray, args=(window_ref,), daemon=True).start()
+    if not DISABLE_TRAY:
+        threading.Thread(target=run_tray, args=(window_ref,), daemon=True).start()
 
-    print("[jarvis] Fenster wird geöffnet...", flush=True)
-    webview.start(debug=False)
+    try:
+        os.makedirs(WEBVIEW_DATA_DIR, exist_ok=True)
+    except OSError as e:
+        print(f"[jarvis] WebView2-Datenordner nicht anlegbar: {e}", flush=True)
+    print(
+        f"[jarvis] Fenster wird geöffnet... (debug={DEBUG}, "
+        f"no_mica={DISABLE_MICA}, no_hotkey={DISABLE_HOTKEY}, no_tray={DISABLE_TRAY})",
+        flush=True,
+    )
+    # private_mode=False + storage_path => persistenter WebView2-Ordner (kein Temp-Leak).
+    webview.start(debug=DEBUG, private_mode=False, storage_path=WEBVIEW_DATA_DIR)
 
     print("[jarvis] Wird beendet...", flush=True)
     if server_proc:

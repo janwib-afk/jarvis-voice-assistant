@@ -20,6 +20,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 
 try:
     import server
@@ -168,6 +169,81 @@ class StopFlowTests(unittest.TestCase):
                 self.assertEqual(confirm["audio"], "")
                 self.assertTrue(self._wait_for(record, "cancelled"), "Task wurde nicht gecancelt")
         self.assertNotIn("finished", record)
+
+    def test_disconnect_cancels_running_task(self):
+        # Verbindung wird MITTEN in einer langen Aktion geschlossen: das finally
+        # muss Worker UND Child sauber beenden (kein stiller Task-Leak).
+        record = []
+
+        async def slow_process(session_id, text, ws):
+            record.append("start")
+            try:
+                await asyncio.sleep(30)
+                record.append("finished")
+            except asyncio.CancelledError:
+                record.append("cancelled")
+                raise
+
+        with mock.patch.object(server.assistant_core, "process_message", slow_process):
+            with self._connect() as sock:
+                sock.receive_json()  # health-Frame
+                sock.send_json({"text": "recherchiere zu ssds"})
+                self.assertTrue(self._wait_for(record, "start"), "Worker hat nicht gestartet")
+            # Verlassen des with-Blocks => Disconnect => finally cancelt Worker + Child.
+            self.assertTrue(
+                self._wait_for(record, "cancelled"),
+                "Child wurde beim Disconnect nicht gecancelt",
+            )
+        self.assertNotIn("finished", record)
+
+    def test_new_message_processed_after_stop(self):
+        # Stopp beendet die laufende Verarbeitung, aber der Worker lebt weiter:
+        # eine danach gesendete Nachricht muss normal verarbeitet werden.
+        record = []
+
+        async def proc(session_id, text, ws):
+            record.append(("start", text))
+            if text == "erste":
+                await asyncio.sleep(30)  # wird per Stopp abgebrochen
+            else:
+                record.append(("done", text))
+                await ws.send_json({"type": "response", "text": "fertig", "audio": ""})
+
+        with mock.patch.object(server.assistant_core, "process_message", proc):
+            with self._connect() as sock:
+                sock.receive_json()  # health-Frame
+                sock.send_json({"text": "erste"})
+                self.assertTrue(self._wait_for(record, ("start", "erste")))
+                sock.send_json({"type": "stop"})
+                self.assertEqual(sock.receive_json()["type"], "stop")
+                self.assertEqual(sock.receive_json()["type"], "response")  # "Okay, gestoppt."
+                sock.send_json({"text": "zweite"})
+                frame = sock.receive_json()
+                self.assertEqual(frame["type"], "response")
+                self.assertEqual(frame["text"], "fertig")
+        self.assertIn(("done", "zweite"), record)
+
+    def test_stop_clears_queue(self):
+        # Eine hinter einer laufenden Aktion wartende Nachricht wird bei Stopp
+        # verworfen (Queue geleert), nicht nachtraeglich abgearbeitet.
+        record = []
+
+        async def proc(session_id, text, ws):
+            record.append(text)
+            if text == "lang":
+                await asyncio.sleep(30)
+
+        with mock.patch.object(server.assistant_core, "process_message", proc):
+            with self._connect() as sock:
+                sock.receive_json()  # health-Frame
+                sock.send_json({"text": "lang"})     # belegt den Worker
+                self.assertTrue(self._wait_for(record, "lang"))
+                sock.send_json({"text": "queued"})   # landet in der Queue
+                sock.send_json({"type": "stop"})     # bricht "lang" ab UND leert die Queue
+                self.assertEqual(sock.receive_json()["type"], "stop")
+                sock.receive_json()  # "Okay, gestoppt."
+                time.sleep(0.3)      # Zeit geben, falls "queued" faelschlich liefe
+        self.assertNotIn("queued", record)
 
     def test_spoken_stop_word_without_running_task(self):
         # "Stopp" als Text ohne laufende Aktion: nur der stop-Frame, kein LLM-Aufruf.

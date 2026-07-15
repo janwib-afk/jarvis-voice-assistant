@@ -33,9 +33,8 @@ Claude Code fragt dich dann nach:
 2. **Anthropic API Key** — von https://console.anthropic.com (fuer Claude Haiku, das Gehirn)
 3. **ElevenLabs API Key** — von https://elevenlabs.io (fuer die Stimme)
 4. **Programme** — welche Apps sollen beim Doppelklatschen starten?
-5. **Website** — welche Seite soll im Browser aufgehen?
-6. **Stadt fuers Wetter** — z.B. Hamburg
-7. **Obsidian Vault** — optional, welcher Ordner soll Jarvis kennen?
+5. **Stadt fuers Wetter** — z.B. Hamburg
+6. **Obsidian Vault** — optional, welcher Ordner soll Jarvis kennen?
 
 ---
 
@@ -58,11 +57,17 @@ Claude Code erstellt `config.json` aus `config.example.json` mit deinen echten D
   "user_address": "Dein Name",
   "city": "Hamburg",
   "workspace_path": "C:\\pfad\\zum\\jarvis_template",
-  "browser_url": "https://deine-website.com",
   "obsidian_inbox_path": "C:\\pfad\\zum\\obsidian\\inbox",
-  "apps": ["obsidian://open"]
+  "apps": [
+    { "id": "obsidian", "name": "Obsidian", "command": "obsidian://open", "type": "url", "autostart": true }
+  ]
 }
 ```
+Hinweis zu `apps`: Eintraege sind Objekte (`command` Pflicht; `type` "url" oder
+"process"; `autostart: true` = wird beim Sessionstart geoeffnet) oder einfache
+Strings wie `"obsidian://open"` (Legacy, zaehlt als autostart). Die Apps
+erscheinen als Buttons im Fokus-Modus und sind per Sprache startbar
+("Oeffne Obsidian") — beides laeuft ueber die Allowlist in `app_launcher.py`.
 
 ### 3. ElevenLabs Stimme
 Eine deutsche Stimme auswaehlen und die Voice ID in die Config eintragen. Empfehlung: **Felix Serenitas** (Starter Plan noetig) oder eine der Standard-Stimmen (Free Plan).
@@ -157,7 +162,6 @@ Frage nach:
 - Anthropic API Key (von https://console.anthropic.com)
 - ElevenLabs API Key (von https://elevenlabs.io)
 - Programme die beim Doppelklatschen starten sollen (z.B. Obsidian, Notion)
-- Website die im Browser aufgehen soll
 - Stadt fuers Wetter (z.B. Hamburg)
 - Obsidian Vault Pfad (optional)
 

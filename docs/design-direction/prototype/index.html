@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis — Designprototyp „Warm Analog Intelligence"</title>
+<link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+
+<!-- Prototyp-Steuerung (Meta-UI, nicht Teil der Jarvis-Identität) -->
+<header class="proto-bar">
+    <span>Phase-2-Prototyp · isoliert · keine Backend-Funktion</span>
+    <div class="pb-group" role="group" aria-label="Fenstermodus">
+        <button data-mode="fullscreen" aria-pressed="true">Vollbild</button>
+        <button data-mode="focus" aria-pressed="false">Fokus</button>
+        <button data-mode="panel" aria-pressed="false">Panel</button>
+    </div>
+    <div class="pb-group" role="group" aria-label="Seite">
+        <button data-page="jarvis" aria-pressed="true">Gespräch</button>
+        <button data-page="control" aria-pressed="false">Kontrollzentrum</button>
+    </div>
+    <div class="pb-group" role="group" aria-label="Orb-Zustand">
+        <button data-orb="idle" aria-pressed="false">idle</button>
+        <button data-orb="listening" aria-pressed="true">listening</button>
+        <button data-orb="thinking" aria-pressed="false">thinking</button>
+        <button data-orb="speaking" aria-pressed="false">speaking</button>
+        <button data-orb="muted" aria-pressed="false">muted</button>
+        <button data-orb="error" aria-pressed="false">error</button>
+    </div>
+</header>
+
+<!-- ═══ Bühne: die eigentliche Jarvis-Komposition ═══ -->
+<div class="stage-wrap">
+<div class="stage mode-fullscreen" id="stage">
+
+    <!-- Kopfleiste -->
+    <div class="head">
+        <span class="wordmark">Jarvis<span class="dot">.</span></span>
+        <nav class="nav" role="tablist" aria-label="Bereich">
+            <button class="nav-tab" role="tab" data-view="jarvis" aria-selected="true">Gespräch</button>
+            <button class="nav-tab" role="tab" data-view="control" aria-selected="false">Kontrollzentrum</button>
+        </nav>
+        <div class="mode-switch" role="group" aria-label="Fenstergröße">
+            <button class="mode-btn" aria-pressed="true">Vollbild</button>
+            <button class="mode-btn" aria-pressed="false">Mitte</button>
+            <button class="mode-btn" aria-pressed="false">Klein</button>
+        </div>
+        <div class="win-dots">
+            <button class="win-dot" title="Minimieren">–</button>
+            <button class="win-dot" title="Schließen">×</button>
+        </div>
+    </div>
+
+    <!-- Jarvis-Seite -->
+    <main class="jarvis-view" id="view-jarvis">
+        <div class="greeting">
+            <h1>Guten Abend, Jan.</h1>
+            <p>Alle Systeme bereit. Das Mikrofon hört auf dein Wort.</p>
+        </div>
+
+        <div class="instrument">
+            <div class="luenette"></div>
+            <div class="orb is-listening" id="stage-orb"></div>
+        </div>
+        <div class="instr-status" id="stage-status">
+            <span class="st-dot"></span><span id="stage-status-text">Hört zu</span>
+        </div>
+
+        <section class="journal" aria-label="Gesprächsprotokoll">
+            <div class="journal-head">
+                <h2>Gespräch</h2>
+                <input class="journal-search" type="search" placeholder="Verlauf durchsuchen">
+                <button class="btn btn-quiet">Alles kopieren</button>
+            </div>
+            <div class="journal-body">
+                <div class="entry user">
+                    <div class="entry-time">14:31</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Du</div>
+                        <div class="entry-text">Wie weit ist die Recherche zur Reichweite von Elektroautos?</div>
+                    </div>
+                </div>
+                <div class="entry jarvis">
+                    <div class="entry-time">14:32</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Jarvis</div>
+                        <div class="entry-text">
+                            <button class="entry-copy" title="Antwort kopieren">kopieren</button>
+                            Die Recherche ist abgeschlossen. Moderne Elektroautos erreichen im Alltag
+                            350 bis 500 Kilometer; entscheidend sind Temperatur, Tempo und Ladeplanung.
+                            Für deinen Vergleich habe ich drei belastbare Quellen in die Inbox gelegt —
+                            auch der Sonderfall des Donaudampfschifffahrtsgesellschaftskapitäns mit
+                            Anhängerbetrieb ist damit abgedeckt.
+                            <div class="sources">Quellen: <a href="#">ev-studie-2026.de</a> · <a href="#">reichweite-heute.org</a> · <a href="#">akku-preise.net</a></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="entry user">
+                    <div class="entry-time">14:35</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Du</div>
+                        <div class="entry-text">Leg eine Notiz an: Reichweiten-Vergleich morgen früh fertig schreiben.</div>
+                    </div>
+                </div>
+                <div class="entry jarvis">
+                    <div class="entry-time">14:35</div>
+                    <div class="entry-body">
+                        <div class="entry-speaker">Jarvis</div>
+                        <div class="entry-text">
+                            <button class="entry-copy" title="Antwort kopieren">kopieren</button>
+                            Notiert. Die Notiz liegt in deiner Inbox für heute — Obsidian sortiert sie am Abend ein.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div class="ask">
+            <input class="ask-field" type="text" placeholder="Nachricht an Jarvis">
+            <span class="ask-hint">Strg+Enter sendet</span>
+        </div>
+
+        <!-- Panel-Modus: verdichtete Antwort + Mini-Aktionen -->
+        <div class="panel-answer">Notiert. Die Notiz liegt in deiner Inbox für heute — Obsidian sortiert sie am Abend ein.</div>
+        <div class="panel-actions">
+            <ul class="action-list">
+                <li><span class="f-dot ok"></span><span class="a-time">14:32</span><span class="a-label">Recherche</span><span class="a-detail">Elektroautos Reichweite</span></li>
+                <li><span class="f-dot err"></span><span class="a-time">14:34</span><span class="a-label">App öffnen</span><span class="a-detail">Obsidian — Pfad nicht gefunden</span></li>
+                <li><span class="f-dot run"></span><span class="a-time">14:35</span><span class="a-label">Inbox-Notiz</span><span class="a-detail">Reichweiten-Vergleich</span></li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            <span class="f-item"><span class="f-dot ok"></span><span class="f-label">Server verbunden</span></span>
+            <span class="f-item"><span class="f-dot ok"></span><span class="f-label">Mikrofon bereit</span></span>
+            <span class="f-item"><span class="f-dot run"></span><span class="f-label">Inbox-Notiz läuft</span></span>
+            <span class="spacer"></span>
+            <button class="icon-btn" title="Wiedergabe stoppen"><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1"/></svg></button>
+            <button class="icon-btn" title="Mikrofon stummschalten"><svg viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="7" rx="2"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></svg></button>
+        </div>
+    </main>
+
+    <!-- Kontrollzentrum -->
+    <main class="control-view" id="view-control" hidden>
+        <div class="cv-left">
+            <div class="instrument">
+                <div class="luenette"></div>
+                <div class="orb is-listening" data-orb-mirror></div>
+            </div>
+            <div class="instr-status"><span class="st-dot"></span><span>Hört zu</span></div>
+            <section class="journal" aria-label="Gespräch">
+                <div class="journal-body">
+                    <div class="entry jarvis">
+                        <div class="entry-time">14:35</div>
+                        <div class="entry-body">
+                            <div class="entry-speaker">Jarvis</div>
+                            <div class="entry-text">Notiert. Die Notiz liegt in deiner Inbox für heute.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <div class="ask"><input class="ask-field" type="text" placeholder="Nachricht an Jarvis"></div>
+        </div>
+
+        <div class="cv-mid">
+            <div class="profiles">
+                <span class="p-label">Profil</span>
+                <div class="p-tabs" role="tablist" aria-label="Sitzungsprofile">
+                    <button class="p-tab" role="tab" aria-selected="true">Coding</button>
+                    <button class="p-tab" role="tab" aria-selected="false">Research</button>
+                    <button class="p-tab" role="tab" aria-selected="false">Writing</button>
+                </div>
+                <div class="p-actions">
+                    <button class="btn btn-quiet">Neu</button>
+                    <button class="btn btn-quiet">Duplizieren</button>
+                    <button class="btn btn-quiet">Umbenennen</button>
+                    <button class="btn btn-danger-quiet">Löschen</button>
+                </div>
+            </div>
+
+            <div class="bay" aria-label="Monitor-Zuordnung">
+                <div class="monitor" tabindex="0">
+                    <div class="monitor-label"><span>Monitor links</span><span>1920 × 1080</span></div>
+                    <div class="monitor-zones">
+                        <div class="zone"></div><div class="zone"></div><div class="zone"></div>
+                        <div class="zone"><button class="chip">VS Code</button></div>
+                        <div class="zone"><button class="chip selected">Obsidian</button></div>
+                        <div class="zone"></div>
+                        <div class="zone"></div><div class="zone"></div><div class="zone"></div>
+                    </div>
+                </div>
+                <div class="monitor" tabindex="0">
+                    <div class="monitor-label"><span>Monitor rechts</span><span>1920 × 1080</span></div>
+                    <div class="monitor-zones">
+                        <div class="zone"></div><div class="zone"></div><div class="zone"></div>
+                        <div class="zone"></div><div class="zone"><button class="chip">Kalender</button></div><div class="zone"></div>
+                        <div class="zone"></div><div class="zone"></div><div class="zone"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="today">
+                <div class="t-block">
+                    <h4>Offene Aufgaben</h4>
+                    <ul>
+                        <li>Reichweiten-Vergleich fertig schreiben</li>
+                        <li>Session-Profil „Writing" testen</li>
+                    </ul>
+                </div>
+                <div class="t-block">
+                    <h4>Inbox heute</h4>
+                    <ul>
+                        <li>Recherche: Elektroautos Reichweite (3 Quellen)</li>
+                        <li>Notiz: Vergleich morgen früh abschließen</li>
+                    </ul>
+                </div>
+                <div class="t-block">
+                    <h4>Zuletzt bearbeitet</h4>
+                    <p class="t-empty">Kein Vault verbunden. <a href="#">Vault-Pfad festlegen</a></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="cv-right">
+            <div class="rail-section">
+                <h3>Apps</h3>
+                <div class="app-module selected" tabindex="0">
+                    <div class="am-head"><span class="am-name">Obsidian</span><span class="badge">App</span></div>
+                    <div class="am-row">
+                        <button class="btn btn-quiet">Öffnen</button>
+                        <button class="switch" role="switch" aria-checked="true"><span class="sw-track"><span class="sw-knob"></span></span>Autostart</button>
+                    </div>
+                    <div class="am-place">links · rechte Hälfte</div>
+                </div>
+                <div class="app-module" tabindex="0">
+                    <div class="am-head"><span class="am-name">VS Code</span><span class="badge">App</span></div>
+                    <div class="am-row">
+                        <button class="btn btn-quiet">Öffnen</button>
+                        <button class="switch" role="switch" aria-checked="true"><span class="sw-track"><span class="sw-knob"></span></span>Autostart</button>
+                    </div>
+                    <div class="am-place">links · linke Hälfte</div>
+                </div>
+                <div class="app-module" tabindex="0">
+                    <div class="am-head"><span class="am-name">Kalender</span><span class="badge">URL</span></div>
+                    <div class="am-row">
+                        <button class="btn btn-quiet">Öffnen</button>
+                        <button class="switch" role="switch" aria-checked="false"><span class="sw-track"><span class="sw-knob"></span></span>Autostart</button>
+                    </div>
+                    <div class="am-place">rechts · Vollbild</div>
+                </div>
+            </div>
+            <div class="rail-section" style="flex: 1; min-height: 0; overflow-y: auto;">
+                <h3>Aktionen</h3>
+                <ul class="action-list">
+                    <li><span class="f-dot ok"></span><span class="a-time">14:32</span><span class="a-label">Recherche</span><span class="a-detail">Elektroautos Reichweite</span></li>
+                    <li><span class="f-dot err"></span><span class="a-time">14:34</span><span class="a-label">App öffnen</span><span class="a-detail">Obsidian — Pfad nicht gefunden</span></li>
+                    <li><span class="f-dot run"></span><span class="a-time">14:35</span><span class="a-label">Inbox-Notiz</span><span class="a-detail">Reichweiten-Vergleich</span></li>
+                </ul>
+            </div>
+            <div class="rail-section">
+                <h3>System</h3>
+                <ul class="sys-list">
+                    <li><span class="f-dot ok"></span>KI verbunden</li>
+                    <li><span class="f-dot ok"></span>Sprachausgabe bereit</li>
+                    <li><span class="f-dot ok"></span>Browser bereit</li>
+                    <li><span class="f-dot err"></span>Vault getrennt</li>
+                </ul>
+            </div>
+        </div>
+    </main>
+</div>
+</div>
+
+<!-- ═══ Galerie: Zustände & Komponenten ═══ -->
+<div class="gallery">
+
+    <h2>Der Orb — sechs Zustände im Instrument</h2>
+    <div class="g-row">
+        <div class="g-item"><div class="instrument"><div class="luenette"></div><div class="orb is-idle"></div></div><span>idle — glimmende Kohle</span></div>
+        <div class="g-item"><div class="instrument"><div class="luenette"></div><div class="orb is-listening"></div></div><span>listening — ruhiges Bernstein</span></div>
+        <div class="g-item"><div class="instrument"><div class="luenette"></div><div class="orb is-thinking"></div></div><span>thinking — helles Arbeitslicht</span></div>
+        <div class="g-item"><div class="instrument"><div class="luenette"></div><div class="orb is-speaking"></div></div><span>speaking — warmes Sprechlicht</span></div>
+        <div class="g-item"><div class="instrument"><div class="luenette"></div><div class="orb is-muted"></div></div><span>muted — erloschen, Ziegelring</span></div>
+        <div class="g-item"><div class="instrument"><div class="luenette"></div><div class="orb is-error"></div></div><span>error — Ziegelglut</span></div>
+    </div>
+
+    <h2>Meldungen — vier Statusfamilien</h2>
+    <div class="g-row">
+        <div class="banner error">
+            <button class="b-close" title="Meldung schließen">×</button>
+            <span class="b-title">Sprachausgabe fehlgeschlagen</span>
+            <span class="b-text">Die Antwort steht als Text im Gespräch.</span>
+            <span class="b-hint">Prüfe das ElevenLabs-Kontingent in config.json.</span>
+        </div>
+        <div class="banner success">
+            <button class="b-close" title="Meldung schließen">×</button>
+            <span class="b-title">Einstellungen gespeichert</span>
+            <span class="b-text">Jarvis nutzt die neuen Werte ab sofort.</span>
+        </div>
+        <div class="banner warning">
+            <button class="b-close" title="Meldung schließen">×</button>
+            <span class="b-title">Vault nicht erreichbar</span>
+            <span class="b-text">Notizen landen vorerst im lokalen Zwischenspeicher.</span>
+            <span class="b-hint">Vault-Pfad in den Einstellungen prüfen.</span>
+        </div>
+        <div class="banner info">
+            <button class="b-close" title="Meldung schließen">×</button>
+            <span class="b-title">Profil „Research" ist aktiv</span>
+            <span class="b-text">Obsidian und Kalender starten bei der nächsten Session.</span>
+        </div>
+    </div>
+
+    <h2>Formular — Einstellungen</h2>
+    <div class="g-card form-view">
+        <h2>Einstellungen</h2>
+        <div class="field">
+            <label for="f-name">Name</label>
+            <input id="f-name" type="text" value="Jan">
+        </div>
+        <div class="field">
+            <label for="f-city">Stadt</label>
+            <input id="f-city" type="text" value="Hamburg">
+            <p class="f-note">Bestimmt Wetter und Tageszeit im Briefing.</p>
+        </div>
+        <div class="field">
+            <label for="f-vault">Obsidian-Vault</label>
+            <input id="f-vault" type="text" placeholder="C:\Users\Jan\Obsidian\Vault">
+        </div>
+        <div class="field">
+            <label for="f-key">API-Schlüssel</label>
+            <input id="f-key" type="text" value="Wird nur in config.json verwaltet" disabled>
+            <p class="f-note">Aus Sicherheitsgründen nicht über die Oberfläche änderbar.</p>
+        </div>
+        <fieldset class="field">
+            <legend>Mikrofonmodus</legend>
+            <label><input type="radio" name="mic" checked> Immer zuhören</label>
+            <label><input type="radio" name="mic"> Push-to-Talk — Leertaste halten</label>
+            <label><input type="radio" name="mic"> Beim Start stumm</label>
+        </fieldset>
+        <div class="g-row">
+            <button class="btn btn-primary">Speichern</button>
+            <button class="btn btn-secondary">Abbrechen</button>
+            <button class="btn btn-primary" disabled>Speichern</button>
+            <button class="btn btn-primary"><span class="spin"></span>Speichert …</button>
+        </div>
+    </div>
+
+    <h2>Musik für den nächsten Sessionstart</h2>
+    <ul class="music-list">
+        <li><button class="music-item" aria-pressed="true"><span class="m-dot"></span>Ambient Start.mp3<span class="m-meta">spielt beim Start</span></button></li>
+        <li><button class="music-item" aria-pressed="false"><span class="m-dot"></span>Deep Focus.mp3</button></li>
+        <li><button class="music-item" aria-pressed="false"><span class="m-dot"></span>Morning Drive.mp3</button></li>
+    </ul>
+
+    <h2>Leerer Gesprächszustand</h2>
+    <div class="g-card" style="max-width: 520px;">
+        <div class="journal-empty">
+            <div class="je-title">Noch kein Gespräch.</div>
+            Sag „Jarvis" — oder schreib unten die erste Nachricht.
+        </div>
+    </div>
+
+</div>
+
+<script src="prototype.js"></script>
+</body>
+</html>

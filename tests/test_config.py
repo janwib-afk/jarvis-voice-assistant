@@ -23,6 +23,8 @@ from config_loader import (
     load_config,
     save_settings,
     validate_config,
+    validate_launcher_value,
+    validate_placement_value,
     validate_settings_update,
 )
 
@@ -181,12 +183,224 @@ class ValidateSettingsUpdateTests(unittest.TestCase):
         self.assertTrue(any("anthropic_api_key" in e for e in errors))
 
     def test_unknown_key_rejected(self):
-        errors = validate_settings_update({"browser_url": "https://x.de"})
-        self.assertTrue(any("browser_url" in e for e in errors))
+        errors = validate_settings_update({"gibt_es_nicht": "x"})
+        self.assertTrue(any("gibt_es_nicht" in e for e in errors))
 
-    def test_apps_must_be_list_of_strings(self):
+    def test_apps_must_be_list(self):
         self.assertTrue(validate_settings_update({"apps": "obsidian://open"}))
         self.assertTrue(validate_settings_update({"apps": [1, 2]}))
+
+    def test_apps_accepts_legacy_strings(self):
+        # Regressions-Guard: einfache String-Listen bleiben dauerhaft gueltig.
+        self.assertEqual(validate_settings_update({"apps": ["obsidian://open", "code"]}), [])
+
+    def test_apps_accepts_objects(self):
+        apps = [
+            {"id": "obsidian", "name": "Obsidian", "command": "obsidian://open",
+             "type": "url", "autostart": True},
+            {"command": "code"},
+        ]
+        self.assertEqual(validate_settings_update({"apps": apps}), [])
+
+    def test_apps_mixed_list_ok(self):
+        apps = ["obsidian://open", {"name": "VS Code", "command": "code"}]
+        self.assertEqual(validate_settings_update({"apps": apps}), [])
+
+    def test_apps_object_without_command_rejected(self):
+        errors = validate_settings_update({"apps": [{"name": "Ohne Befehl"}]})
+        self.assertTrue(any("command" in e for e in errors))
+
+    def test_apps_bad_type_value_rejected(self):
+        errors = validate_settings_update({"apps": [{"command": "x", "type": "shell"}]})
+        self.assertTrue(any("type" in e for e in errors))
+
+    def test_apps_unknown_key_rejected(self):
+        errors = validate_settings_update({"apps": [{"command": "x", "shell": True}]})
+        self.assertTrue(any("shell" in e for e in errors))
+
+    def test_apps_non_bool_autostart_rejected(self):
+        errors = validate_settings_update({"apps": [{"command": "x", "autostart": "ja"}]})
+        self.assertTrue(any("autostart" in e for e in errors))
+
+    def test_apps_empty_string_entry_rejected(self):
+        self.assertTrue(validate_settings_update({"apps": ["  "]}))
+
+    def test_apps_duplicate_explicit_id_rejected(self):
+        apps = [
+            {"id": "obsidian", "command": "obsidian://open"},
+            {"id": "obsidian", "command": "code"},
+        ]
+        errors = validate_settings_update({"apps": apps})
+        self.assertTrue(any("'id'" in e and "Eintrag 1" in e for e in errors))
+
+    def test_apps_duplicate_id_case_insensitive_rejected(self):
+        apps = [
+            {"id": "Obsidian", "command": "obsidian://open"},
+            {"id": "obsidian", "command": "code"},
+        ]
+        self.assertTrue(validate_settings_update({"apps": apps}))
+
+    def test_apps_unique_ids_and_idless_entries_ok(self):
+        # Legacy-Strings und Objekte ohne id zaehlen nie als Duplikat.
+        apps = [
+            "obsidian://open",
+            {"command": "notepad"},
+            {"id": "vscode", "command": "code"},
+            {"id": "kalender", "command": "https://calendar.google.com"},
+        ]
+        self.assertEqual(validate_settings_update({"apps": apps}), [])
+
+    # ── placement + process_name ────────────────────────────────────────────
+    def test_apps_placement_valid(self):
+        apps = [{"command": "code", "placement": {"monitor": "left", "zone": "left_half"}}]
+        self.assertEqual(validate_settings_update({"apps": apps}), [])
+
+    def test_apps_placement_partial_ok(self):
+        # monitor/zone sind optional — Defaults setzt die Normalisierung.
+        for placement in ({"monitor": "left"}, {"zone": "center"}, {}):
+            apps = [{"command": "code", "placement": placement}]
+            self.assertEqual(validate_settings_update({"apps": apps}), [], placement)
+
+    def test_apps_placement_invalid_monitor_rejected(self):
+        apps = [{"command": "code", "placement": {"monitor": "mars", "zone": "center"}}]
+        errors = validate_settings_update({"apps": apps})
+        self.assertTrue(any("'placement.monitor'" in e and "Eintrag 0" in e for e in errors))
+        # Wert-frei: der fehlerhafte Wert taucht nicht in der Meldung auf.
+        self.assertNotIn("mars", " ".join(errors))
+
+    def test_apps_placement_invalid_zone_rejected(self):
+        apps = [{"command": "code", "placement": {"zone": "diagonal"}}]
+        errors = validate_settings_update({"apps": apps})
+        self.assertTrue(any("'placement.zone'" in e for e in errors))
+        self.assertNotIn("diagonal", " ".join(errors))
+
+    def test_apps_placement_not_dict_rejected(self):
+        for bad in ("left", ["left"], 5):
+            apps = [{"command": "code", "placement": bad}]
+            self.assertTrue(validate_settings_update({"apps": apps}), repr(bad))
+
+    def test_apps_placement_unknown_key_rejected(self):
+        apps = [{"command": "code", "placement": {"monitor": "left", "x": 10}}]
+        errors = validate_settings_update({"apps": apps})
+        self.assertTrue(any("unbekanntes Feld 'x'" in e for e in errors))
+
+    def test_apps_process_name_valid_and_invalid(self):
+        ok = [{"command": "https://calendar.google.com", "process_name": "chrome"}]
+        self.assertEqual(validate_settings_update({"apps": ok}), [])
+        for bad in (5, "", "   "):
+            apps = [{"command": "code", "process_name": bad}]
+            errors = validate_settings_update({"apps": apps})
+            self.assertTrue(any("process_name" in e for e in errors), repr(bad))
+
+
+class ValidatePlacementValueTests(unittest.TestCase):
+    """Direkter Helfer-Test — server.py nutzt validate_placement_value standalone
+    fuer den Body von POST /launcher/apps/{id}/placement."""
+
+    def test_valid_and_partial(self):
+        self.assertEqual(validate_placement_value({"monitor": "rightmost", "zone": "top_left"}), [])
+        self.assertEqual(validate_placement_value({}), [])
+        self.assertEqual(validate_placement_value({"zone": "fullscreen"}), [])
+
+    def test_non_dict(self):
+        self.assertTrue(validate_placement_value("left"))
+        self.assertTrue(validate_placement_value(None))
+
+    def test_unknown_key(self):
+        errors = validate_placement_value({"monitor": "left", "profil": "arbeit"})
+        self.assertTrue(any("unbekanntes Feld 'profil'" in e for e in errors))
+
+    def test_bad_values_listed_allowed(self):
+        errors = validate_placement_value({"monitor": "mitte", "zone": "ecke"})
+        self.assertEqual(len(errors), 2)
+        # Meldungen nennen die erlaubten Werte, nie den fehlerhaften.
+        self.assertTrue(any("primary" in e for e in errors))
+        self.assertTrue(any("fullscreen" in e for e in errors))
+        self.assertNotIn("mitte", " ".join(errors))
+        self.assertNotIn("ecke", " ".join(errors))
+
+
+class ValidateLauncherValueTests(unittest.TestCase):
+    """Session-Profile: launcher-Block-Validierung (Phase 4)."""
+
+    _VALID = {
+        "active_profile": "coding",
+        "profiles": [
+            {"id": "coding", "name": "Coding", "apps": {
+                "vscode": {"autostart": True,
+                           "placement": {"monitor": "left", "zone": "left_half"}}}},
+            {"id": "writing", "name": "Writing", "apps": {}},
+        ],
+    }
+
+    def test_valid_launcher(self):
+        self.assertEqual(validate_launcher_value(self._VALID), [])
+
+    def test_non_dict_and_unknown_key(self):
+        self.assertTrue(validate_launcher_value("coding"))
+        errors = validate_launcher_value({**self._VALID, "extra": 1})
+        self.assertTrue(any("unbekanntes Feld 'extra'" in e for e in errors))
+
+    def test_empty_profiles_rejected(self):
+        for profiles in ([], None):
+            errors = validate_launcher_value({"active_profile": "x", "profiles": profiles})
+            self.assertTrue(any("mindestens einem Profil" in e for e in errors))
+
+    def test_profile_requires_id_and_name(self):
+        errors = validate_launcher_value(
+            {"active_profile": "a", "profiles": [{"id": "a", "apps": {}}]})
+        self.assertTrue(any("'name' fehlt" in e for e in errors))
+        errors = validate_launcher_value(
+            {"active_profile": "a", "profiles": [{"name": "A"}]})
+        self.assertTrue(any("'id' fehlt" in e for e in errors))
+
+    def test_duplicate_profile_ids_rejected_case_insensitive(self):
+        errors = validate_launcher_value({"active_profile": "coding", "profiles": [
+            {"id": "coding", "name": "A", "apps": {}},
+            {"id": "Coding", "name": "B", "apps": {}},
+        ]})
+        self.assertTrue(any("bereits vergeben" in e for e in errors))
+
+    def test_active_profile_must_exist(self):
+        errors = validate_launcher_value({"active_profile": "nope", "profiles": [
+            {"id": "coding", "name": "Coding", "apps": {}}]})
+        self.assertTrue(any("kein vorhandenes Profil" in e for e in errors))
+        errors = validate_launcher_value({"profiles": [
+            {"id": "coding", "name": "Coding", "apps": {}}]})
+        self.assertTrue(any("active_profile" in e for e in errors))
+
+    def test_profile_app_state_validation(self):
+        def launcher_with_state(state):
+            return {"active_profile": "a", "profiles": [
+                {"id": "a", "name": "A", "apps": {"vscode": state}}]}
+        errors = validate_launcher_value(launcher_with_state({"autostart": "ja"}))
+        self.assertTrue(any("'autostart' muss true oder false sein" in e for e in errors))
+        errors = validate_launcher_value(
+            launcher_with_state({"placement": {"monitor": "mars"}}))
+        self.assertTrue(any("placement.monitor" in e for e in errors))
+        errors = validate_launcher_value(launcher_with_state({"profil": True}))
+        self.assertTrue(any("unbekanntes Feld 'profil'" in e for e in errors))
+        errors = validate_launcher_value(launcher_with_state("an"))
+        self.assertTrue(any("muss ein Objekt sein" in e for e in errors))
+
+    def test_cross_check_only_with_app_ids(self):
+        launcher = {"active_profile": "a", "profiles": [
+            {"id": "a", "name": "A", "apps": {"geist": {"autostart": True}}}]}
+        # Ohne app_ids: nur strukturell -> gueltig.
+        self.assertEqual(validate_launcher_value(launcher), [])
+        # Mit app_ids: unbekannter Key wird abgelehnt.
+        errors = validate_launcher_value(launcher, app_ids=["vscode"])
+        self.assertTrue(any("keiner App zugeordnet" in e for e in errors))
+        self.assertEqual(validate_launcher_value(launcher, app_ids=["Geist"]), [])
+
+    def test_settings_update_dispatch(self):
+        self.assertEqual(validate_settings_update({"launcher": self._VALID}), [])
+        # Beide Keys im Update -> Cross-Check greift.
+        launcher = {"active_profile": "a", "profiles": [
+            {"id": "a", "name": "A", "apps": {"geist": {"autostart": True}}}]}
+        apps = [{"id": "vscode", "command": "code"}]
+        errors = validate_settings_update({"launcher": launcher, "apps": apps})
+        self.assertTrue(any("keiner App zugeordnet" in e for e in errors))
 
     def test_non_string_value_rejected(self):
         errors = validate_settings_update({"city": 42})
@@ -200,6 +414,61 @@ class ValidateSettingsUpdateTests(unittest.TestCase):
         self.assertNotIn("super-secret-value-123", " ".join(errors))
 
 
+class ValidateMusicTests(unittest.TestCase):
+    """Musik-Felder (Phase 3): selected_music_file ist NUR ein .mp3-Dateiname —
+    nie ein Pfad. music_volume ist eine Zahl in [0, 1] (Punkt-Dezimal)."""
+
+    def test_valid_filename(self):
+        self.assertEqual(validate_settings_update({"selected_music_file": "song.mp3"}), [])
+        self.assertEqual(
+            validate_settings_update({"selected_music_file": "Track (Live) [2024].MP3"}), [])
+
+    def test_empty_deselects(self):
+        self.assertEqual(validate_settings_update({"selected_music_file": ""}), [])
+        self.assertEqual(validate_settings_update({"selected_music_file": "   "}), [])
+
+    def test_absolute_path_rejected(self):
+        errors = validate_settings_update({"selected_music_file": "C:\\Musik\\song.mp3"})
+        self.assertTrue(any("selected_music_file" in e for e in errors))
+
+    def test_traversal_rejected(self):
+        for bad in ("..\\song.mp3", "../song.mp3", ".."):
+            self.assertTrue(validate_settings_update({"selected_music_file": bad}), repr(bad))
+
+    def test_separators_rejected(self):
+        for bad in ("folder/song.mp3", "folder\\song.mp3"):
+            self.assertTrue(validate_settings_update({"selected_music_file": bad}), repr(bad))
+
+    def test_colon_rejected(self):
+        # Laufwerksbuchstaben (C:song.mp3) und NTFS-Streams (song.mp3:x).
+        for bad in ("C:song.mp3", "song.mp3:stream"):
+            self.assertTrue(validate_settings_update({"selected_music_file": bad}), repr(bad))
+
+    def test_non_mp3_rejected(self):
+        errors = validate_settings_update({"selected_music_file": "song.wav"})
+        self.assertTrue(any(".mp3" in e for e in errors))
+
+    def test_non_string_rejected(self):
+        self.assertTrue(validate_settings_update({"selected_music_file": 5}))
+
+    def test_music_folder_is_generic_text(self):
+        self.assertEqual(validate_settings_update({"music_folder": "C:\\Musik"}), [])
+        self.assertTrue(validate_settings_update({"music_folder": 5}))
+
+    def test_music_volume_valid(self):
+        for value in (0, 1, 0.25, "0.25", ""):
+            self.assertEqual(validate_settings_update({"music_volume": value}), [], repr(value))
+
+    def test_music_volume_invalid(self):
+        # "0,25" bewusst ungueltig: launch-session.ps1 parst invariant (Punkt).
+        for value in (-0.1, 1.1, "laut", "0,25", True, [0.2]):
+            self.assertTrue(validate_settings_update({"music_volume": value}), repr(value))
+
+    def test_error_messages_do_not_leak_value(self):
+        errors = validate_settings_update({"selected_music_file": "geheim-xyz.wav"})
+        self.assertNotIn("geheim-xyz", " ".join(errors))
+
+
 class SaveSettingsTests(unittest.TestCase):
     _BASE = {
         "anthropic_api_key": "sk-ant-secret-111",
@@ -208,7 +477,6 @@ class SaveSettingsTests(unittest.TestCase):
         "city": "Hamburg",
         # Nicht UI-editierbar — muss beim Speichern unangetastet bleiben:
         "workspace_path": "C:\\irgendwo",
-        "browser_url": "https://alt.example",
         "unbekanntes_feld": {"x": 1},
     }
 
@@ -237,7 +505,6 @@ class SaveSettingsTests(unittest.TestCase):
         self.assertEqual(on_disk["anthropic_api_key"], "sk-ant-secret-111")
         self.assertEqual(on_disk["elevenlabs_api_key"], "el-secret-222")
         self.assertEqual(on_disk["workspace_path"], "C:\\irgendwo")
-        self.assertEqual(on_disk["browser_url"], "https://alt.example")
         self.assertEqual(on_disk["unbekanntes_feld"], {"x": 1})
 
     def test_save_rejects_protected_key_and_leaves_file_untouched(self):
@@ -273,6 +540,13 @@ class SaveSettingsTests(unittest.TestCase):
         save_settings(path, {"apps": ["obsidian://open", "notion://"]})
         with open(path, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["apps"], ["obsidian://open", "notion://"])
+
+    def test_apps_object_roundtrip(self):
+        path = self._write_cfg(self._BASE)
+        apps = [{"name": "Obsidian", "command": "obsidian://open", "type": "url", "autostart": False}]
+        save_settings(path, {"apps": apps})
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["apps"], apps)
 
 
 class RuntimeEnvironmentTests(unittest.TestCase):
