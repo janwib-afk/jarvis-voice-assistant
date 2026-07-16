@@ -4,6 +4,16 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-16 (Phase 4C, RFC-0003 akzeptiert):** Für Kandidat 05 (Settings
+> Single Writer / versionierte Configuration) wurde
+> [RFC-0003](../architecture/RFC-0003-versioned-config-single-writer.md)
+> `Accepted for incremental implementation`. Fünf Config-Persistenz-Defekte sind
+> unabhängig reproduziert (Datenverlust bei manueller Änderung, Lost-Update,
+> Cross-Instance-Schreiben über globalen `CONFIG_PATH`, fehlender Rollback nach
+> Dateischreiben, veraltete `Runtime.config`) plus ein Musik-TOCTOU-Risiko. Reiner
+> Architekturpass — **kein Produktionscode geändert**; die Umsetzung folgt in Prompt 11
+> in sieben rückrollbaren Slices.
+
 ## 1. Zweck und Geltungsbereich
 
 **Zweck.** Eine reproduzierbare, ehrliche Bestandsaufnahme des Projekts, bevor der
