@@ -143,12 +143,24 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
 - **Abgrenzung:** Passiver Report ≠ Settings (schreibt Config); verbraucht kein Quota.
 - **Quellen:** `health.build_report`, `GET /health` (`server.py:220`).
 
+### Configuration
+- **Bedeutung:** Das vollständige persistierte Konfigurationsdokument (`config.json`)
+  **inklusive Secrets und unbekannter Felder** — die Gesamtheit, aus der die Settings
+  eine Projektion sind.
+- **Verantwortung:** Persistente Wahrheit über Persona, Provider-Keys, Pfade, Apps,
+  Launcher-Profile, Musik und alle vom Nutzer manuell ergänzten Felder.
+- **Abgrenzung:** Configuration ⊃ Settings — die Configuration enthält zusätzlich die
+  Secrets (`PROTECTED_KEYS`) und beliebige unbekannte Felder, die byte-/wertgetreu
+  erhalten bleiben müssen.
+- **Quellen:** `config.json`, `config_loader.load_config`/`save_settings`.
+
 ### Settings
-- **Bedeutung:** Die UI-editierbaren Config-Felder (Whitelist `UI_EDITABLE_KEYS`);
-  API-Keys sind ausgeschlossen.
+- **Bedeutung:** Die UI-editierbaren Config-Felder (Whitelist `UI_EDITABLE_KEYS`) — die
+  **UI-editierbare Projektion der Configuration**; API-Keys sind ausgeschlossen.
 - **Verantwortung:** Persona/Stadt/Apps/Launcher/Musik/Obsidian-Pfade ändern und
   live anwenden.
-- **Abgrenzung:** Settings ≠ Secrets (`PROTECTED_KEYS`, nie über die API).
+- **Abgrenzung:** Settings ≠ Secrets (`PROTECTED_KEYS`, nie über die API); Settings ⊂
+  Configuration (die Projektion, nicht das Gesamtdokument).
 - **Quellen:** `config_loader.UI_EDITABLE_KEYS`/`save_settings`, `GET|POST /settings`,
   `server.apply_settings` (`server.py:263`).
 
