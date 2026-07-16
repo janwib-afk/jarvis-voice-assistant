@@ -4,6 +4,16 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-17 (Phase 4E, RFC-0004 akzeptiert):** Für strukturierte Betriebslogs
+> und zentrale Redaction wurde
+> [RFC-0004](../architecture/RFC-0004-structured-operational-logging-redaction.md)
+> `Accepted for incremental implementation` (Variante C: semantische Allowlist-Events +
+> zentraler Schutzfilter für Legacy/Drittanbieter). Sechs Leckvektoren sind mit
+> synthetischen Sentinels belegt — darunter **die volle Such-URL auf INFO** (verletzt die
+> bestehende Datenklassen-Regel „log Zielhost") sowie Clipboard-/Vault-/Nutzerinhalte und
+> Exception-Messages, die im rotierenden `jarvis-launcher.log` persistieren. Reiner
+> Architekturpass — **kein Produktionscode geändert**; Umsetzung folgt in Prompt 13.
+
 > **Status 2026-07-16 (Phase 4D, RFC-0003 IMPLEMENTIERT):** Die Configuration ist
 > jetzt ein Runtime-eigenes deep module mit genau EINEM serialisierten Schreibweg
 > ([configuration.py](../../configuration.py), `snapshot()`/`settings_view()`/
