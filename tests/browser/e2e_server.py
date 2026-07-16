@@ -52,6 +52,7 @@ for name in ("Ambient Start.mp3", "Deep Focus.mp3", "Morning Drive.mp3"):
 MISSING_EXE = os.path.join(TMP, "does-not-exist", "app.exe")
 
 E2E_CONFIG = {
+    "schema_version": 1,
     "anthropic_api_key": "e2e-dummy-anthropic-key",
     "elevenlabs_api_key": "e2e-dummy-elevenlabs-key",
     "elevenlabs_voice_id": "e2e-voice",

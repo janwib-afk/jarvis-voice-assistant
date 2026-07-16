@@ -4,4 +4,8 @@
 __pycache__/
 *.pyc
 config.json
+# Alles neben der Config, das Klartext-Secrets tragen kann: Pre-Migration-Backup
+# (config.json.pre-v1.bak) und die atomare Schreib-Temp (config.json.tmp).
+# RFC-0003 D10: diese Regel MUSS stehen, bevor je ein Backup erzeugt wird.
+config.json.*
 memory.md
