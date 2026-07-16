@@ -21,7 +21,8 @@
 | SEAM-ACTION | Contract (pur) | `actions.parse_action` + Registry | keine | sehr gut | approved |
 | SEAM-ACTION-EXEC | Contract (Action-Interface) | `spec.execute(payload, ctx)` + `spec.describe(prompt_ctx)` + `render_action_block` | nur externe Grenzen (Browser/Screen/Clipboard/Prozessstart); Vault/Inbox = Tempdir | sehr gut (22/22, `test_action_deep_module`) | approved (RFC-0001, Phase 4B) |
 | SEAM-CONVERSATION | Integration (echter WS-Dialog) | `/ws` Dialog → `process_message` | `ai`, `synthesize_speech` (+ Aktions-Grenzen) | teilweise (nicht über WS) | approved |
-| SEAM-CONFIG | Contract/Integration (Temp-Datei) | `config_loader` Load/Validate/Save | Dateisystem = real (Tempdir) | gut | approved |
+| SEAM-CONFIG | Contract/Integration (Temp-Datei) | `config_loader` Load/Validate (Leaf) | Dateisystem = real (Tempdir) | gut | approved |
+| SEAM-CONFIGURATION | Contract (Configuration-Interface) | `Configuration.snapshot`/`settings_view`/`mutate(intent, expected_revision)` + `schema_version_of`/`migrate_document`/`read_document` | echte Temp-Datei; keine privaten Lock-/Hash-/Temp-Helfer | sehr gut (`test_configuration`, 5× flakefrei) | approved (RFC-0003, Phase 4D) |
 | SEAM-MEMORY | Contract/Integration (Temp-Vault) | `memory` Inbox/Vault/Memory-Fns | Dateisystem = real (Tempdir); `ai` bei Dedup | gut | approved |
 | SEAM-PROVIDERS | Boundary-Fakes | `ai`/`synthesize_speech`/`browser_tools`/`clipboard`/`monitors` | jede Grenze spezifisch | gut | approved |
 | SEAM-LAUNCHER | Contract/Integration (TestClient) | Launcher-/Profil-REST + `app_launcher` Helfer | `_start_url`/`_start_process` | gut | approved |

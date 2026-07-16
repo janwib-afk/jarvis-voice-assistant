@@ -2,7 +2,26 @@
 
 ## 1. Status und Entscheidungsgrundlage
 
-**Accepted for incremental implementation** (2026-07-16).
+**Accepted for incremental implementation** (2026-07-16) — **implementiert am
+2026-07-16** (Phase 4D, siehe
+[PHASE4D_VERSIONED_CONFIGURATION_MIGRATION.md](PHASE4D_VERSIONED_CONFIGURATION_MIGRATION.md)).
+
+**Implementierungsevidenz:** `configuration.py` (Runtime-eigene tiefe Seam:
+`snapshot()`/`settings_view()`/`mutate(intent, expected_revision)`), neun semantische
+Intents, `schema_version` v0→v1 (nur Marker) getrennt von der opaken, nicht
+persistierten `revision`, per-Runtime-`asyncio.Lock` mit `os.replace` als
+Linearization Point, kompensierbares Live-Apply, Post-Commit-Refresh/Broadcast,
+`409`/`If-Match` auf `/settings` inkl. sichtbarer Frontend-Konfliktbehandlung, ein
+verifiziertes bytegenaues Pre-Migration-Backup unter der zuvor eingecheckten Regel
+`config.json.*`. Die Befunde **A–E sind belegt behoben**, **F** ist eingegrenzt.
+Der zweite produktive Writer (`config_loader.save_settings`) und die A6-Globals
+(`server.config`/`CONFIG_PATH`/`STARTUP_WARNINGS`/`PERSIST_LAUNCHER`) sind entfernt.
+Suite **688** grün (vorher 589), `test_configuration` 5× flakefrei, Smoke ohne Skips,
+Browser-/Visual-/Native-Gates grün. **Keine persönliche Config wurde migriert.**
+Slice-Commits: `33da00b`, `bc20b74`, `a16f7ca`, `a82c0f2`, `f2b7f12`, `6563379`,
+`5cf608e`.
+
+Die akzeptierte Entscheidung (Variante A, D1–D12) ist inhaltlich unverändert.
 
 Grundlage: gezielter Architekturreview für **Kandidat 05** (löst das **A6**-Residual
 aus [RFC-0002](RFC-0002-composition-root.md) auf) mit unabhängig reproduzierten

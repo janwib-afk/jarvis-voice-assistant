@@ -152,7 +152,8 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
 - **Abgrenzung:** Configuration ⊃ Settings — die Configuration enthält zusätzlich die
   Secrets (`PROTECTED_KEYS`) und beliebige unbekannte Felder, die byte-/wertgetreu
   erhalten bleiben müssen.
-- **Quellen:** `config.json`, `config_loader.load_config`/`save_settings`.
+- **Quellen:** `config.json`, `configuration.Configuration` (Laden/Migration/
+  Mutation — der einzige Schreibweg), `config_loader` (Validierungsgrundlagen).
 
 ### Settings
 - **Bedeutung:** Die UI-editierbaren Config-Felder (Whitelist `UI_EDITABLE_KEYS`) — die
@@ -161,8 +162,8 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
   live anwenden.
 - **Abgrenzung:** Settings ≠ Secrets (`PROTECTED_KEYS`, nie über die API); Settings ⊂
   Configuration (die Projektion, nicht das Gesamtdokument).
-- **Quellen:** `config_loader.UI_EDITABLE_KEYS`/`save_settings`, `GET|POST /settings`,
-  `server.apply_settings` (`server.py:263`).
+- **Quellen:** `config_loader.UI_EDITABLE_KEYS`, `configuration.settings_view` +
+  `configuration.SetSettings`, `GET|POST /settings`.
 
 ### Stop/Cancel
 - **Bedeutung:** „Stopp"/Esc/Button bricht Wiedergabe UND laufende Action ab; die
