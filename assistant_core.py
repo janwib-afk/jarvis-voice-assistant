@@ -44,12 +44,6 @@ ELEVENLABS_VOICE_ID = ""
 ai = None    # anthropic.AsyncAnthropic — von init_clients gesetzt
 http = None  # httpx.AsyncClient — von init_clients gesetzt
 
-# Vom Server injiziert (Composition Root, vermeidet Zirkular-Import):
-# async (new_launcher: dict, kind: str) -> list[str] — persistiert einen
-# launcher-Block (validate + save + live-apply + WS-Broadcast). Leere Liste = ok.
-# None = keine Persistenz moeglich (Standalone/Tests ohne Server).
-PERSIST_LAUNCHER = None
-
 # Kontextdaten fuer den System-Prompt (refresh_data)
 WEATHER_INFO = ""
 TASKS_INFO = []

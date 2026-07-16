@@ -46,14 +46,12 @@ class Runtime:
     Beim Import wird nur eine ungeöffnete Instanz erzeugt (keine Config/Clients).
     """
 
-    def __init__(self, *, config_path: str, session_token: str,
-                 config: dict | None = None, ai=None, http=None):
+    def __init__(self, *, config_path: str, session_token: str, ai=None, http=None):
         self.config_path = config_path
         self.session_token = session_token
         # Einziger Besitzer der Configuration (RFC-0003 D1/D2). Beim Import nur
         # konstruiert — ungeoeffnet, ohne jede I/O; geladen/migriert wird in aopen.
         self.configuration = configuration_mod.Configuration(config_path)
-        self.config = config
         self.startup_warnings: list[str] = []
         # Injizierte Clients = BORROWED (nie geschlossen); selbst erzeugte = OWNED.
         self.ai = ai
@@ -68,6 +66,20 @@ class Runtime:
         self._wired = False
         self._refresh_task: "asyncio.Task | None" = None
         self._closed = False
+
+    @property
+    def config(self) -> dict | None:
+        """Read-only/defensive Projektion des aktuellen Configuration-Snapshots.
+
+        Bewusst KEINE zweite veraenderbare Wahrheit (RFC-0003 D2): jeder Zugriff
+        leitet frisch aus dem kanonischen Snapshot ab und liefert eine tiefe
+        Kopie — eine Aenderung daran trifft den Kern nie und kann nicht veralten.
+        ``None``, solange die Configuration nicht geladen ist (Import-Sicherheit).
+        Kompatibilitaetszugriff fuer Bestandsleser (wire/aopen).
+        """
+        if self.configuration._snapshot is None:
+            return None
+        return self.configuration.snapshot().as_dict()
 
     @property
     def owns_clients(self) -> bool:
@@ -85,14 +97,13 @@ class Runtime:
     def load_config(self) -> None:
         """Configuration laden + ggf. v0→v1 migrieren + Warnungen ermitteln.
 
-        Der Configuration-Snapshot ist die kanonische Wahrheit (RFC-0003 D2);
-        ``self.config`` ist bis zum A6-Cleanup nur eine veraenderbare Projektion
-        daraus fuer Bestandsleser. Wirft ConfigError (fails-closed) — der Aufrufer
-        (Lifespan bzw. `python server.py`) behandelt das.
+        Der Configuration-Snapshot ist die EINZIGE kanonische Wahrheit (RFC-0003
+        D2); ``self.config`` ist nur eine read-only Projektion daraus. Wirft
+        ConfigError (fails-closed) — der Aufrufer (Lifespan bzw. `python
+        server.py`) behandelt das.
         """
         snapshot = self.configuration.load()
-        self.config = snapshot.as_dict()
-        self.startup_warnings = config_loader.check_runtime_environment(self.config)
+        self.startup_warnings = config_loader.check_runtime_environment(snapshot.as_dict())
 
     def wire(self) -> None:
         """EINZIGER Aufrufer der Start-Verdrahtung (D2), idempotent (_wired):

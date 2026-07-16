@@ -91,11 +91,14 @@ class ActiveTestConfigTests(unittest.TestCase):
     """Im discover-Lauf ist die aktive Config die Fixture (kein stiller Fallback)."""
 
     def test_active_config_is_synthetic_fixture(self):
+        # Slice 5: der Config-Pfad lebt in der Runtime (kein server.CONFIG_PATH mehr).
         self.assertTrue(
-            os.path.abspath(server.CONFIG_PATH) == FIXTURE,
-            "server.CONFIG_PATH zeigt nicht auf die Test-Fixture "
+            os.path.abspath(server.runtime.config_path) == FIXTURE,
+            "Der Config-Pfad der Runtime zeigt nicht auf die Test-Fixture "
             "(stiller Fallback auf die echte config.json?).",
         )
+        self.assertEqual(os.path.abspath(server.runtime.configuration.path), FIXTURE,
+                         "Die Configuration muss denselben Pfad besitzen.")
 
     def test_no_silent_fallback_to_personal_config(self):
         # Amendment 1 (voll-lazy Import): die aktive Config entsteht erst beim

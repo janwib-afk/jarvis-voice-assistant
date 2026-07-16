@@ -14,7 +14,7 @@ Sicherheitsmassnahmen (alle Stubs greifen VOR dem ersten Connect):
   - JARVIS_SKIP_STARTUP_REFRESH=1 — kein Startup-Refresh.
   - app_launcher._start_url/_start_process gestubbt — 'OEffnen'-Klicks starten
     nichts, liefern aber den normalen Erfolgs-Flow fuer die UI.
-  - server.CONFIG_PATH -> Temp-Config — alle POST-Schreibzugriffe (Settings,
+  - Runtime/Configuration -> Temp-Config — alle POST-Schreibzugriffe (Settings,
     Musik, Launcher/Profile) landen im Tempordner, nie in der echten Config.
 
 Nutzung:  python docs/design-baseline/tools/baseline_server.py [--port 8341]

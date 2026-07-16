@@ -710,3 +710,51 @@ class LauncherIntentTests(_TempConfigTestCase):
         doc = json.load(open(self.path, encoding="utf-8"))
         commands = [a if isinstance(a, str) else a.get("command") for a in doc["apps"]]
         self.assertIn("legacy.exe", commands)
+
+
+class WriterFileContractTests(_TempConfigTestCase):
+    """Datei-Vertrag des EINZIGEN Writers — uebernimmt die Abdeckung der
+    frueheren config_loader.save_settings-Tests (Slice 5)."""
+
+    def open_config(self, doc=None):
+        self.write(doc if doc is not None else base_document(schema_version=1))
+        cfg = configuration.Configuration(self.path)
+        cfg.load()
+        return cfg
+
+    def mutate(self, cfg, updates):
+        import asyncio as aio
+        return aio.run(cfg.mutate(configuration.SetSettings(updates)))
+
+    def test_write_is_atomic_and_leaves_no_temp_file(self):
+        cfg = self.open_config()
+        self.mutate(cfg, {"city": "Berlin"})
+        self.assertFalse(os.path.exists(self.path + ".tmp"),
+                         "nach dem Schreiben darf keine .tmp-Datei zurueckbleiben")
+
+    def test_unicode_roundtrip_without_escapes(self):
+        cfg = self.open_config()
+        self.mutate(cfg, {"city": "Lübeck", "obsidian_inbox_path": "C:\Vault\Übersicht"})
+        raw = self.read_raw()
+        self.assertIn("Lübeck", raw, "Umlaute muessen unescaped in der Datei stehen")
+        on_disk = json.loads(raw)
+        self.assertEqual(on_disk["obsidian_inbox_path"], "C:\Vault\Übersicht")
+
+    def test_mutation_on_missing_file_raises(self):
+        cfg = self.open_config()
+        os.remove(self.path)
+        with self.assertRaises(config_loader.ConfigError):
+            self.mutate(cfg, {"city": "Berlin"})
+
+    def test_apps_legacy_list_roundtrip(self):
+        cfg = self.open_config()
+        self.mutate(cfg, {"apps": ["obsidian://open", "notion://"]})
+        self.assertEqual(json.load(open(self.path, encoding="utf-8"))["apps"],
+                         ["obsidian://open", "notion://"])
+
+    def test_apps_object_roundtrip(self):
+        cfg = self.open_config()
+        apps = [{"id": "vscode", "name": "VS Code", "command": "code.exe",
+                 "type": "process", "process_name": "Code.exe"}]
+        self.mutate(cfg, {"apps": apps})
+        self.assertEqual(json.load(open(self.path, encoding="utf-8"))["apps"], apps)

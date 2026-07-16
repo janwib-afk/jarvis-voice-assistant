@@ -50,13 +50,11 @@ import health
 # ausschließlich im FastAPI-Lifespan (runtime.aopen) und schließen in aclose.
 runtime = runtime_mod.Runtime.for_production()
 
-# Modul-Globals: beim Import Platzhalter (bzw. runtime-nativ), vom Lifespan aus
-# der aktiven Runtime gesetzt. Routen/Helfer lesen diese (A6-Residual für
-# config/CONFIG_PATH/STARTUP_WARNINGS bis Kandidat 05).
+# Read-Spiegel der Produktions-Runtime fuer Bestandsaufrufer/Launcher.
+# Config, Config-Pfad und Warnungen leben AUSSCHLIESSLICH in der Runtime bzw.
+# ihrer Configuration (RFC-0003 Slice 5: A6-Cleanup) — es gibt keine zweite,
+# veraenderbare Wahrheit mehr.
 SESSION_TOKEN = runtime.session_token
-CONFIG_PATH = runtime.config_path
-config: dict | None = None
-STARTUP_WARNINGS: list[str] = []
 # Verbundene WS-Clients — fuer Push-Updates (z.B. frische Warnings nach Settings-Save).
 ws_clients: set[WebSocket] = runtime.ws_clients
 
@@ -184,14 +182,16 @@ INDEX_PATH = os.path.join(os.path.dirname(__file__), "frontend", "index.html")
 
 
 @router.get("/health")
-async def health_endpoint():
+async def health_endpoint(request: Request):
     """Passive Statusuebersicht fuer Launcher, Tests und Smoke-Test.
 
     'ok' heisst: der Server nimmt Verbindungen an. Einzeldienste stehen in
     'services'; es werden keine bezahlten APIs angefragt (kein Quota-Verbrauch).
     """
+    rt = request.app.state.runtime
     return health.build_report(
-        config, STARTUP_WARNINGS, assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
+        rt.configuration.snapshot().as_dict(), rt.startup_warnings,
+        assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
     )
 
 
@@ -221,12 +221,12 @@ async def broadcast_json(payload: dict):
             ws_clients.discard(client)
 
 
-async def broadcast_health():
-    """Frische Warnings an alle verbundenen Clients pushen."""
-    await broadcast_json({"type": "health", "warnings": STARTUP_WARNINGS})
+async def broadcast_health(rt):
+    """Frische Warnings der App-Runtime an alle verbundenen Clients pushen."""
+    await broadcast_json({"type": "health", "warnings": rt.startup_warnings})
 
 
-def _live_apply(runtime, merged: dict) -> bool:
+def _live_apply(rt, merged: dict) -> bool:
     """NOTWENDIGES Live-Apply (RFC-0003 D9): deterministisch, ohne Netz/Broadcast.
 
     Laeuft INNERHALB der Transaktion — wirft es, stellt der Writer Datei und
@@ -237,21 +237,17 @@ def _live_apply(runtime, merged: dict) -> bool:
         or merged.get("obsidian_inbox_path", memory.VAULT_PATH) != memory.VAULT_PATH
         or merged.get("obsidian_inbox_folder", memory.INBOX_PATH) != memory.INBOX_PATH
     )
-    global config, STARTUP_WARNINGS
-    config = merged                      # A6-Adapter (faellt in Slice 5)
-    runtime.config = merged
     assistant_core.configure(merged)
     memory.configure(
         vault_path=merged.get("obsidian_inbox_path", ""),
         inbox_path=merged.get("obsidian_inbox_folder", ""),
     )
     app_launcher.configure(merged.get("apps", []), merged.get("launcher"))
-    STARTUP_WARNINGS = config_loader.check_runtime_environment(merged)
-    runtime.startup_warnings = STARTUP_WARNINGS
+    rt.startup_warnings = config_loader.check_runtime_environment(merged)
     return needs_refresh
 
 
-async def _post_commit(runtime, needs_refresh: bool) -> list[str]:
+async def _post_commit(rt, needs_refresh: bool) -> list[str]:
     """POST-COMMIT-Effekte (RFC-0003 D9): duerfen eine gueltig persistierte
     Configuration NIE zurueckrollen — ihr Fehler erzeugt einen Degraded-Zustand."""
     degraded: list[str] = []
@@ -265,25 +261,20 @@ async def _post_commit(runtime, needs_refresh: bool) -> list[str]:
             degraded.append("Kontextdaten (Wetter/Vault) konnten nicht neu geladen "
                             "werden — die Einstellungen sind gespeichert.")
     try:
-        await broadcast_health()
+        await broadcast_health(rt)
     except Exception:
         logger.warning("Health-Broadcast nach Settings-Save fehlgeschlagen", exc_info=True)
     return degraded
-
-
-async def apply_settings(merged: dict):
-    """Kompatibilitaets-Adapter fuer Bestandsaufrufer (faellt in Slice 5)."""
-    needs_refresh = _live_apply(runtime, merged)
-    await _post_commit(runtime, needs_refresh)
 
 
 @router.get("/settings")
 async def get_settings(request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    view = _configuration(request).settings_view()
+    rt = request.app.state.runtime
+    view = rt.configuration.settings_view()
     # Bestandsfelder unveraendert; 'revision' ist additiv (RFC-0003 §32).
-    return {"ok": True, "settings": view["settings"], "warnings": STARTUP_WARNINGS,
+    return {"ok": True, "settings": view["settings"], "warnings": rt.startup_warnings,
             "revision": view["revision"]}
 
 
@@ -321,7 +312,8 @@ async def post_settings(request: Request):
 
     degraded = await _post_commit(rt, needs_refresh)
     logger.info("Settings aktualisiert: %s", ", ".join(sorted(updates.keys())))
-    body = {"ok": True, "applied": sorted(updates.keys()), "warnings": STARTUP_WARNINGS,
+    body = {"ok": True, "applied": sorted(updates.keys()),
+            "warnings": rt.startup_warnings,
             "revision": rt.configuration.snapshot().revision}
     if degraded:
         body["degraded"] = degraded
@@ -441,7 +433,9 @@ def dashboard_state(request: Request):
     return {
         "ok": True,
         "health": health.build_report(
-            config, STARTUP_WARNINGS, assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
+            request.app.state.runtime.configuration.snapshot().as_dict(),
+            request.app.state.runtime.startup_warnings,
+            assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
         ),
         "tasks": assistant_core.TASKS_INFO,
         "today_inbox": assistant_core.TODAY_INBOX,
@@ -769,13 +763,10 @@ async def _server_lifespan(app):
     session_token/ws_clients aus der aktiven Runtime — Routen/Helfer lesen diese."""
     rt = app.state.runtime
     await rt.aopen()
-    global config, CONFIG_PATH, STARTUP_WARNINGS, SESSION_TOKEN, ws_clients
-    config = rt.config
-    CONFIG_PATH = rt.config_path
-    STARTUP_WARNINGS = rt.startup_warnings
+    global SESSION_TOKEN, ws_clients
     SESSION_TOKEN = rt.session_token
     ws_clients = rt.ws_clients
-    for _warning in STARTUP_WARNINGS:
+    for _warning in rt.startup_warnings:
         logger.warning("Startup-Check: %s", _warning)
     try:
         yield

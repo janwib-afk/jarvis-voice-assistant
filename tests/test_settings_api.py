@@ -273,6 +273,27 @@ class SettingsRevisionConflictTests(_SettingsSeamTestCase):
         self.assertEqual(self.read_raw(), before)
 
 
+class SettingsBroadcastTests(_SettingsSeamTestCase):
+    """Post-Commit-Effekt: nach einem Save gehen frische Warnings an alle
+    WS-Clients (Regression — der Broadcast schlug wegen eines falschen
+    Variablennamens still fehl und wurde nur als Degraded geloggt)."""
+
+    def test_save_broadcasts_health_to_ws_clients(self):
+        sent = []
+
+        class _FakeWS:
+            async def send_json(self, payload):
+                sent.append(payload)
+
+        self.runtime.ws_clients.add(_FakeWS())
+        resp = self.client.post("/settings", headers=self.headers, json={"city": "Berlin"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(any(p.get("type") == "health" for p in sent),
+                        "nach dem Save muss ein health-Frame gebroadcastet werden")
+        # Kein stiller Degraded-Zustand bei erfolgreichem Broadcast.
+        self.assertNotIn("degraded", resp.json())
+
+
 class SettingsIsolationTests(unittest.TestCase):
     """Zwei Runtimes mit zwei Config-Pfaden schreiben nie in die jeweils andere
     Datei (Regression fuer den frueheren globalen CONFIG_PATH — Befund B)."""

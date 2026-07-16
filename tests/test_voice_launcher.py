@@ -23,7 +23,7 @@ import configuration
 import app_launcher
 
 try:
-    import server  # verdrahtet assistant_core (configure/init_clients/PERSIST_LAUNCHER)
+    import server  # verdrahtet assistant_core (configure/init_clients)
     import assistant_core
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
