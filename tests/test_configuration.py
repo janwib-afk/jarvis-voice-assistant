@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
 
@@ -547,7 +548,7 @@ class SelectMusicIntentTests(_TempConfigTestCase):
         self.assertEqual(self.read_raw(), before)
 
     def test_path_traversal_is_rejected(self):
-        for evil in ("..\evil.mp3", "../evil.mp3", "C:\evil.mp3", "sub/song.mp3"):
+        for evil in ("..\\evil.mp3", "../evil.mp3", "C:\\evil.mp3", "sub/song.mp3"):
             with self.assertRaises(config_loader.ConfigError, msg=evil):
                 self.run_intent(evil)
 
@@ -734,11 +735,11 @@ class WriterFileContractTests(_TempConfigTestCase):
 
     def test_unicode_roundtrip_without_escapes(self):
         cfg = self.open_config()
-        self.mutate(cfg, {"city": "Lübeck", "obsidian_inbox_path": "C:\Vault\Übersicht"})
+        self.mutate(cfg, {"city": "Lübeck", "obsidian_inbox_path": "C:\\Vault\\Übersicht"})
         raw = self.read_raw()
         self.assertIn("Lübeck", raw, "Umlaute muessen unescaped in der Datei stehen")
         on_disk = json.loads(raw)
-        self.assertEqual(on_disk["obsidian_inbox_path"], "C:\Vault\Übersicht")
+        self.assertEqual(on_disk["obsidian_inbox_path"], "C:\\Vault\\Übersicht")
 
     def test_mutation_on_missing_file_raises(self):
         cfg = self.open_config()
@@ -758,3 +759,219 @@ class WriterFileContractTests(_TempConfigTestCase):
                  "type": "process", "process_name": "Code.exe"}]
         self.mutate(cfg, {"apps": apps})
         self.assertEqual(json.load(open(self.path, encoding="utf-8"))["apps"], apps)
+
+
+class FaultInjectionTests(_TempConfigTestCase):
+    """Vollstaendige RFC-0003-Fehlermatrix (§30). Jeder injizierte Fehler wird
+    OEFFENTLICH beobachtbar geprueft: Hauptdatei, kanonischer Snapshot, Revision,
+    Fehlerform — keine Secrets in Meldungen, keine stillen Teilerfolge."""
+
+    def setUp(self):
+        super().setUp()
+        self.write(base_document(schema_version=1))
+        self.cfg = configuration.Configuration(self.path)
+        self.cfg.load()
+        self.before_file = self.read_raw()
+        self.before_rev = self.cfg.snapshot().revision
+
+    def mutate(self, updates=None, **kw):
+        import asyncio as aio
+        return aio.run(self.cfg.mutate(
+            configuration.SetSettings(updates or {"city": "Bremen"}), **kw))
+
+    def assert_unchanged(self, msg):
+        self.assertEqual(self.read_raw(), self.before_file, f"{msg}: Datei veraendert")
+        self.assertEqual(self.cfg.snapshot().revision, self.before_rev,
+                         f"{msg}: Revision veraendert")
+        self.assertEqual(self.cfg.snapshot().document["city"], "Hamburg",
+                         f"{msg}: Snapshot veraendert")
+
+    # ── VOR dem Replace: es darf nichts passieren ───────────────────────────
+    def test_read_failure_leaves_everything_unchanged(self):
+        with mock.patch.object(configuration, "read_document",
+                               side_effect=config_loader.ConfigError("Lesefehler")):
+            with self.assertRaises(config_loader.ConfigError):
+                self.mutate()
+        self.assert_unchanged("Lesefehler")
+
+    def test_migration_failure_leaves_file_untouched(self):
+        self.write(base_document(schema_version=99))   # Future -> Migration wirft
+        with self.assertRaises(config_loader.ConfigError):
+            self.mutate()
+        self.assertIn('"schema_version": 99', self.read_raw())
+
+    def test_full_validation_failure_leaves_everything_unchanged(self):
+        with mock.patch.object(config_loader, "validate_config",
+                               return_value=["Pflichtfeld fehlt"]):
+            with self.assertRaises(config_loader.ConfigError):
+                self.mutate()
+        self.assert_unchanged("Vollvalidierung")
+
+    def test_temp_write_failure_leaves_everything_unchanged(self):
+        real_open = open
+
+        def boom(path, *a, **kw):
+            if str(path).endswith(configuration.TEMP_SUFFIX):
+                raise OSError("Platte voll")
+            return real_open(path, *a, **kw)
+
+        with mock.patch("builtins.open", boom):
+            with self.assertRaises(config_loader.ConfigError):
+                self.mutate()
+        self.assert_unchanged("Temp-Schreibfehler")
+
+    def test_replace_failure_leaves_everything_unchanged(self):
+        with mock.patch.object(configuration.os, "replace",
+                               side_effect=OSError("Replace fehlgeschlagen")):
+            with self.assertRaises(config_loader.ConfigError):
+                self.mutate()
+        self.assert_unchanged("os.replace-Fehler")
+
+    def test_detected_conflict_before_replace_writes_nothing(self):
+        with self.assertRaises(configuration.ConfigConflict):
+            self.mutate(expected_revision="veraltet-xyz")
+        self.assert_unchanged("Konflikt vor Replace")
+
+    # ── NACH dem Replace: definierte Kompensation ───────────────────────────
+    def test_live_apply_failure_after_replace_restores_all(self):
+        def boom(document):
+            raise RuntimeError("Live-Apply kaputt")
+
+        with self.assertRaises(RuntimeError):
+            self.mutate(apply=boom)
+        self.assert_unchanged("Live-Apply-Fehler nach Replace")
+
+    def test_restore_failure_propagates_instead_of_silent_success(self):
+        def boom(document):
+            raise RuntimeError("Live-Apply kaputt")
+
+        with mock.patch.object(configuration.Configuration, "_restore",
+                               side_effect=RuntimeError("Restore kaputt")):
+            with self.assertRaises(RuntimeError):
+                self.mutate(apply=boom)
+
+    def test_error_messages_never_contain_secrets(self):
+        with mock.patch.object(config_loader, "validate_config",
+                               return_value=["Pflichtfeld fehlt"]):
+            with self.assertRaises(config_loader.ConfigError) as ctx:
+                self.mutate()
+        self.assertNotIn("dummy-anthropic", str(ctx.exception))
+        self.assertNotIn("dummy-eleven", str(ctx.exception))
+
+
+class BackupContractTests(_TempConfigTestCase):
+    """Backup-Vertrag (RFC-0003 §28/§29): genau EIN benanntes, bytegenaues,
+    verifiziertes Pre-Migration-Backup — nie in Meldungen, nie in Git."""
+
+    def test_backup_failure_aborts_migration_without_touching_file(self):
+        self.write(base_document())          # v0 -> Migration noetig
+        before = self.read_raw()
+        cfg = configuration.Configuration(self.path)
+        with mock.patch.object(configuration.Configuration, "_backup_once",
+                               side_effect=config_loader.ConfigError("Backup kaputt")):
+            with self.assertRaises(config_loader.ConfigError):
+                cfg.load()
+        self.assertEqual(self.read_raw(), before,
+                         "ohne gesichertes Backup darf nicht migriert werden")
+
+    def test_only_one_backup_is_kept(self):
+        self.write(base_document())
+        configuration.Configuration(self.path).load()   # migriert + sichert
+        backups = [f for f in os.listdir(self.tmp) if f.endswith(".bak")]
+        self.assertEqual(len(backups), 1,
+                         f"genau ein Pre-Migration-Backup erwartet: {backups}")
+
+    def test_backup_and_temp_names_are_covered_by_the_gitignore_rule(self):
+        """Beide MUESSEN Suffixe von config.json sein — nur so greift die
+        eingecheckte Regel ``config.json.*`` (RFC-0003 D10)."""
+        self.assertTrue(configuration.BACKUP_SUFFIX.startswith("."))
+        self.assertTrue(configuration.TEMP_SUFFIX.startswith("."))
+
+    def test_backup_path_is_not_exposed_in_errors(self):
+        self.write(base_document(schema_version=99))
+        with self.assertRaises(config_loader.ConfigError) as ctx:
+            configuration.Configuration(self.path).load()
+        self.assertNotIn(".bak", str(ctx.exception))
+
+
+class ConcurrencyTests(_TempConfigTestCase):
+    """Parallelitaet (RFC-0003 §38). Behauptet KEINE Multi-Prozess-Garantie —
+    geprueft wird die In-Process-Serialisierung einer Runtime (D4)."""
+
+    def setUp(self):
+        super().setUp()
+        self.write(launcher_document())
+        self.cfg = configuration.Configuration(self.path)
+        self.cfg.load()
+
+    def test_many_disjoint_mutations_all_survive(self):
+        import asyncio as aio
+
+        async def all_at_once():
+            await aio.gather(
+                self.cfg.mutate(configuration.SetSettings({"city": "Bremen"})),
+                self.cfg.mutate(configuration.SetSettings({"user_role": "Rolle"})),
+                self.cfg.mutate(configuration.SetAutostart("obsidian", False)),
+                self.cfg.mutate(configuration.SetPlacement("vscode", "left", "left_half")),
+                self.cfg.mutate(configuration.ActivateProfile("research")),
+            )
+        aio.run(all_at_once())
+        doc = json.load(open(self.path, encoding="utf-8"))
+        profile = next(p for p in doc["launcher"]["profiles"] if p["id"] == "coding")
+        self.assertEqual(doc["city"], "Bremen")
+        self.assertEqual(doc["user_role"], "Rolle")
+        self.assertIs(profile["apps"]["obsidian"]["autostart"], False)
+        self.assertEqual(profile["apps"]["vscode"]["placement"],
+                         {"monitor": "left", "zone": "left_half"})
+        self.assertEqual(doc["launcher"]["active_profile"], "research")
+
+    def test_colliding_revisions_yield_exactly_one_conflict(self):
+        """Zwei Mutationen mit DERSELBEN erwarteten Revision: eine gewinnt,
+        die andere bekommt einen kontrollierten Konflikt — kein Lost-Update."""
+        import asyncio as aio
+        rev = self.cfg.snapshot().revision
+
+        async def both():
+            return await aio.gather(
+                self.cfg.mutate(configuration.SetSettings({"city": "Bremen"}),
+                                expected_revision=rev),
+                self.cfg.mutate(configuration.SetSettings({"city": "Kiel"}),
+                                expected_revision=rev),
+                return_exceptions=True,
+            )
+        results = aio.run(both())
+        conflicts = [r for r in results if isinstance(r, configuration.ConfigConflict)]
+        winners = [r for r in results if isinstance(r, configuration.MutationResult)]
+        self.assertEqual(len(conflicts), 1, "genau ein kontrollierter Konflikt erwartet")
+        self.assertEqual(len(winners), 1, "genau eine Mutation darf gewinnen")
+        # Die Datei traegt genau das Ergebnis des Gewinners.
+        self.assertEqual(json.load(open(self.path, encoding="utf-8"))["city"],
+                         winners[0].document["city"])
+
+    def test_repeated_launcher_mutations_are_idempotent(self):
+        import asyncio as aio
+        for _ in range(3):
+            aio.run(self.cfg.mutate(configuration.SetAutostart("obsidian", False)))
+        profile = next(p for p in json.load(open(self.path, encoding="utf-8"))
+                       ["launcher"]["profiles"] if p["id"] == "coding")
+        self.assertIs(profile["apps"]["obsidian"]["autostart"], False)
+
+    def test_two_configurations_on_two_paths_are_isolated(self):
+        import asyncio as aio
+        other = os.path.join(self.tmp, "b.json")
+        self.write(launcher_document(city="Kiel"), other)
+        cfg_b = configuration.Configuration(other)
+        cfg_b.load()
+
+        async def both():
+            await aio.gather(
+                self.cfg.mutate(configuration.SetSettings({"city": "Bremen"})),
+                cfg_b.mutate(configuration.SetSettings({"user_role": "B-Rolle"})),
+            )
+        aio.run(both())
+        a_doc = json.load(open(self.path, encoding="utf-8"))
+        b_doc = json.load(open(other, encoding="utf-8"))
+        self.assertEqual(a_doc["city"], "Bremen")
+        self.assertEqual(a_doc["user_role"], "")
+        self.assertEqual(b_doc["city"], "Kiel")
+        self.assertEqual(b_doc["user_role"], "B-Rolle")
