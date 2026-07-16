@@ -25,6 +25,7 @@ import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
 import actions
 import app_launcher
 import assistant_core
+import configuration
 import browser_tools
 import clipboard_tools
 import memory
@@ -348,11 +349,11 @@ class _LauncherTestCase(unittest.TestCase):
         """Kontext mit aufzeichnendem Persist-Hook — schreibt nichts auf Platte."""
         saved = []
 
-        async def _persist(new_launcher, kind):
-            saved.append((new_launcher, kind))
+        async def _persist(intent, kind):
+            saved.append((intent, kind))
             return []
 
-        return actions.ActionContext(persist_launcher=_persist), saved
+        return actions.ActionContext(mutate_launcher=_persist), saved
 
 
 class AppOpenActionTests(_LauncherTestCase):
@@ -374,7 +375,9 @@ class ProfileActivateActionTests(_LauncherTestCase):
         self.assertEqual(result, "Research ist jetzt aktiv.")
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0][1], "profile")
-        self.assertEqual(saved[0][0]["active_profile"], "research")
+        # Semantische Absicht statt Voll-Block (RFC-0003 D3).
+        self.assertIsInstance(saved[0][0], configuration.ActivateProfile)
+        self.assertEqual(saved[0][0].profile_query, "research")
 
     def test_already_active_profile_needs_no_persist(self):
         c, saved = self.persisting_ctx()
@@ -395,11 +398,11 @@ class ProfileActivateActionTests(_LauncherTestCase):
         self.assertEqual(result, "Profil-Änderungen sind gerade nicht möglich.")
 
     def test_persist_failure_is_spoken(self):
-        async def _failing(new_launcher, kind):
+        async def _failing(intent, kind):
             return ["Datei gesperrt"]
 
         result = run(actions.spec_for("PROFILE_ACTIVATE").execute(
-            "Research", actions.ActionContext(persist_launcher=_failing)))
+            "Research", actions.ActionContext(mutate_launcher=_failing)))
         self.assertEqual(result, "Das konnte ich nicht speichern: Datei gesperrt")
 
 
@@ -419,13 +422,13 @@ class AutostartActionTests(_LauncherTestCase):
         result = run(actions.spec_for("APP_AUTOSTART_ON").execute("VS Code", c))
         self.assertEqual(result, "VS Code startet beim nächsten Clap mit.")
         self.assertEqual(saved[0][1], "autostart")
-        self.assertIs(saved[0][0]["profiles"][0]["apps"]["vscode"]["autostart"], True)
+        self.assertEqual((saved[0][0].app_query, saved[0][0].enabled), ("vscode", True))
 
     def test_autostart_off_persists_and_speaks(self):
         c, saved = self.persisting_ctx()
         result = run(actions.spec_for("APP_AUTOSTART_OFF").execute("Obsidian", c))
         self.assertEqual(result, "Obsidian ist aus dem Clap-Start raus.")
-        self.assertIs(saved[0][0]["profiles"][0]["apps"]["obsidian"]["autostart"], False)
+        self.assertEqual((saved[0][0].app_query, saved[0][0].enabled), ("obsidian", False))
 
     def test_unknown_app_is_refused(self):
         c, saved = self.persisting_ctx()
@@ -447,8 +450,8 @@ class AppPlaceActionTests(_LauncherTestCase):
             "Obsidian liegt jetzt in der rechten Hälfte auf dem linken Monitor.",
         )
         self.assertEqual(saved[0][1], "placement")
-        self.assertEqual(saved[0][0]["profiles"][0]["apps"]["obsidian"]["placement"],
-                         {"monitor": "left", "zone": "right_half"})
+        self.assertEqual((saved[0][0].app_query, saved[0][0].monitor, saved[0][0].zone),
+                         ("obsidian", "left", "right_half"))
 
     def test_german_aliases_are_accepted(self):
         c, saved = self.persisting_ctx()
@@ -456,8 +459,7 @@ class AppPlaceActionTests(_LauncherTestCase):
             "Obsidian | links | Vollbild", c))
         self.assertEqual(result,
                          "Obsidian liegt jetzt im Vollbild auf dem linken Monitor.")
-        self.assertEqual(saved[0][0]["profiles"][0]["apps"]["obsidian"]["placement"],
-                         {"monitor": "left", "zone": "fullscreen"})
+        self.assertEqual((saved[0][0].monitor, saved[0][0].zone), ("left", "fullscreen"))
 
     def test_malformed_payload_is_explained_without_persisting(self):
         c, saved = self.persisting_ctx()
@@ -698,10 +700,10 @@ class ThinDispatcherTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self._saved = (assistant_core.ai, assistant_core.PERSIST_LAUNCHER)
+        self._saved_ai = assistant_core.ai
 
     def tearDown(self):
-        assistant_core.ai, assistant_core.PERSIST_LAUNCHER = self._saved
+        assistant_core.ai = self._saved_ai
         assistant_core.conversations.pop("dispatch-test", None)
 
     def test_builds_context_from_current_process_state(self):
@@ -714,11 +716,10 @@ class ThinDispatcherTests(unittest.TestCase):
 
         sentinel_ai = object()
 
-        async def _hook(launcher, kind):
+        async def _hook(intent, kind):
             return []
 
         assistant_core.ai = sentinel_ai
-        assistant_core.PERSIST_LAUNCHER = _hook
         assistant_core.conversations["dispatch-test"] = [
             {"role": "user", "content": "Hallo"}]
 
@@ -726,13 +727,14 @@ class ThinDispatcherTests(unittest.TestCase):
         with mock.patch.dict(actions.REGISTRY,
                              {"SEARCH": dataclasses.replace(spec, execute=_spy)}):
             result = run(assistant_core.execute_action(
-                actions.Action("SEARCH", "thema"), "dispatch-test"))
+                actions.Action("SEARCH", "thema"), "dispatch-test",
+                mutate_launcher=_hook))
 
         self.assertEqual(result, "ok")
         self.assertEqual(gesehen["payload"], "thema")
         c = gesehen["ctx"]
         self.assertIs(c.ai, sentinel_ai)
-        self.assertIs(c.persist_launcher, _hook)
+        self.assertIs(c.mutate_launcher, _hook)
         self.assertEqual(c.history, ({"role": "user", "content": "Hallo"},))
 
     def test_history_snapshot_is_isolated_from_later_mutation(self):

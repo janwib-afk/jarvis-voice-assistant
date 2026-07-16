@@ -29,6 +29,7 @@ import app_launcher
 import monitors
 import assistant_core
 import config_loader
+import configuration
 import memory
 import runtime as runtime_mod
 
@@ -49,13 +50,11 @@ import health
 # ausschließlich im FastAPI-Lifespan (runtime.aopen) und schließen in aclose.
 runtime = runtime_mod.Runtime.for_production()
 
-# Modul-Globals: beim Import Platzhalter (bzw. runtime-nativ), vom Lifespan aus
-# der aktiven Runtime gesetzt. Routen/Helfer lesen diese (A6-Residual für
-# config/CONFIG_PATH/STARTUP_WARNINGS bis Kandidat 05).
+# Read-Spiegel der Produktions-Runtime fuer Bestandsaufrufer/Launcher.
+# Config, Config-Pfad und Warnungen leben AUSSCHLIESSLICH in der Runtime bzw.
+# ihrer Configuration (RFC-0003 Slice 5: A6-Cleanup) — es gibt keine zweite,
+# veraenderbare Wahrheit mehr.
 SESSION_TOKEN = runtime.session_token
-CONFIG_PATH = runtime.config_path
-config: dict | None = None
-STARTUP_WARNINGS: list[str] = []
 # Verbundene WS-Clients — fuer Push-Updates (z.B. frische Warnings nach Settings-Save).
 ws_clients: set[WebSocket] = runtime.ws_clients
 
@@ -112,7 +111,8 @@ async def websocket_endpoint(ws: WebSocket):
     async def worker():
         while True:
             text = await queue.get()
-            task = asyncio.create_task(assistant_core.process_message(session_id, text, ws))
+            task = asyncio.create_task(assistant_core.process_message(
+                session_id, text, ws, mutate_launcher=_launcher_hook(rt)))
             state["task"] = task
             try:
                 await task
@@ -182,14 +182,16 @@ INDEX_PATH = os.path.join(os.path.dirname(__file__), "frontend", "index.html")
 
 
 @router.get("/health")
-async def health_endpoint():
+async def health_endpoint(request: Request):
     """Passive Statusuebersicht fuer Launcher, Tests und Smoke-Test.
 
     'ok' heisst: der Server nimmt Verbindungen an. Einzeldienste stehen in
     'services'; es werden keine bezahlten APIs angefragt (kein Quota-Verbrauch).
     """
+    rt = request.app.state.runtime
     return health.build_report(
-        config, STARTUP_WARNINGS, assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
+        rt.configuration.snapshot().as_dict(), rt.startup_warnings,
+        assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
     )
 
 
@@ -205,12 +207,9 @@ def _settings_token_ok(request: Request) -> bool:
     return secrets.compare_digest(token.encode("utf-8"), expected.encode("utf-8"))
 
 
-def _public_settings() -> dict:
-    _defaults = {"apps": [], "launcher": {}}
-    return {
-        key: config.get(key, _defaults.get(key, ""))
-        for key in sorted(config_loader.UI_EDITABLE_KEYS)
-    }
+def _configuration(request: Request):
+    """Die Configuration der KONKRETEN App-Instanz (RFC-0003 D2) — nie ein Global."""
+    return request.app.state.runtime.configuration
 
 
 async def broadcast_json(payload: dict):
@@ -222,40 +221,61 @@ async def broadcast_json(payload: dict):
             ws_clients.discard(client)
 
 
-async def broadcast_health():
-    """Frische Warnings an alle verbundenen Clients pushen."""
-    await broadcast_json({"type": "health", "warnings": STARTUP_WARNINGS})
+async def broadcast_health(rt):
+    """Frische Warnings der App-Runtime an alle verbundenen Clients pushen."""
+    await broadcast_json({"type": "health", "warnings": rt.startup_warnings})
 
 
-async def apply_settings(merged: dict):
-    """Gespeicherte Settings ohne Neustart uebernehmen. System-Prompt und
-    Voice-ID werden pro Anfrage gelesen und greifen damit sofort."""
-    global config, STARTUP_WARNINGS
+def _live_apply(rt, merged: dict) -> bool:
+    """NOTWENDIGES Live-Apply (RFC-0003 D9): deterministisch, ohne Netz/Broadcast.
 
+    Laeuft INNERHALB der Transaktion — wirft es, stellt der Writer Datei und
+    Snapshot wieder her. Gibt zurueck, ob ein Post-Commit-Refresh noetig ist.
+    """
     needs_refresh = (
         merged.get("city", assistant_core.CITY) != assistant_core.CITY
         or merged.get("obsidian_inbox_path", memory.VAULT_PATH) != memory.VAULT_PATH
         or merged.get("obsidian_inbox_folder", memory.INBOX_PATH) != memory.INBOX_PATH
     )
-    config = merged
-    assistant_core.configure(config)
+    assistant_core.configure(merged)
     memory.configure(
-        vault_path=config.get("obsidian_inbox_path", ""),
-        inbox_path=config.get("obsidian_inbox_folder", ""),
+        vault_path=merged.get("obsidian_inbox_path", ""),
+        inbox_path=merged.get("obsidian_inbox_folder", ""),
     )
-    app_launcher.configure(config.get("apps", []), config.get("launcher"))
-    STARTUP_WARNINGS = config_loader.check_runtime_environment(config)
+    app_launcher.configure(merged.get("apps", []), merged.get("launcher"))
+    rt.startup_warnings = config_loader.check_runtime_environment(merged)
+    return needs_refresh
+
+
+async def _post_commit(rt, needs_refresh: bool) -> list[str]:
+    """POST-COMMIT-Effekte (RFC-0003 D9): duerfen eine gueltig persistierte
+    Configuration NIE zurueckrollen — ihr Fehler erzeugt einen Degraded-Zustand."""
+    degraded: list[str] = []
     if needs_refresh:
-        # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop laufen lassen.
-        await asyncio.to_thread(assistant_core.refresh_data)
-    await broadcast_health()
+        try:
+            # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop.
+            await asyncio.to_thread(assistant_core.refresh_data)
+        except Exception:
+            logger.warning("Kontextdaten-Refresh nach Settings-Save fehlgeschlagen",
+                           exc_info=True)
+            degraded.append("Kontextdaten (Wetter/Vault) konnten nicht neu geladen "
+                            "werden — die Einstellungen sind gespeichert.")
+    try:
+        await broadcast_health(rt)
+    except Exception:
+        logger.warning("Health-Broadcast nach Settings-Save fehlgeschlagen", exc_info=True)
+    return degraded
 
 
 @router.get("/settings")
 async def get_settings(request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    return {"ok": True, "settings": _public_settings(), "warnings": STARTUP_WARNINGS}
+    rt = request.app.state.runtime
+    view = rt.configuration.settings_view()
+    # Bestandsfelder unveraendert; 'revision' ist additiv (RFC-0003 §32).
+    return {"ok": True, "settings": view["settings"], "warnings": rt.startup_warnings,
+            "revision": view["revision"]}
 
 
 @router.post("/settings")
@@ -269,14 +289,35 @@ async def post_settings(request: Request):
     errors = config_loader.validate_settings_update(updates)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    rt = request.app.state.runtime
+    # If-Match ist OPTIONAL (Kompatibilitaet): fehlt er, wird gegen die frisch
+    # gelesene Basis gearbeitet. Ist er vorhanden und ueberholt -> 409 (D6).
+    expected = request.headers.get("if-match") or None
+    needs_refresh = False
+
+    def _apply(document):
+        nonlocal needs_refresh
+        needs_refresh = _live_apply(rt, document)
+
     try:
-        merged = config_loader.save_settings(CONFIG_PATH, updates)
+        await rt.configuration.mutate(
+            configuration.SetSettings(updates), expected_revision=expected, apply=_apply)
+    except configuration.ConfigConflict as e:
+        return JSONResponse({"ok": False, "errors": [str(e)], "conflict": True},
+                            status_code=409)
     except config_loader.ConfigError as e:
         # ConfigError-Meldungen nennen nur Schluesselnamen, nie Werte.
         return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
-    await apply_settings(merged)
+
+    degraded = await _post_commit(rt, needs_refresh)
     logger.info("Settings aktualisiert: %s", ", ".join(sorted(updates.keys())))
-    return {"ok": True, "applied": sorted(updates.keys()), "warnings": STARTUP_WARNINGS}
+    body = {"ok": True, "applied": sorted(updates.keys()),
+            "warnings": rt.startup_warnings,
+            "revision": rt.configuration.snapshot().revision}
+    if degraded:
+        body["degraded"] = degraded
+    return body
 
 
 # ── Musik-API ────────────────────────────────────────────────────────────────
@@ -320,12 +361,13 @@ async def music_files(request: Request):
     die Antwort ist ein Zustandsbericht (ok/error), kein Crash."""
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    folder = config.get("music_folder", "")
+    document = _configuration(request).snapshot().as_dict()
+    folder = document.get("music_folder", "")
     result = await asyncio.to_thread(_scan_music_folder, folder)
     return {
         "ok": result["ok"],
         "folder": folder,
-        "selected": config.get("selected_music_file", ""),
+        "selected": document.get("selected_music_file", ""),
         "files": result["files"],
         "error": result["error"],
     }
@@ -348,27 +390,28 @@ async def music_selection(request: Request):
     if not isinstance(file, str):
         return JSONResponse({"ok": False, "errors": ["Feld 'file' fehlt."]}, status_code=400)
     file = file.strip()
+    # Format-Vorpruefung bleibt hier, damit ein reiner Formatfehler weiterhin 400
+    # liefert. Die inhaltliche Pruefung (Ordner + Existenz) passiert INNERHALB der
+    # Transaktion gegen denselben frisch gelesenen Snapshot (RFC-0003 Slice 3).
     errors = config_loader.validate_music_file_value(file)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
-    if file:
-        folder = config.get("music_folder", "")
-        if not folder or not os.path.isdir(folder):
-            return JSONResponse(
-                {"ok": False, "errors": ["Musikordner ist nicht konfiguriert oder existiert nicht."]},
-                status_code=400,
-            )
-        exists = await asyncio.to_thread(os.path.isfile, os.path.join(folder, file))
-        if not exists:
-            return JSONResponse(
-                {"ok": False, "errors": ["Datei nicht im Musikordner gefunden."]},
-                status_code=400,
-            )
+
+    rt = request.app.state.runtime
+    needs_refresh = False
+
+    def _apply(document):
+        nonlocal needs_refresh
+        needs_refresh = _live_apply(rt, document)
+
     try:
-        merged = config_loader.save_settings(CONFIG_PATH, {"selected_music_file": file})
+        await rt.configuration.mutate(configuration.SelectMusic(file), apply=_apply)
     except config_loader.ConfigError as e:
-        return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
-    await apply_settings(merged)
+        # Ordner fehlt/Datei nicht gefunden -> wie bisher 400 (Nutzerfehler).
+        message = str(e)
+        status = 400 if ("Musikordner" in message or "Datei nicht" in message) else 500
+        return JSONResponse({"ok": False, "errors": [message]}, status_code=status)
+    await _post_commit(rt, needs_refresh)
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
     await broadcast_json({"type": "music_changed", "selected": file, "ts": time.time()})
@@ -390,7 +433,9 @@ def dashboard_state(request: Request):
     return {
         "ok": True,
         "health": health.build_report(
-            config, STARTUP_WARNINGS, assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
+            request.app.state.runtime.configuration.snapshot().as_dict(),
+            request.app.state.runtime.startup_warnings,
+            assistant_core.DATA_LOADED, assistant_core.LAST_REFRESH
         ),
         "tasks": assistant_core.TASKS_INFO,
         "today_inbox": assistant_core.TODAY_INBOX,
@@ -432,25 +477,27 @@ async def command_app_open(request: Request):
 # (config.launcher); launch-session.ps1 startet das aktive Profil.
 # Gleiche Token-Sicherung wie /settings; ``command`` verlaesst den Server nie.
 
-async def persist_launcher_block(new_launcher: dict, kind: str) -> list[str]:
-    """Kern-Persistenz fuer Endpunkte UND Sprach-Aktionen (assistant_core).
+async def persist_launcher_intent(rt, intent, kind: str) -> list[str]:
+    """Kern-Persistenz fuer Endpunkte UND Sprach-Aktionen (RFC-0003 Slice 4).
 
-    validate -> save (pinnt explizite App-IDs, Legacy-Strings -> Objektform,
-    damit PS1 Profil-Keys sicher matchen kann) -> live anwenden -> WS-Event
-    ``launcher_changed`` (Fokus-UI zieht Profile/Toggles/Map nach).
+    Nimmt eine SEMANTISCHE Aenderungsabsicht (kein vorberechneter Voll-Block) und
+    laesst sie vom Single Writer gegen die FRISCHE Basis anwenden: live anwenden →
+    WS-Event ``launcher_changed`` (Fokus-UI zieht Profile/Toggles/Map nach).
     Leere Liste = ok, sonst lesbare deutsche Fehler.
     """
-    app_ids = [a["id"] for a in app_launcher.APPS]
-    errors = config_loader.validate_launcher_value(new_launcher, app_ids=app_ids)
-    if errors:  # konstruktionsbedingt nie — reiner Guard
-        return errors
-    updates = {"launcher": new_launcher,
-               "apps": app_launcher.pin_app_ids(config.get("apps", []))}
+    needs_refresh = False
+
+    def _apply(document):
+        nonlocal needs_refresh
+        needs_refresh = _live_apply(rt, document)
+
     try:
-        merged = config_loader.save_settings(CONFIG_PATH, updates)
+        await rt.configuration.mutate(intent, apply=_apply)
+    except configuration.ConfigConflict as e:
+        return [str(e)]
     except config_loader.ConfigError as e:
         return [str(e)]
-    await apply_settings(merged)
+    await _post_commit(rt, needs_refresh)
     await broadcast_json({
         "type": "launcher_changed",
         "kind": kind,
@@ -460,14 +507,21 @@ async def persist_launcher_block(new_launcher: dict, kind: str) -> list[str]:
     return []
 
 
-# Sprach-Aktionen (PROFILE_ACTIVATE, APP_AUTOSTART_*, APP_PLACE) persistieren
-# ueber denselben Kern — Injektion vermeidet den Zirkular-Import.
-assistant_core.PERSIST_LAUNCHER = persist_launcher_block
+def _launcher_hook(rt):
+    """Request-spezifischer semantischer Mutationshook fuer den ActionContext.
+
+    Wird pro WS-Nachricht aus der Runtime der KONKRETEN App erzeugt (RFC-0003):
+    ``actions``/``assistant_core`` bleiben dadurch frei von Runtime-/Server-
+    Abhaengigkeiten.
+    """
+    async def _mutate(intent, kind: str) -> list[str]:
+        return await persist_launcher_intent(rt, intent, kind)
+    return _mutate
 
 
-async def _persist_launcher(new_launcher: dict, kind: str):
+async def _persist_launcher(rt, intent, kind: str):
     """Endpunkt-Wrapper: Fehler des Persist-Kerns als JSONResponse (500)."""
-    errors = await persist_launcher_block(new_launcher, kind)
+    errors = await persist_launcher_intent(rt, intent, kind)
     if errors:
         return None, JSONResponse({"ok": False, "errors": errors}, status_code=500)
     return True, None
@@ -508,10 +562,10 @@ async def launcher_toggle_autostart(app_id: str, request: Request):
             status_code=400,
         )
 
-    new_launcher = app_launcher.launcher_with_app_state(app_id, autostart=value)
-    if new_launcher is None:
+    if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "autostart")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart")
     if err is not None:
         return err
     logger.info("Autostart geaendert (%s): %s -> %s", app_launcher.ACTIVE_PROFILE, app_id, value)
@@ -546,12 +600,11 @@ async def launcher_set_placement(app_id: str, request: Request):
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
 
-    new_launcher = app_launcher.launcher_with_app_state(
-        app_id, placement={"monitor": body["monitor"], "zone": body["zone"]}
-    )
-    if new_launcher is None:
+    if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "placement")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime,
+        configuration.SetPlacement(app_id, body["monitor"], body["zone"]), "placement")
     if err is not None:
         return err
     # Zu diesem Zeitpunkt sind monitor/zone Allowlist-Konstanten, keine Nutzerdaten.
@@ -602,11 +655,11 @@ async def launcher_create_profile(request: Request):
     name, err = _profile_name_from(body)
     if err is not None:
         return err
-    new_launcher = app_launcher.launcher_with_new_profile(body.get("id"), name)
-    if new_launcher is None:
+    intent = configuration.CreateProfile(body.get("id"), name)
+    if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
     logger.info("Profil angelegt: %s", name)
@@ -617,10 +670,10 @@ async def launcher_create_profile(request: Request):
 async def launcher_activate_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    new_launcher = app_launcher.launcher_with_active(profile_id)
-    if new_launcher is None:
+    if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile")
     if err is not None:
         return err
     logger.info("Profil aktiviert: %s", app_launcher.ACTIVE_PROFILE)
@@ -639,12 +692,11 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     name, err = _profile_name_from(body)
     if err is not None:
         return err
-    new_launcher = app_launcher.launcher_with_new_profile(body.get("id"), name,
-                                                          copy_from=profile_id)
-    if new_launcher is None:
+    intent = configuration.DuplicateProfile(profile_id, body.get("id"), name)
+    if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
     logger.info("Profil dupliziert: %s -> %s", profile_id, name)
@@ -661,10 +713,10 @@ async def launcher_rename_profile(profile_id: str, request: Request):
     name, err = _profile_name_from(body)
     if err is not None:
         return err
-    new_launcher = app_launcher.launcher_with_renamed(profile_id, name)
-    if new_launcher is None:
+    if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile")
     if err is not None:
         return err
     logger.info("Profil umbenannt: %s -> %s", profile_id, name)
@@ -675,12 +727,13 @@ async def launcher_rename_profile(profile_id: str, request: Request):
 async def launcher_delete_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    new_launcher, guard = app_launcher.launcher_without_profile(profile_id)
-    if guard is not None:
-        return JSONResponse({"ok": False, "errors": [guard]}, status_code=400)
-    if new_launcher is None:
+    if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    intent = configuration.DeleteProfile(profile_id)
+    guards = intent.validate(request.app.state.runtime.configuration.snapshot().as_dict())
+    if guards:
+        return JSONResponse({"ok": False, "errors": guards}, status_code=400)
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
     logger.info("Profil geloescht: %s", profile_id)
@@ -710,13 +763,10 @@ async def _server_lifespan(app):
     session_token/ws_clients aus der aktiven Runtime — Routen/Helfer lesen diese."""
     rt = app.state.runtime
     await rt.aopen()
-    global config, CONFIG_PATH, STARTUP_WARNINGS, SESSION_TOKEN, ws_clients
-    config = rt.config
-    CONFIG_PATH = rt.config_path
-    STARTUP_WARNINGS = rt.startup_warnings
+    global SESSION_TOKEN, ws_clients
     SESSION_TOKEN = rt.session_token
     ws_clients = rt.ws_clients
-    for _warning in STARTUP_WARNINGS:
+    for _warning in rt.startup_warnings:
         logger.warning("Startup-Check: %s", _warning)
     try:
         yield

@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "_comment": "SYNTHETISCHE TEST-FIXTURE — keine echten API-Keys, keine persoenlichen Pfade. Wird ausschliesslich ueber JARVIS_CONFIG_PATH von der Testsuite/dem Smoke-Test ausgewaehlt. NIEMALS in Produktion verwenden.",
   "anthropic_api_key": "sk-ant-test-dummy-not-a-real-key",
   "elevenlabs_api_key": "sk_test_dummy_not_a_real_key",

@@ -362,51 +362,6 @@ def validate_settings_update(updates: dict) -> list[str]:
     return errors
 
 
-def save_settings(path: str, updates: dict) -> dict:
-    """Merged UI-editierbare Felder in ``config.json`` und schreibt atomar zurück.
-
-    Liest die Datei frisch von Platte (nie eine In-Memory-Config zurückschreiben),
-    damit Secrets, unbekannte Felder und manuelle Edits erhalten bleiben.
-    Gibt die gemergte Config zurück. Wirft ``ConfigError`` bei Problemen.
-    """
-    errors = validate_settings_update(updates)
-    if errors:
-        raise ConfigError("Ungültige Einstellungen:\n- " + "\n- ".join(errors))
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-    except FileNotFoundError:
-        raise ConfigError(f"config.json nicht gefunden ({path}).")
-    except json.JSONDecodeError as e:
-        raise ConfigError(f"config.json ist kein gültiges JSON (Zeile {e.lineno}): {e.msg}.")
-    except OSError as e:
-        raise ConfigError(f"config.json konnte nicht gelesen werden: {e}")
-
-    if not isinstance(cfg, dict):
-        raise ConfigError("config.json muss ein JSON-Objekt sein (geschweifte Klammern).")
-
-    for key in UI_EDITABLE_KEYS & updates.keys():
-        cfg[key] = updates[key]
-
-    # Atomar: erst .tmp im selben Verzeichnis schreiben, dann os.replace
-    # (same-volume rename ist auf Windows atomar).
-    tmp_path = path + ".tmp"
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp_path, path)
-    except OSError as e:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise ConfigError(f"config.json konnte nicht geschrieben werden: {e}")
-
-    return cfg
-
-
 def check_obsidian_paths(cfg: dict) -> list[str]:
     """Prüft die Obsidian-Pfade und gibt Warnungen zurück (kein Abbruch).
 

@@ -36,9 +36,9 @@ emittiert `[ACTION:TYP]`. Stop/Cancel gilt global: laufende Nachrichten laufen a
 | APP_OPEN | App starten | `app_launcher.launch` | config.apps | lokal | local-execute | **Allowlist** | – | gesprochener Satz | `test_app_launcher`, `test_voice_launcher` | kein Preview/Verify | 5 |
 | PROFILE_ACTIVATE | Profil aktivieren | `actions` (`spec.execute`), `app_launcher` | config.launcher | lokal | local-execute/local-write | Voice/UI | – | Statussatz | `test_voice_launcher`, `test_launcher_api` | – | 8 |
 | PROFILE_STATUS | Profil-Status | `app_launcher.effective_apps` | config.launcher | lokal | read-local | Voice/UI | – | Statussatz | `test_voice_launcher` | – | 8 |
-| APP_AUTOSTART_ON | Clap-Start an | `app_launcher`, `save_settings` | config.launcher | lokal | local-write | Voice/UI | – | Statussatz | `test_voice_launcher`, `test_launcher_api` | – | 8 |
+| APP_AUTOSTART_ON | Clap-Start an | `app_launcher`, `configuration.mutate` | config.launcher | lokal | local-write | Voice/UI | – | Statussatz | `test_voice_launcher`, `test_launcher_api` | – | 8 |
 | APP_AUTOSTART_OFF | Clap-Start aus | dito | config.launcher | lokal | local-write | Voice/UI | – | Statussatz | dito | – | 8 |
-| APP_PLACE | App platzieren | `app_launcher`, `save_settings` | config.launcher | lokal | local-write | Voice/UI | – | Statussatz | `test_voice_launcher` | – | 8/9 |
+| APP_PLACE | App platzieren | `app_launcher`, `configuration.mutate` | config.launcher | lokal | local-write | Voice/UI | – | Statussatz | `test_voice_launcher` | – | 8/9 |
 | SCREEN | Bildschirm ansehen | `screen_capture.describe_screen` | Bildschirm | **sensibel** | read-sensitive + network-read (Vision) | Voice/UI | ✅ | Beschreibung | begrenzt (gestubbt) | kein Region-Scope / keine Übertragungsvorschau | 2/9 |
 | NEWS | Weltnachrichten | `browser_tools.fetch_news` | Web | öffentlich | network-read | Voice/UI | ✅ | Summary | `test_actions` | – | 5 |
 | INBOX_READ | Tages-Inbox lesen | `memory.read_today_inbox_sync` | Vault | **persönlich** | read-sensitive | Voice/UI | – | Rückblick-Summary | `test_inbox` | – | 7 |
@@ -78,7 +78,7 @@ emittiert `[ACTION:TYP]`. Stop/Cancel gilt global: laufende Nachrichten laufen a
 | Capability | Route | Code-Entry | Klasse | Wirkung | Autorisierung | Tests | Lücke | Phase |
 |---|---|---|---|---|---|---|---|---|
 | Health-Report | `GET /health` | `health.build_report` | lokal | read-local | – (passiv) | `test_ws`/Smoke | – | 11 |
-| Settings lesen/schreiben | `GET/POST /settings` | `config_loader.save_settings` | persönlich (Secrets ausgeschlossen) | local-write | Token + Whitelist | `test_settings_api` | – | 4 |
+| Settings lesen/schreiben | `GET/POST /settings` | `configuration.mutate` | persönlich (Secrets ausgeschlossen) | local-write | Token + Whitelist | `test_settings_api` | – | 4 |
 | Dashboard-State | `GET /dashboard/state` | `server.dashboard_state` | persönlich | read-local | Token | `test_dashboard_api` | – | 8 |
 | App per UI öffnen | `POST /commands/app/open` | `app_launcher` | lokal | local-execute | Token + Allowlist | `test_dashboard_api` | – | 5 |
 | Musik-Auswahl | `GET/POST /music/*` | `server` + `config_loader` | lokal | local-write | Token | `test_music_api` | – | 8 |

@@ -4,6 +4,20 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-16 (Phase 4D, RFC-0003 IMPLEMENTIERT):** Die Configuration ist
+> jetzt ein Runtime-eigenes deep module mit genau EINEM serialisierten Schreibweg
+> ([configuration.py](../../configuration.py), `snapshot()`/`settings_view()`/
+> `mutate(intent, expected_revision)`): `schema_version` **v1** (fehlend = v0,
+> Migration ergänzt nur den Marker, mit verifiziertem bytegenauem Backup), opake
+> `revision` + `409`/`If-Match` auf `/settings`, `os.replace` als Linearization Point,
+> kompensierbares Live-Apply, Post-Commit-Refresh/Broadcast. Die Defekte **A–E sind
+> behoben**, **F** eingegrenzt. Das **A6-Residual ist aufgelöst**: `server.config`,
+> `server.CONFIG_PATH`, `server.STARTUP_WARNINGS`, `assistant_core.PERSIST_LAUNCHER`
+> und `config_loader.save_settings` existieren nicht mehr; `Runtime.config` ist eine
+> read-only Projektion. Details:
+> [PHASE4D_VERSIONED_CONFIGURATION_MIGRATION.md](../architecture/PHASE4D_VERSIONED_CONFIGURATION_MIGRATION.md).
+> Suite 688 grün. Die persönliche `config.json` wurde nicht migriert.
+
 > **Status 2026-07-16 (Phase 4C, RFC-0003 akzeptiert):** Für Kandidat 05 (Settings
 > Single Writer / versionierte Configuration) wurde
 > [RFC-0003](../architecture/RFC-0003-versioned-config-single-writer.md)

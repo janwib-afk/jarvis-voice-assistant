@@ -137,6 +137,14 @@ def check_health():
 
 def check_tests():
     import smoke_lib
+    # Die EINGECHECKTE Test-Fixture darf von keinem Test veraendert oder migriert
+    # werden (RFC-0003/Phase 4D): sie ist v1 und liegt in Git. Wir sichern ihre
+    # Bytes vor dem Lauf und vergleichen danach — so kann kein Test sie still
+    # umschreiben (z.B. indem er einen mutierenden Client an ihren Pfad bindet).
+    fixture = os.path.join(ROOT, "tests", "fixtures", "config.test.json")
+    with open(fixture, "rb") as f:
+        fixture_before = f.read()
+
     suite = unittest.TestLoader().discover(os.path.join(ROOT, "tests"))
     logging.disable(logging.CRITICAL)  # Test-Logs nicht in die ✓/✗-Ausgabe mischen
     try:
@@ -144,6 +152,15 @@ def check_tests():
             result = unittest.TextTestRunner(verbosity=0, stream=devnull).run(suite)
     finally:
         logging.disable(logging.NOTSET)
+
+    with open(fixture, "rb") as f:
+        fixture_after = f.read()
+    if fixture_after != fixture_before:
+        report(False, "Test-Fixture unveraendert",
+               "tests/fixtures/config.test.json wurde von der Suite veraendert "
+               "— ein Test schreibt in die eingecheckte Fixture.")
+        return False
+    report(True, "Test-Fixture unveraendert", "config.test.json bytegleich")
     # Unerwartete Skips (alles ausser den bekannten Umgebungs-Skips) lassen den
     # Smoke-Test fehlschlagen — verhindert, dass die Suite "still gruen" wirkt,
     # obwohl z.B. server.py wegen kaputter Config nicht importiert werden konnte

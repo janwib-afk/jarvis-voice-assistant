@@ -3,7 +3,8 @@ Tests fuer die Launcher-Sprachaktionen (Phase 5): PROFILE_ACTIVATE,
 PROFILE_STATUS, APP_AUTOSTART_ON/OFF, APP_PLACE.
 
 Seit RFC-0001 ueber die oeffentliche Action-Seam (spec.execute); die Persistenz
-laeuft ueber ``ctx.persist_launcher`` — hier gestubbt (sammelt Aufrufe, schreibt
+laeuft ueber ``ctx.mutate_launcher`` (semantische Intents, RFC-0003) — hier
+gestubbt (sammelt Aufrufe, schreibt
 nichts). Der echte Persist-Pfad wird in tests/test_launcher_api.py integrativ
 getestet.
 
@@ -18,10 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 
 import actions
+import configuration
 import app_launcher
 
 try:
-    import server  # verdrahtet assistant_core (configure/init_clients/PERSIST_LAUNCHER)
+    import server  # verdrahtet assistant_core (configure/init_clients)
     import assistant_core
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
@@ -47,11 +49,11 @@ class VoiceLauncherTests(unittest.TestCase):
 
         self.persist_calls = []
 
-        async def _stub(new_launcher, kind):
-            self.persist_calls.append((new_launcher, kind))
+        async def _stub(intent, kind):
+            self.persist_calls.append((intent, kind))
             return []
 
-        self.ctx = actions.ActionContext(persist_launcher=_stub)
+        self.ctx = actions.ActionContext(mutate_launcher=_stub)
 
     def tearDown(self):
         app_launcher.APPS, app_launcher.PROFILES, app_launcher.ACTIVE_PROFILE = self._saved
@@ -67,9 +69,11 @@ class VoiceLauncherTests(unittest.TestCase):
     def test_activate_by_name(self):
         result = self._run("PROFILE_ACTIVATE", "Deep Work")
         self.assertEqual(result, "Deep Work ist jetzt aktiv.")
-        launcher, kind = self.persist_calls[0]
+        # Die Action uebergibt eine semantische ABSICHT, keinen Voll-Block.
+        intent, kind = self.persist_calls[0]
         self.assertEqual(kind, "profile")
-        self.assertEqual(launcher["active_profile"], "deep-work")
+        self.assertIsInstance(intent, configuration.ActivateProfile)
+        self.assertEqual(intent.profile_query, "deep-work")
 
     def test_activate_by_id_case_insensitive(self):
         result = self._run("PROFILE_ACTIVATE", "DEEP-WORK")
@@ -115,17 +119,16 @@ class VoiceLauncherTests(unittest.TestCase):
     def test_autostart_off(self):
         result = self._run("APP_AUTOSTART_OFF", "vs code")
         self.assertEqual(result, "VS Code ist aus dem Clap-Start raus.")
-        launcher, kind = self.persist_calls[0]
+        intent, kind = self.persist_calls[0]
         self.assertEqual(kind, "autostart")
-        self.assertFalse(self._profile(launcher, "coding")["apps"]["vscode"]["autostart"])
-        # Anderes Profil unberuehrt.
-        self.assertNotIn("vscode", self._profile(launcher, "deep-work")["apps"])
+        self.assertIsInstance(intent, configuration.SetAutostart)
+        self.assertEqual((intent.app_query, intent.enabled), ("vscode", False))
 
     def test_autostart_on(self):
         result = self._run("APP_AUTOSTART_ON", "Obsidian")
         self.assertEqual(result, "Obsidian startet beim nächsten Clap mit.")
-        launcher, _ = self.persist_calls[0]
-        self.assertTrue(self._profile(launcher, "coding")["apps"]["obsidian"]["autostart"])
+        intent, _ = self.persist_calls[0]
+        self.assertEqual((intent.app_query, intent.enabled), ("obsidian", True))
 
     def test_autostart_unknown_app_no_persist(self):
         result = self._run("APP_AUTOSTART_ON", "Photoshop")
@@ -137,11 +140,12 @@ class VoiceLauncherTests(unittest.TestCase):
     def test_place_canonical(self):
         result = self._run("APP_PLACE", "VS Code | left | left_half")
         self.assertEqual(result, "VS Code liegt jetzt in der linken Hälfte auf dem linken Monitor.")
-        launcher, kind = self.persist_calls[0]
+        intent, kind = self.persist_calls[0]
         self.assertEqual(kind, "placement")
+        self.assertIsInstance(intent, configuration.SetPlacement)
         self.assertEqual(
-            self._profile(launcher, "coding")["apps"]["vscode"]["placement"],
-            {"monitor": "left", "zone": "left_half"},
+            (intent.app_query, intent.monitor, intent.zone),
+            ("vscode", "left", "left_half"),
         )
 
     def test_place_german_aliases(self):
@@ -162,9 +166,9 @@ class VoiceLauncherTests(unittest.TestCase):
 
     # ── Persist-Fehlerpfade ──────────────────────────────────────────────────
     def test_persist_error_is_spoken(self):
-        async def _failing(new_launcher, kind):
+        async def _failing(intent, kind):
             return ["Datei gesperrt."]
-        self.ctx = actions.ActionContext(persist_launcher=_failing)
+        self.ctx = actions.ActionContext(mutate_launcher=_failing)
         result = self._run("APP_AUTOSTART_OFF", "VS Code")
         self.assertTrue(result.startswith("Das konnte ich nicht speichern"))
 

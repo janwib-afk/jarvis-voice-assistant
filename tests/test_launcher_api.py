@@ -2,7 +2,7 @@
 Tests fuer die Launcher-API (Apps, Placement, Monitore, Session-Profile)
 gegen die echte App.
 
-WICHTIG: ``server.CONFIG_PATH`` wird auf eine Temp-Kopie gepatcht und
+WICHTIG: alles laeuft ueber die Runtime-Seam (eigene Temp-Config) und
 ``assistant_core.refresh_data`` auf einen No-Op — die Tests duerfen NIEMALS
 die echte config.json beschreiben oder Netzaufrufe (wttr.in) ausloesen.
 
@@ -29,6 +29,7 @@ try:
     import app_launcher
     import assistant_core
     import memory
+    import runtime as runtime_mod
     from fastapi.testclient import TestClient
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
@@ -76,7 +77,6 @@ _PROFILED_CONFIG = {
 }
 
 # Globals, die apply_settings veraendert — werden pro Test gesichert.
-_SERVER_GLOBALS = ("config", "STARTUP_WARNINGS", "CONFIG_PATH")
 _CORE_GLOBALS = (
     "USER_NAME", "USER_ADDRESS", "USER_ROLE", "CITY",
     "ELEVENLABS_VOICE_ID", "refresh_data",
@@ -89,28 +89,30 @@ class _ApiTestBase(unittest.TestCase):
     _CONFIG: dict = {}
 
     def setUp(self):
-        self.client = TestClient(server.app)
-        self.headers = {"X-Jarvis-Token": server.SESSION_TOKEN}
-
+        # Seam (RFC-0003): eigene Runtime + Temp-Config + lifespan-fahrender
+        # TestClient — keine server.CONFIG_PATH/config-Patches.
+        os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         fd, self.cfg_path = tempfile.mkstemp(suffix=".json")
         os.close(fd)
         with open(self.cfg_path, "w", encoding="utf-8") as f:
-            json.dump(self._CONFIG, f, ensure_ascii=False)
+            json.dump(dict(self._CONFIG, schema_version=1), f, ensure_ascii=False)
 
-        self._saved = {name: getattr(server, name) for name in _SERVER_GLOBALS}
         self._saved_core = {name: getattr(assistant_core, name) for name in _CORE_GLOBALS}
         self._saved_memory = (memory.VAULT_PATH, memory.INBOX_PATH)
         self._saved_launcher = (app_launcher.APPS, app_launcher.PROFILES,
                                 app_launcher.ACTIVE_PROFILE)
-        server.CONFIG_PATH = self.cfg_path
         assistant_core.refresh_data = lambda: None  # kein wttr.in/Vault-Scan im Test
-        server.config = json.loads(json.dumps(self._CONFIG))  # tiefe Kopie
         memory.configure(vault_path="", inbox_path="")
-        app_launcher.configure(server.config["apps"], server.config.get("launcher"))
+
+        self.runtime = runtime_mod.Runtime.for_production(
+            config_path=self.cfg_path, environ={}, ai=object(), http=object())
+        self.app = server.create_app(self.runtime)
+        self._client_cm = TestClient(self.app)
+        self.client = self._client_cm.__enter__()
+        self.headers = {"X-Jarvis-Token": self.runtime.session_token}
 
     def tearDown(self):
-        for name, value in self._saved.items():
-            setattr(server, name, value)
+        self._client_cm.__exit__(None, None, None)
         for name, value in self._saved_core.items():
             setattr(assistant_core, name, value)
         memory.configure(*self._saved_memory)
@@ -463,8 +465,8 @@ class ProfileApiTests(_ApiTestBase):
     # ── Sprachsteuerung (Phase 5): echter Persist-Pfad ──────────────────────
     def test_voice_autostart_persists_to_disk(self):
         result = asyncio.run(assistant_core.execute_action(
-            actions.Action("APP_AUTOSTART_OFF", "VS Code"), "test-session"
-        ))
+            actions.Action("APP_AUTOSTART_OFF", "VS Code"), "test-session",
+            mutate_launcher=server._launcher_hook(self.runtime)))
         self.assertEqual(result, "VS Code ist aus dem Clap-Start raus.")
         self.assertFalse(self._profile_states("coding")["vscode"]["autostart"])
         # Live-Apply: effective Apps spiegeln die Sprachaenderung sofort.
@@ -472,16 +474,16 @@ class ProfileApiTests(_ApiTestBase):
 
     def test_voice_place_persists_to_disk(self):
         result = asyncio.run(assistant_core.execute_action(
-            actions.Action("APP_PLACE", "Obsidian | rechts | Vollbild"), "test-session"
-        ))
+            actions.Action("APP_PLACE", "Obsidian | rechts | Vollbild"), "test-session",
+            mutate_launcher=server._launcher_hook(self.runtime)))
         self.assertEqual(result, "Obsidian liegt jetzt im Vollbild auf dem rechten Monitor.")
         self.assertEqual(self._profile_states("coding")["obsidian"]["placement"],
                          {"monitor": "right", "zone": "fullscreen"})
 
     def test_voice_profile_activate_persists(self):
         result = asyncio.run(assistant_core.execute_action(
-            actions.Action("PROFILE_ACTIVATE", "Writing"), "test-session"
-        ))
+            actions.Action("PROFILE_ACTIVATE", "Writing"), "test-session",
+            mutate_launcher=server._launcher_hook(self.runtime)))
         self.assertEqual(result, "Writing ist jetzt aktiv.")
         self.assertEqual(self._read_cfg()["launcher"]["active_profile"], "writing")
 

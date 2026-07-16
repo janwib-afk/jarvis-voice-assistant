@@ -40,12 +40,15 @@ class ActionContext:
     - ``ai``: LLM-Client (prod: Anthropic, test: Fake) — der einzige echte Seam.
     - ``history``: unveraenderlicher Snapshot des Sitzungsverlaufs (kein
       ``session_id``, kein ``conversations``-Dict, keine ``Runtime``).
-    - ``persist_launcher``: optionaler async Hook fuer Launcher-Persistenz;
-      fehlt er, liefert die Action denselben sprechbaren Fehler wie bisher.
+    - ``mutate_launcher``: optionaler async Hook fuer SEMANTISCHE Launcher-
+      Mutationen (RFC-0003): ``(intent, kind) -> list[str]``. Die Action uebergibt
+      eine Aenderungsabsicht, KEINEN vorberechneten Voll-Block; der Single Writer
+      wendet sie gegen die frische Basis an. Fehlt der Hook (Standalone/Tests),
+      liefert die Action denselben sprechbaren Fehler wie bisher.
     """
     ai: Any = None
     history: tuple[dict, ...] = ()
-    persist_launcher: Callable | None = None
+    mutate_launcher: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -194,12 +197,11 @@ def _unknown_app_message(query: str) -> str:
     return f"Die App '{(query or '').strip()}' ist nicht konfiguriert. Verfügbar: {available}."
 
 
-async def _persist_launcher_or_error(ctx: ActionContext, new_launcher: dict,
-                                     kind: str) -> str | None:
-    """Persist ausschliesslich ueber ctx.persist_launcher; None = ok."""
-    if ctx.persist_launcher is None:
+async def _mutate_or_error(ctx: ActionContext, intent, kind: str) -> str | None:
+    """Semantische Mutation ausschliesslich ueber ctx.mutate_launcher; None = ok."""
+    if ctx.mutate_launcher is None:
         return "Profil-Änderungen sind gerade nicht möglich."
-    errors = await ctx.persist_launcher(new_launcher, kind)
+    errors = await ctx.mutate_launcher(intent, kind)
     if errors:
         return "Das konnte ich nicht speichern: " + " ".join(errors)
     return None
@@ -217,8 +219,9 @@ async def _exec_profile_activate(payload: str, ctx: ActionContext) -> str:
                 f"Verfügbar: {_available_profiles()}.")
     if profile["id"] == app_launcher.ACTIVE_PROFILE:
         return f"{profile['name']} ist bereits aktiv."
-    new_launcher = app_launcher.launcher_with_active(profile["id"])
-    error = await _persist_launcher_or_error(ctx, new_launcher, "profile")
+    import configuration
+    error = await _mutate_or_error(
+        ctx, configuration.ActivateProfile(profile["id"]), "profile")
     if error:
         return error
     return f"{profile['name']} ist jetzt aktiv."
@@ -248,10 +251,9 @@ async def _set_autostart(payload: str, ctx: ActionContext, enabled: bool) -> str
     app = app_launcher.find_app(payload)
     if app is None:
         return _unknown_app_message(payload)
-    new_launcher = app_launcher.launcher_with_app_state(app["id"], autostart=enabled)
-    if new_launcher is None:
-        return _unknown_app_message(payload)
-    error = await _persist_launcher_or_error(ctx, new_launcher, "autostart")
+    import configuration
+    error = await _mutate_or_error(
+        ctx, configuration.SetAutostart(app["id"], enabled), "autostart")
     if error:
         return error
     if enabled:
@@ -275,12 +277,9 @@ async def _exec_app_place(payload: str, ctx: ActionContext) -> str:
     app = app_launcher.find_app(app_query)
     if app is None:
         return _unknown_app_message(app_query)
-    new_launcher = app_launcher.launcher_with_app_state(
-        app["id"], placement={"monitor": monitor, "zone": zone}
-    )
-    if new_launcher is None:
-        return _unknown_app_message(app_query)
-    error = await _persist_launcher_or_error(ctx, new_launcher, "placement")
+    import configuration
+    error = await _mutate_or_error(
+        ctx, configuration.SetPlacement(app["id"], monitor, zone), "placement")
     if error:
         return error
     return f"{app['name']} liegt jetzt {_ZONE_SPEECH[zone]} {_MONITOR_SPEECH[monitor]}."

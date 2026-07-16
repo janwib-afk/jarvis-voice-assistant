@@ -35,7 +35,10 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 ├── requirements.txt       # Python Dependencies
 ├── server.py              # FastAPI: Routen, WS-Endpoint (Origin/Token, Stopp-Handling), Settings-/Dashboard-/Command-API
 ├── assistant_core.py      # Gespraechsfluss: System-Prompt, LLM-Calls, Verlauf, Action-Orchestrierung
-├── config_loader.py       # Config laden/validieren/speichern (Settings-Whitelist, apps-Registry)
+├── configuration.py       # Configuration als deep module (RFC-0003): Runtime-eigener
+│                         #   Single Writer — snapshot()/settings_view()/mutate(intent),
+│                         #   schema_version v1 + Migration, atomarer Austausch, Rollback
+├── config_loader.py       # Leaf: Config laden/validieren (Settings-Whitelist, apps-Registry)
 ├── actions.py             # Action als deep module: Registry (ActionSpec) mit Metadaten,
 │                         #   Ausfuehrung (execute) + Prompt-Selbstbeschreibung (describe)
 │                         #   je Action; Parsing + URL/Origin-Policies + Stop-Woerter

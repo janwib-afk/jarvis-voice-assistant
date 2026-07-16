@@ -11,6 +11,7 @@ der übrigen Suite). Es geht KEIN Provideraufruf raus (nur Objekt-/Importprüfun
     python -m unittest discover -s tests
 """
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -205,8 +206,22 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_startup_failure_cleans_up_opened_resources(self):
         # Config ohne anthropic_api_key: http wird geöffnet, ai-Erzeugung scheitert.
         # Der Lifespan-finally muss das bereits geöffnete http schließen (kein Leak).
-        rt = runtime_mod.Runtime.for_production(config_path=FIXTURE, environ={})
-        rt.config = {"elevenlabs_api_key": "x"}      # anthropic_api_key fehlt
+        # Slice 5: config ist eine read-only Projektion — die unvollstaendige
+        # Config kommt jetzt aus einer echten Temp-Datei statt aus einem Patch.
+        import json, tempfile
+        tmp = tempfile.mkdtemp(prefix="jarvis-cr-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 1, "elevenlabs_api_key": "x",
+                       "anthropic_api_key": "vorhanden"}, f)
+        rt = runtime_mod.Runtime.for_production(config_path=path, environ={})
+        # ai-Erzeugung scheitert, weil der Key nach dem Laden entfernt wird.
+        original_wire = rt.wire
+        def _break_key():
+            rt.configuration._snapshot = None
+            raise KeyError("anthropic_api_key")
+        rt.wire = _break_key
         with self.assertRaises(KeyError):
             async with rt.lifespan(object()):
                 pass                                  # pragma: no cover

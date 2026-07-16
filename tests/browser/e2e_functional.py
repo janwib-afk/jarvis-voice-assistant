@@ -26,7 +26,7 @@ from playwright.sync_api import sync_playwright, expect  # noqa: E402
 from e2e_harness import JarvisServer, browser_context, open_jarvis, INIT_WS_BLOCK  # noqa: E402
 
 CRITICAL = {"connect", "text_input", "stop_action", "mute", "reconnect",
-            "settings", "monitor_keyboard"}
+            "settings", "settings_conflict", "monitor_keyboard"}
 
 
 def jarvis_said(page, text):
@@ -185,6 +185,47 @@ def flow_settings(pw):
         col.assert_clean("settings")
 
 
+def flow_settings_conflict(pw):
+    """7b. Stale Settings-UI: konkurrierende Aenderung -> sichtbarer Konflikt + Reload.
+
+    Sichtbares Nutzerverhalten (RFC-0003 D6): die UI behauptet NICHT gespeichert zu
+    haben, laedt den Serverstand neu und meldet den Konflikt verstaendlich.
+    """
+    with JarvisServer("settings-conflict") as srv, browser_context(pw, srv.base_url) as (page, col):
+        # Der 409 wird hier ABSICHTLICH provoziert; Chromium loggt jede Nicht-2xx-
+        # Ressource selbsttaetig. Alles andere bleibt unter der strengen Politik.
+        col.allow_console_error("409")
+        open_jarvis(page, srv.base_url)
+        page.get_by_role("button", name="Kontrollzentrum").click()
+        page.get_by_role("tab", name="Einstellungen").click()
+        expect(page.locator('#settings-form [name="user_name"]')).to_have_value("Testnutzer")
+
+        # Der Nutzer tippt — seine Basis ist ab jetzt veraltet.
+        page.locator('#settings-form [name="city"]').fill("Bremen")
+
+        # Zwischenzeitlich aendert jemand anders die Settings (zweiter Client mit
+        # demselben Token) — das ist der reale Fall "zweiter Tab / Voice-Aktion".
+        page.evaluate(
+            """async () => {
+                const token = window.JARVIS_TOKEN;
+                await fetch('/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-Jarvis-Token': token},
+                    body: JSON.stringify({user_role: 'zwischendurch geaendert'}),
+                });
+            }"""
+        )
+
+        page.get_by_role("button", name="Speichern").click()
+        # Kein falsches "Gespeichert": stattdessen verstaendliche Konfliktmeldung.
+        expect(page.locator("#settings-msg")).to_contain_text("zwischenzeitlich geändert")
+        expect(page.locator("#settings-msg")).not_to_contain_text("Gespeichert ✓")
+        # Formular wurde mit dem frischen Serverstand neu geladen.
+        expect(page.locator('#settings-form [name="user_role"]')
+               ).to_have_value("zwischendurch geaendert")
+        col.assert_clean("settings-conflict")
+
+
 def flow_monitor_keyboard(pw):
     """11. Monitorzuweisung (Tastaturpfad): App waehlen, Zone per Enter, kein Fenster-Move."""
     with JarvisServer("monitor") as srv, browser_context(pw, srv.base_url) as (page, col):
@@ -256,6 +297,7 @@ FLOWS = {
     "mute": flow_mute,
     "reconnect": flow_reconnect,
     "settings": flow_settings,
+    "settings_conflict": flow_settings_conflict,
     "monitor_keyboard": flow_monitor_keyboard,
     "window_modes": flow_window_modes,
     "transcript": flow_transcript,

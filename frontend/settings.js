@@ -12,6 +12,7 @@
         'music_folder',
     ];
     let loaded = null; // Stand vom Server — Basis fuer den Diff beim Speichern
+    let loadedRevision = '';
 
     function authHeaders() {
         return {
@@ -109,10 +110,15 @@
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
             loaded = data.settings || {};
+            // Revision der geladenen Basis merken (RFC-0003 D6): sie geht beim
+            // Speichern als If-Match zurueck, damit eine zwischenzeitliche
+            // Aenderung nicht stillschweigend ueberschrieben wird.
+            loadedRevision = data.revision || '';
             for (const key of TEXT_KEYS) form.elements[key].value = loaded[key] || '';
             form.elements['apps'].value = appsToLines(loaded.apps);
         } catch (e) {
             loaded = null;
+            loadedRevision = '';
             setMsg('Einstellungen konnten nicht geladen werden — läuft der Server?', true);
         }
     }
@@ -177,16 +183,27 @@
         }
 
         try {
+            const headers = authHeaders();
+            if (loadedRevision) headers['If-Match'] = loadedRevision;
             const resp = await fetch('/settings', {
                 method: 'POST',
-                headers: authHeaders(),
+                headers: headers,
                 body: JSON.stringify(updates),
             });
             const data = await resp.json().catch(() => ({}));
+            if (resp.status === 409) {
+                // Konflikt: NICHT behaupten, gespeichert zu haben. Serverstand neu
+                // laden, Formular kontrolliert aktualisieren, Fokus auf die Meldung.
+                await openSettings();
+                setMsg('Die Einstellungen wurden zwischenzeitlich geändert und neu '
+                       + 'geladen. Bitte prüfe deine Eingaben und speichere erneut.', true);
+                return;
+            }
             if (!resp.ok || !data.ok) {
                 setMsg((data.errors || ['Speichern fehlgeschlagen.']).join(' '), true);
                 return;
             }
+            if (data.revision) loadedRevision = data.revision;
             loaded = Object.assign({}, loaded, updates);
             setDirty(false);
             setMsg('Gespeichert ✓ — wirkt ab der nächsten Antwort.', false);

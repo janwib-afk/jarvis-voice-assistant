@@ -14,7 +14,7 @@ Sicherheitsmassnahmen (alle Stubs greifen VOR dem ersten Connect):
   - JARVIS_SKIP_STARTUP_REFRESH=1 — kein Startup-Refresh.
   - app_launcher._start_url/_start_process gestubbt — 'OEffnen'-Klicks starten
     nichts, liefern aber den normalen Erfolgs-Flow fuer die UI.
-  - server.CONFIG_PATH -> Temp-Config — alle POST-Schreibzugriffe (Settings,
+  - Runtime/Configuration -> Temp-Config — alle POST-Schreibzugriffe (Settings,
     Musik, Launcher/Profile) landen im Tempordner, nie in der echten Config.
 
 Nutzung:  python docs/design-baseline/tools/baseline_server.py [--port 8341]
@@ -58,6 +58,7 @@ for name in ("Ambient Start.mp3", "Deep Focus.mp3", "Morning Drive.mp3"):
 MISSING_EXE = os.path.join(TMP, "does-not-exist", "app.exe")
 
 BASELINE_CONFIG = {
+    "schema_version": 1,
     "anthropic_api_key": "baseline-dummy-anthropic-key",
     "elevenlabs_api_key": "baseline-dummy-elevenlabs-key",
     "elevenlabs_voice_id": "baseline-voice",

@@ -21,7 +21,6 @@ from config_loader import (
     check_playwright_chromium,
     find_chromium_executable,
     load_config,
-    save_settings,
     validate_config,
     validate_launcher_value,
     validate_placement_value,
@@ -467,86 +466,6 @@ class ValidateMusicTests(unittest.TestCase):
     def test_error_messages_do_not_leak_value(self):
         errors = validate_settings_update({"selected_music_file": "geheim-xyz.wav"})
         self.assertNotIn("geheim-xyz", " ".join(errors))
-
-
-class SaveSettingsTests(unittest.TestCase):
-    _BASE = {
-        "anthropic_api_key": "sk-ant-secret-111",
-        "elevenlabs_api_key": "el-secret-222",
-        "user_name": "Alt",
-        "city": "Hamburg",
-        # Nicht UI-editierbar — muss beim Speichern unangetastet bleiben:
-        "workspace_path": "C:\\irgendwo",
-        "unbekanntes_feld": {"x": 1},
-    }
-
-    def _write_cfg(self, data: dict) -> str:
-        fd, path = tempfile.mkstemp(suffix=".json")
-        os.close(fd)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
-        return path
-
-    def test_save_updates_value(self):
-        path = self._write_cfg(self._BASE)
-        merged = save_settings(path, {"city": "Berlin", "user_name": "Neu"})
-        self.assertEqual(merged["city"], "Berlin")
-        with open(path, encoding="utf-8") as f:
-            on_disk = json.load(f)
-        self.assertEqual(on_disk["city"], "Berlin")
-        self.assertEqual(on_disk["user_name"], "Neu")
-
-    def test_save_preserves_secrets_and_unknown_keys(self):
-        path = self._write_cfg(self._BASE)
-        save_settings(path, {"city": "Berlin"})
-        with open(path, encoding="utf-8") as f:
-            on_disk = json.load(f)
-        self.assertEqual(on_disk["anthropic_api_key"], "sk-ant-secret-111")
-        self.assertEqual(on_disk["elevenlabs_api_key"], "el-secret-222")
-        self.assertEqual(on_disk["workspace_path"], "C:\\irgendwo")
-        self.assertEqual(on_disk["unbekanntes_feld"], {"x": 1})
-
-    def test_save_rejects_protected_key_and_leaves_file_untouched(self):
-        path = self._write_cfg(self._BASE)
-        with self.assertRaises(ConfigError):
-            save_settings(path, {"anthropic_api_key": "sk-neu", "city": "Berlin"})
-        with open(path, encoding="utf-8") as f:
-            on_disk = json.load(f)
-        self.assertEqual(on_disk["city"], "Hamburg")
-        self.assertEqual(on_disk["anthropic_api_key"], "sk-ant-secret-111")
-
-    def test_save_atomic_no_tmp_left(self):
-        path = self._write_cfg(self._BASE)
-        save_settings(path, {"city": "Berlin"})
-        self.assertFalse(os.path.exists(path + ".tmp"))
-
-    def test_unicode_roundtrip(self):
-        path = self._write_cfg(self._BASE)
-        save_settings(path, {"city": "Lübeck", "obsidian_inbox_path": "C:\\Vault\\Übersicht"})
-        with open(path, encoding="utf-8") as f:
-            raw = f.read()
-        # ensure_ascii=False: Umlaute stehen lesbar in der Datei, kein ü
-        self.assertIn("Lübeck", raw)
-        self.assertEqual(json.loads(raw)["obsidian_inbox_path"], "C:\\Vault\\Übersicht")
-
-    def test_missing_file_raises_config_error(self):
-        missing = os.path.join(tempfile.gettempdir(), "jarvis_nope_settings.json")
-        with self.assertRaises(ConfigError):
-            save_settings(missing, {"city": "Berlin"})
-
-    def test_apps_list_roundtrip(self):
-        path = self._write_cfg(self._BASE)
-        save_settings(path, {"apps": ["obsidian://open", "notion://"]})
-        with open(path, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["apps"], ["obsidian://open", "notion://"])
-
-    def test_apps_object_roundtrip(self):
-        path = self._write_cfg(self._BASE)
-        apps = [{"name": "Obsidian", "command": "obsidian://open", "type": "url", "autostart": False}]
-        save_settings(path, {"apps": apps})
-        with open(path, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["apps"], apps)
 
 
 class RuntimeEnvironmentTests(unittest.TestCase):

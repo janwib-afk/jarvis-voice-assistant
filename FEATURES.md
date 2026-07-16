@@ -32,7 +32,7 @@ Funktionen.
 | 24 | Klare Orb-Zustände: idle/listening/thinking/speaking/**muted**/**error** | [frontend/main.js](frontend/main.js) `setOrbState`, [frontend/style.css](frontend/style.css) | ✅ neu |
 | 25 | Transcript: letzte 20 Nachrichten, Suche, Kopieren (einzeln + alles), Timestamps | [frontend/main.js](frontend/main.js) `renderTranscript` | ✅ neu |
 | 26 | Aktionshistorie im Fokus-Modus (WS-Events `type=action`, start/done/error) | [assistant_core.py](assistant_core.py) `send_action_event`, [frontend/main.js](frontend/main.js) `addActionEntry` | ✅ neu |
-| 27 | Settings-UI + `GET/POST /settings` (Token-geschützt, Whitelist, Secrets nie über die API) | [server.py](server.py), [config_loader.py](config_loader.py) `save_settings`, [frontend/settings.js](frontend/settings.js) | ✅ neu |
+| 27 | Settings-UI + `GET/POST /settings` (Token-geschützt, Whitelist, Secrets nie über die API) | [server.py](server.py), [configuration.py](configuration.py) `mutate` (RFC-0003), [frontend/settings.js](frontend/settings.js) | ✅ neu |
 | 28 | Strukturierte Fehler-Banner (Sprachausgabe/KI/Mikrofon/Browser) statt stiller Logs | [assistant_core.py](assistant_core.py) `send_error`, [frontend/main.js](frontend/main.js) `showErrorBanner` | ✅ neu |
 | 29 | Mikrofonmodus: Immer zuhören / Push-to-Talk (Leertaste) / Beim Start stumm | [frontend/main.js](frontend/main.js) `applyMicMode` | ✅ neu |
 | 30 | `/health` mit Service-Status (config/llm/tts/browser/vault) + Startup-Fortschritt; Launcher und Session-Skript pollen `/health` | [health.py](health.py) `build_report`, [browser_tools.py](browser_tools.py) `status`, [jarvis-launcher.pyw](jarvis-launcher.pyw) `wait_for_server` | ✅ neu |
