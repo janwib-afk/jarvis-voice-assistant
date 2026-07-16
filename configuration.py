@@ -376,6 +376,34 @@ class SetSettings:
 
 
 @dataclass(frozen=True)
+class SelectMusic:
+    """MP3 fuer den naechsten Sessionstart waehlen ('' = abwaehlen).
+
+    Dateiname UND Existenz werden gegen den ``music_folder`` DESSELBEN frisch
+    gelesenen Snapshots geprueft — nicht gegen eine aeltere In-Memory-Sicht.
+    Es wird ausschliesslich ``selected_music_file`` geaendert; abgespielt wird
+    weiterhin nur aus dem konfigurierten Ordner (Pfad-Traversal bleibt geblockt).
+    """
+    file: str
+
+    def validate(self, document: dict) -> list[str]:
+        name = (self.file or "").strip()
+        errors = config_loader.validate_music_file_value(name)
+        if errors or not name:
+            return errors
+        folder = document.get("music_folder", "")
+        if not folder or not os.path.isdir(folder):
+            return ["Musikordner ist nicht konfiguriert oder existiert nicht."]
+        if not os.path.isfile(os.path.join(folder, name)):
+            return ["Datei nicht im Musikordner gefunden."]
+        return []
+
+    def apply(self, document: dict) -> dict:
+        document["selected_music_file"] = (self.file or "").strip()
+        return document
+
+
+@dataclass(frozen=True)
 class MutationResult:
     """Ergebnis einer erfolgreichen Mutation."""
     snapshot: ConfigSnapshot

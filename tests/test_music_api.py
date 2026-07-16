@@ -2,7 +2,8 @@
 Tests fuer die Musik-API (GET /music/files, POST /music/selection) und den
 statischen Guard fuer den Musikpfad in launch-session.ps1.
 
-WICHTIG: wie in test_settings_api wird ``server.CONFIG_PATH`` auf eine
+WICHTIG: wie in test_settings_api laeuft alles ueber die Runtime-Seam
+(create_app(Runtime(...)) + eigene Temp-Config) — ``server.CONFIG_PATH`` wird
 Temp-Kopie gepatcht und ``assistant_core.refresh_data`` auf einen No-Op —
 die Tests duerfen NIEMALS die echte config.json beschreiben oder Netzaufrufe
 ausloesen. Der Musikordner ist ein Temp-Verzeichnis mit Dummy-Dateien.
@@ -27,6 +28,7 @@ try:
     import app_launcher
     import assistant_core
     import memory
+    import runtime as runtime_mod
     from fastapi.testclient import TestClient
     _IMPORT_ERROR = None
 except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
@@ -38,6 +40,7 @@ except BaseException as e:  # auch SystemExit (ConfigError -> sys.exit) abfangen
     _IMPORT_ERROR = e
 
 _TEST_CONFIG = {
+    "schema_version": 1,
     "anthropic_api_key": "sk-ant-test-secret-111",
     "elevenlabs_api_key": "el-test-secret-222",
     "user_name": "TestUser",
@@ -47,7 +50,6 @@ _TEST_CONFIG = {
     "selected_music_file": "",
 }
 
-_SERVER_GLOBALS = ("config", "STARTUP_WARNINGS", "CONFIG_PATH")
 _CORE_GLOBALS = (
     "USER_NAME", "USER_ADDRESS", "USER_ROLE", "CITY",
     "ELEVENLABS_VOICE_ID", "refresh_data",
@@ -57,8 +59,9 @@ _CORE_GLOBALS = (
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class MusicApiTests(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(server.app)
-        self.headers = {"X-Jarvis-Token": server.SESSION_TOKEN}
+        # Seam (RFC-0003): eigene Runtime + eigene Temp-Config + lifespan-fahrender
+        # TestClient — keine server.CONFIG_PATH/config-Patches.
+        os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
 
         # Temp-Musikordner: 2 MP3s, Nicht-MP3s und ein Ordner mit .mp3-Namen.
         self.music_dir = tempfile.mkdtemp(prefix="jarvis_music_")
@@ -75,21 +78,22 @@ class MusicApiTests(unittest.TestCase):
         with open(self.cfg_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False)
 
-        self._saved = {name: getattr(server, name) for name in _SERVER_GLOBALS}
         self._saved_core = {name: getattr(assistant_core, name) for name in _CORE_GLOBALS}
         self._saved_memory = (memory.VAULT_PATH, memory.INBOX_PATH)
         self._saved_apps = (app_launcher.APPS, app_launcher.PROFILES,
                             app_launcher.ACTIVE_PROFILE)
-        server.CONFIG_PATH = self.cfg_path
         assistant_core.refresh_data = lambda: None  # kein wttr.in/Vault-Scan im Test
-        server.config = cfg
-        assistant_core.CITY = cfg["city"]
-        assistant_core.USER_NAME = cfg["user_name"]
         memory.configure(vault_path="", inbox_path="")
 
+        self.runtime = runtime_mod.Runtime.for_production(
+            config_path=self.cfg_path, environ={}, ai=object(), http=object())
+        self.app = server.create_app(self.runtime)
+        self._client_cm = TestClient(self.app)
+        self.client = self._client_cm.__enter__()
+        self.headers = {"X-Jarvis-Token": self.runtime.session_token}
+
     def tearDown(self):
-        for name, value in self._saved.items():
-            setattr(server, name, value)
+        self._client_cm.__exit__(None, None, None)
         for name, value in self._saved_core.items():
             setattr(assistant_core, name, value)
         memory.configure(*self._saved_memory)
@@ -127,8 +131,9 @@ class MusicApiTests(unittest.TestCase):
             self.assertIn("modified", f)
 
     def test_files_missing_folder_controlled_error(self):
-        server.config["music_folder"] = os.path.join(
-            tempfile.gettempdir(), "jarvis_nope_musik")
+        # Ordner ueber die oeffentliche Seam setzen (kein server.config-Patch).
+        self.client.post("/settings", headers=self.headers, json={
+            "music_folder": os.path.join(tempfile.gettempdir(), "jarvis_nope_musik")})
         resp = self.client.get("/music/files", headers=self.headers)
         self.assertEqual(resp.status_code, 200)  # Zustandsbericht, kein Crash
         data = resp.json()
@@ -137,7 +142,7 @@ class MusicApiTests(unittest.TestCase):
         self.assertEqual(data["files"], [])
 
     def test_files_no_folder_configured(self):
-        server.config["music_folder"] = ""
+        self.client.post("/settings", headers=self.headers, json={"music_folder": ""})
         data = self.client.get("/music/files", headers=self.headers).json()
         self.assertTrue(data["ok"])
         self.assertEqual(data["files"], [])
@@ -150,7 +155,9 @@ class MusicApiTests(unittest.TestCase):
         self.assertEqual(resp.json(), {"ok": True, "selected": "A-Track.mp3"})
         # Persistiert (nur der Dateiname) + live uebernommen + in GET sichtbar.
         self.assertEqual(self._on_disk()["selected_music_file"], "A-Track.mp3")
-        self.assertEqual(server.config["selected_music_file"], "A-Track.mp3")
+        self.assertEqual(
+            self.runtime.configuration.snapshot().document["selected_music_file"],
+            "A-Track.mp3")
         data = self.client.get("/music/files", headers=self.headers).json()
         self.assertEqual(data["selected"], "A-Track.mp3")
 
@@ -184,8 +191,9 @@ class MusicApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_selection_missing_folder_rejected(self):
-        server.config["music_folder"] = os.path.join(
-            tempfile.gettempdir(), "jarvis_nope_musik")
+        # Ordner ueber die oeffentliche Seam auf einen nicht existierenden Pfad.
+        self.client.post("/settings", headers=self.headers, json={
+            "music_folder": os.path.join(tempfile.gettempdir(), "jarvis_nope_musik")})
         resp = self.client.post("/music/selection", headers=self.headers,
                                 json={"file": "A-Track.mp3"})
         self.assertEqual(resp.status_code, 400)

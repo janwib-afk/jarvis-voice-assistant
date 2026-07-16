@@ -368,12 +368,13 @@ async def music_files(request: Request):
     die Antwort ist ein Zustandsbericht (ok/error), kein Crash."""
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    folder = config.get("music_folder", "")
+    document = _configuration(request).snapshot().as_dict()
+    folder = document.get("music_folder", "")
     result = await asyncio.to_thread(_scan_music_folder, folder)
     return {
         "ok": result["ok"],
         "folder": folder,
-        "selected": config.get("selected_music_file", ""),
+        "selected": document.get("selected_music_file", ""),
         "files": result["files"],
         "error": result["error"],
     }
@@ -396,27 +397,28 @@ async def music_selection(request: Request):
     if not isinstance(file, str):
         return JSONResponse({"ok": False, "errors": ["Feld 'file' fehlt."]}, status_code=400)
     file = file.strip()
+    # Format-Vorpruefung bleibt hier, damit ein reiner Formatfehler weiterhin 400
+    # liefert. Die inhaltliche Pruefung (Ordner + Existenz) passiert INNERHALB der
+    # Transaktion gegen denselben frisch gelesenen Snapshot (RFC-0003 Slice 3).
     errors = config_loader.validate_music_file_value(file)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
-    if file:
-        folder = config.get("music_folder", "")
-        if not folder or not os.path.isdir(folder):
-            return JSONResponse(
-                {"ok": False, "errors": ["Musikordner ist nicht konfiguriert oder existiert nicht."]},
-                status_code=400,
-            )
-        exists = await asyncio.to_thread(os.path.isfile, os.path.join(folder, file))
-        if not exists:
-            return JSONResponse(
-                {"ok": False, "errors": ["Datei nicht im Musikordner gefunden."]},
-                status_code=400,
-            )
+
+    rt = request.app.state.runtime
+    needs_refresh = False
+
+    def _apply(document):
+        nonlocal needs_refresh
+        needs_refresh = _live_apply(rt, document)
+
     try:
-        merged = config_loader.save_settings(CONFIG_PATH, {"selected_music_file": file})
+        await rt.configuration.mutate(configuration.SelectMusic(file), apply=_apply)
     except config_loader.ConfigError as e:
-        return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
-    await apply_settings(merged)
+        # Ordner fehlt/Datei nicht gefunden -> wie bisher 400 (Nutzerfehler).
+        message = str(e)
+        status = 400 if ("Musikordner" in message or "Datei nicht" in message) else 500
+        return JSONResponse({"ok": False, "errors": [message]}, status_code=status)
+    await _post_commit(rt, needs_refresh)
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
     await broadcast_json({"type": "music_changed", "selected": file, "ts": time.time()})

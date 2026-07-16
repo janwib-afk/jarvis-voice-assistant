@@ -512,3 +512,75 @@ class MutationCoreTests(_TempConfigTestCase):
         self.assertEqual(on_disk["city"], "Bremen")
         self.assertEqual(on_disk["user_role"], "Rolle",
                          "beide disjunkten Mutationen muessen erhalten bleiben")
+
+
+class SelectMusicIntentTests(_TempConfigTestCase):
+    """SelectMusic: Dateiname + Existenz gegen den Musikordner DESSELBEN Snapshots."""
+
+    def setUp(self):
+        super().setUp()
+        self.music = os.path.join(self.tmp, "music")
+        os.makedirs(self.music, exist_ok=True)
+        open(os.path.join(self.music, "song.mp3"), "wb").close()
+        self.write(base_document(schema_version=1, music_folder=self.music))
+        self.cfg = configuration.Configuration(self.path)
+        self.cfg.load()
+
+    def run_intent(self, file):
+        import asyncio as aio
+        return aio.run(self.cfg.mutate(configuration.SelectMusic(file)))
+
+    def test_selects_existing_file(self):
+        self.run_intent("song.mp3")
+        self.assertEqual(json.load(open(self.path, encoding="utf-8"))["selected_music_file"],
+                         "song.mp3")
+
+    def test_deselect_with_empty_name(self):
+        self.run_intent("song.mp3")
+        self.run_intent("")
+        self.assertEqual(json.load(open(self.path, encoding="utf-8"))["selected_music_file"], "")
+
+    def test_missing_file_is_rejected_without_writing(self):
+        before = self.read_raw()
+        with self.assertRaises(config_loader.ConfigError):
+            self.run_intent("gibt-es-nicht.mp3")
+        self.assertEqual(self.read_raw(), before)
+
+    def test_path_traversal_is_rejected(self):
+        for evil in ("..\evil.mp3", "../evil.mp3", "C:\evil.mp3", "sub/song.mp3"):
+            with self.assertRaises(config_loader.ConfigError, msg=evil):
+                self.run_intent(evil)
+
+    def test_non_mp3_is_rejected(self):
+        open(os.path.join(self.music, "doc.txt"), "wb").close()
+        with self.assertRaises(config_loader.ConfigError):
+            self.run_intent("doc.txt")
+
+    def test_folder_comes_from_the_transaction_snapshot(self):
+        """Manuell geaenderter Musikordner wird als frische Basis benutzt."""
+        other = os.path.join(self.tmp, "musik2")
+        os.makedirs(other, exist_ok=True)
+        open(os.path.join(other, "neu.mp3"), "wb").close()
+        manual = json.load(open(self.path, encoding="utf-8"))
+        manual["music_folder"] = other
+        self.write(manual)
+        # 'neu.mp3' liegt nur im NEUEN Ordner — die Mutation muss ihn sehen.
+        self.run_intent("neu.mp3")
+        on_disk = json.load(open(self.path, encoding="utf-8"))
+        self.assertEqual(on_disk["selected_music_file"], "neu.mp3")
+        self.assertEqual(on_disk["music_folder"], other)
+
+    def test_unconfigured_folder_is_rejected(self):
+        self.write(base_document(schema_version=1, music_folder=""))
+        cfg = configuration.Configuration(self.path)
+        cfg.load()
+        import asyncio as aio
+        with self.assertRaises(config_loader.ConfigError):
+            aio.run(cfg.mutate(configuration.SelectMusic("song.mp3")))
+
+    def test_only_selected_music_file_changes(self):
+        before = json.load(open(self.path, encoding="utf-8"))
+        self.run_intent("song.mp3")
+        after = json.load(open(self.path, encoding="utf-8"))
+        changed = {k for k in after if before.get(k) != after[k]}
+        self.assertEqual(changed, {"selected_music_file"})
