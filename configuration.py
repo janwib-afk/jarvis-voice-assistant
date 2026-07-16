@@ -403,6 +403,233 @@ class SelectMusic:
         return document
 
 
+# ── Launcher-Intents ────────────────────────────────────────────────────────
+# Alle rechnen gegen das FRISCH gelesene Dokument der laufenden Transaktion —
+# nie gegen Modul-Globals oder einen vorberechneten Voll-Snapshot. Genau das
+# schliesst die Befunde C (verlorene manuelle App) und E (Lost-Update) aus.
+
+def _launcher_of(document: dict) -> dict:
+    """Normalisierter launcher-Block DIESES Dokuments (tolerant, wirft nie)."""
+    import app_launcher
+    return app_launcher.normalize_launcher(document.get("apps", []),
+                                           document.get("launcher"))
+
+
+def _apps_of(document: dict) -> list[dict]:
+    import app_launcher
+    return app_launcher.normalize_apps(document.get("apps", []))
+
+
+def _find_app(document: dict, query: str) -> dict | None:
+    needle = (query or "").strip().casefold()
+    if not needle:
+        return None
+    for app in _apps_of(document):
+        if needle in (app["id"].casefold(), app["name"].casefold()):
+            return app
+    return None
+
+
+def _find_profile(launcher: dict, query: str) -> dict | None:
+    import app_launcher
+    needle = str(query or "").strip().casefold()
+    if not needle:
+        return None
+    for profile in launcher["profiles"]:
+        if needle in (profile["id"].casefold(), profile["name"].casefold()):
+            return profile
+    slug = app_launcher._slugify(str(query or "").strip())
+    return next((p for p in launcher["profiles"] if p["id"] == slug), None)
+
+
+def _write_launcher(document: dict, launcher: dict) -> dict:
+    """launcher setzen + App-IDs gegen die FRISCHE Basis pinnen.
+
+    Das Pinnen laeuft ueber ``document['apps']`` der laufenden Transaktion —
+    dadurch ueberlebt eine zwischenzeitlich (z.B. manuell) ergaenzte App.
+    """
+    import app_launcher
+    document["launcher"] = launcher
+    document["apps"] = app_launcher.pin_app_ids(document.get("apps", []))
+    return document
+
+
+class _LauncherIntent:
+    """Basis: findet das aktive Profil und validiert gegen das frische Dokument."""
+
+    def validate(self, document: dict) -> list[str]:
+        return []
+
+    def apply(self, document: dict) -> dict:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class SetAutostart(_LauncherIntent):
+    """Autostart einer bekannten App im AKTIVEN Profil setzen."""
+    app_query: str
+    enabled: bool
+
+    def validate(self, document):
+        if _find_app(document, self.app_query) is None:
+            return [f"App '{(self.app_query or '').strip()}' ist nicht konfiguriert."]
+        return []
+
+    def apply(self, document):
+        launcher = _launcher_of(document)
+        app = _find_app(document, self.app_query)
+        profile = next(p for p in launcher["profiles"]
+                       if p["id"] == launcher["active_profile"])
+        state = profile["apps"].setdefault(app["id"], {"autostart": True})
+        state["autostart"] = bool(self.enabled)
+        return _write_launcher(document, launcher)
+
+
+@dataclass(frozen=True)
+class SetPlacement(_LauncherIntent):
+    """Monitor/Zone einer bekannten App im AKTIVEN Profil setzen."""
+    app_query: str
+    monitor: str
+    zone: str
+
+    def validate(self, document):
+        if _find_app(document, self.app_query) is None:
+            return [f"App '{(self.app_query or '').strip()}' ist nicht konfiguriert."]
+        return config_loader.validate_placement_value(
+            {"monitor": self.monitor, "zone": self.zone})
+
+    def apply(self, document):
+        launcher = _launcher_of(document)
+        app = _find_app(document, self.app_query)
+        profile = next(p for p in launcher["profiles"]
+                       if p["id"] == launcher["active_profile"])
+        state = profile["apps"].setdefault(app["id"], {"autostart": True})
+        state["placement"] = {"monitor": self.monitor, "zone": self.zone}
+        return _write_launcher(document, launcher)
+
+
+@dataclass(frozen=True)
+class ActivateProfile(_LauncherIntent):
+    """Aktives Profil wechseln."""
+    profile_query: str
+
+    def validate(self, document):
+        if _find_profile(_launcher_of(document), self.profile_query) is None:
+            return [f"Profil '{(self.profile_query or '').strip()}' ist nicht vorhanden."]
+        return []
+
+    def apply(self, document):
+        launcher = _launcher_of(document)
+        profile = _find_profile(launcher, self.profile_query)
+        launcher["active_profile"] = profile["id"]
+        return _write_launcher(document, launcher)
+
+
+@dataclass(frozen=True)
+class CreateProfile(_LauncherIntent):
+    """Neues Profil mit Defaults (alle Apps autostart:true, ohne Placement)."""
+    profile_id: str
+    name: str
+
+    def _slug(self):
+        import app_launcher
+        return app_launcher._slugify(str(self.profile_id or "").strip()
+                                     or str(self.name or "").strip())
+
+    def validate(self, document):
+        if not str(self.name or "").strip() or not self._slug():
+            return ["Profilname fehlt."]
+        launcher = _launcher_of(document)
+        if any(p["id"] == self._slug() for p in launcher["profiles"]):
+            return ["Ein Profil mit dieser ID existiert bereits."]
+        return []
+
+    def apply(self, document):
+        launcher = _launcher_of(document)
+        launcher["profiles"].append({
+            "id": self._slug(), "name": str(self.name).strip(),
+            "apps": {a["id"]: {"autostart": True} for a in _apps_of(document)},
+        })
+        return _write_launcher(document, launcher)
+
+
+@dataclass(frozen=True)
+class DuplicateProfile(_LauncherIntent):
+    """Profil kopieren (App-Zustaende uebernehmen)."""
+    source_id: str
+    profile_id: str
+    name: str
+
+    def _slug(self):
+        import app_launcher
+        return app_launcher._slugify(str(self.profile_id or "").strip()
+                                     or str(self.name or "").strip())
+
+    def validate(self, document):
+        if not str(self.name or "").strip() or not self._slug():
+            return ["Profilname fehlt."]
+        launcher = _launcher_of(document)
+        if _find_profile(launcher, self.source_id) is None:
+            return ["Quellprofil ist nicht vorhanden."]
+        if any(p["id"] == self._slug() for p in launcher["profiles"]):
+            return ["Ein Profil mit dieser ID existiert bereits."]
+        return []
+
+    def apply(self, document):
+        launcher = _launcher_of(document)
+        source = _find_profile(launcher, self.source_id)
+        launcher["profiles"].append({
+            "id": self._slug(), "name": str(self.name).strip(),
+            "apps": copy.deepcopy(source["apps"]),
+        })
+        return _write_launcher(document, launcher)
+
+
+@dataclass(frozen=True)
+class RenameProfile(_LauncherIntent):
+    """Profil umbenennen (ID bleibt stabil)."""
+    profile_id: str
+    name: str
+
+    def validate(self, document):
+        if not str(self.name or "").strip():
+            return ["Profilname fehlt."]
+        if _find_profile(_launcher_of(document), self.profile_id) is None:
+            return ["Profil ist nicht vorhanden."]
+        return []
+
+    def apply(self, document):
+        launcher = _launcher_of(document)
+        profile = _find_profile(launcher, self.profile_id)
+        profile["name"] = str(self.name).strip()
+        return _write_launcher(document, launcher)
+
+
+@dataclass(frozen=True)
+class DeleteProfile(_LauncherIntent):
+    """Profil loeschen — Schutzregeln (letztes/aktives) bleiben erhalten."""
+    profile_id: str
+
+    def validate(self, document):
+        launcher = _launcher_of(document)
+        profile = _find_profile(launcher, self.profile_id)
+        if profile is None:
+            return ["Profil ist nicht vorhanden."]
+        if len(launcher["profiles"]) <= 1:
+            return ["Das letzte Profil kann nicht gelöscht werden."]
+        if profile["id"] == launcher["active_profile"]:
+            return ["Das aktive Profil kann nicht gelöscht werden — "
+                    "erst ein anderes aktivieren."]
+        return []
+
+    def apply(self, document):
+        launcher = _launcher_of(document)
+        profile = _find_profile(launcher, self.profile_id)
+        launcher["profiles"] = [p for p in launcher["profiles"]
+                                if p["id"] != profile["id"]]
+        return _write_launcher(document, launcher)
+
+
 @dataclass(frozen=True)
 class MutationResult:
     """Ergebnis einer erfolgreichen Mutation."""

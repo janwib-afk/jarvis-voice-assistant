@@ -277,28 +277,32 @@ def _llm_error_hint(e: Exception) -> str:
 # hier bleibt nur die Orchestrierung (Timeout/Cancel/Summary/TTS/WS/Autosave).
 
 
-def _action_context(session_id: str) -> actions.ActionContext:
+def _action_context(session_id: str, mutate_launcher=None) -> actions.ActionContext:
     """Request-scoped Kontext aus dem AKTUELLEN Prozesszustand bauen (RFC-0001).
 
     Der Verlauf wird als unveraenderlicher Snapshot uebergeben — die Action sieht
-    weder ``session_id`` noch das ``conversations``-Dict.
+    weder ``session_id`` noch das ``conversations``-Dict. ``mutate_launcher`` wird
+    vom Aufrufer (WS-Endpoint) aus der Runtime der konkreten App injiziert
+    (RFC-0003) — assistant_core kennt weder Runtime noch server.
     """
     return actions.ActionContext(
         ai=ai,
         history=tuple(dict(msg) for msg in conversations.get(session_id, [])),
-        persist_launcher=PERSIST_LAUNCHER,
+        mutate_launcher=mutate_launcher,
     )
 
 
-async def execute_action(action: actions.Action, session_id: str) -> str:
+async def execute_action(action: actions.Action, session_id: str,
+                         mutate_launcher=None) -> str:
     """Thin Dispatcher (RFC-0001): Kontext bauen, Registry-Lookup, ausfuehren.
 
     Die Action beschreibt und fuehrt sich selbst aus; hier bleibt nur die
     Uebersetzung von (action, session_id) in einen request-scoped Kontext.
     Nur validierte Actions erreichen diesen Punkt (parse_action ist der Adapter).
+    ``mutate_launcher`` reicht der Aufrufer aus der App-Runtime durch (RFC-0003).
     """
     return await actions.spec_for(action.type).execute(
-        action.payload, _action_context(session_id))
+        action.payload, _action_context(session_id, mutate_launcher))
 
 
 async def _finish_research(summary: str, action_result: str) -> str | None:
@@ -319,7 +323,8 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
     return f"{summary}\n\n{quellen_block}"
 
 
-async def run_action_and_respond(session_id: str, action: actions.Action, ws):
+async def run_action_and_respond(session_id: str, action: actions.Action, ws,
+                                 mutate_launcher=None):
     """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events)."""
     logger.info("Action: %s", action.type)
     logger.debug("Action payload: %s", action.payload)
@@ -332,7 +337,8 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws):
     await send_action_event(ws, "start", action.type, (action.payload or "")[:80])
     try:
         # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
-        action_result = await asyncio.wait_for(execute_action(action, session_id), timeout=spec.timeout)
+        action_result = await asyncio.wait_for(
+            execute_action(action, session_id, mutate_launcher), timeout=spec.timeout)
         logger.info("Action %s lieferte %d Zeichen", action.type, len(action_result))
         logger.debug("Action-Ergebnis: %s", action_result)
         await send_action_event(ws, "done", action.type)
@@ -388,8 +394,12 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws):
     await send_spoken_response(ws, summary, display_text)
 
 
-async def process_message(session_id: str, user_text: str, ws):
-    """Process message and send responses via WebSocket."""
+async def process_message(session_id: str, user_text: str, ws, mutate_launcher=None):
+    """Process message and send responses via WebSocket.
+
+    ``mutate_launcher``: semantischer Launcher-Hook der KONKRETEN App-Runtime,
+    vom WS-Endpoint injiziert (RFC-0003) — keine Runtime-/server-Abhaengigkeit hier.
+    """
     if session_id not in conversations:
         conversations[session_id] = []
 
@@ -401,7 +411,7 @@ async def process_message(session_id: str, user_text: str, ws):
         if verdict is not None:
             _remember(session_id, "user", user_text)
             if verdict:
-                await run_action_and_respond(session_id, pending, ws)
+                await run_action_and_respond(session_id, pending, ws, mutate_launcher)
             else:
                 msg = f"Verstanden, {USER_ADDRESS} — ich lasse es bleiben."
                 _remember(session_id, "assistant", msg)
@@ -451,4 +461,4 @@ async def process_message(session_id: str, user_text: str, ws):
             _remember(session_id, "assistant", frage)
             await send_spoken_response(ws, frage)
             return
-        await run_action_and_respond(session_id, action, ws)
+        await run_action_and_respond(session_id, action, ws, mutate_launcher)

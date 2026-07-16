@@ -113,7 +113,8 @@ async def websocket_endpoint(ws: WebSocket):
     async def worker():
         while True:
             text = await queue.get()
-            task = asyncio.create_task(assistant_core.process_message(session_id, text, ws))
+            task = asyncio.create_task(assistant_core.process_message(
+                session_id, text, ws, mutate_launcher=_launcher_hook(rt)))
             state["task"] = task
             try:
                 await task
@@ -482,25 +483,27 @@ async def command_app_open(request: Request):
 # (config.launcher); launch-session.ps1 startet das aktive Profil.
 # Gleiche Token-Sicherung wie /settings; ``command`` verlaesst den Server nie.
 
-async def persist_launcher_block(new_launcher: dict, kind: str) -> list[str]:
-    """Kern-Persistenz fuer Endpunkte UND Sprach-Aktionen (assistant_core).
+async def persist_launcher_intent(rt, intent, kind: str) -> list[str]:
+    """Kern-Persistenz fuer Endpunkte UND Sprach-Aktionen (RFC-0003 Slice 4).
 
-    validate -> save (pinnt explizite App-IDs, Legacy-Strings -> Objektform,
-    damit PS1 Profil-Keys sicher matchen kann) -> live anwenden -> WS-Event
-    ``launcher_changed`` (Fokus-UI zieht Profile/Toggles/Map nach).
+    Nimmt eine SEMANTISCHE Aenderungsabsicht (kein vorberechneter Voll-Block) und
+    laesst sie vom Single Writer gegen die FRISCHE Basis anwenden: live anwenden →
+    WS-Event ``launcher_changed`` (Fokus-UI zieht Profile/Toggles/Map nach).
     Leere Liste = ok, sonst lesbare deutsche Fehler.
     """
-    app_ids = [a["id"] for a in app_launcher.APPS]
-    errors = config_loader.validate_launcher_value(new_launcher, app_ids=app_ids)
-    if errors:  # konstruktionsbedingt nie — reiner Guard
-        return errors
-    updates = {"launcher": new_launcher,
-               "apps": app_launcher.pin_app_ids(config.get("apps", []))}
+    needs_refresh = False
+
+    def _apply(document):
+        nonlocal needs_refresh
+        needs_refresh = _live_apply(rt, document)
+
     try:
-        merged = config_loader.save_settings(CONFIG_PATH, updates)
+        await rt.configuration.mutate(intent, apply=_apply)
+    except configuration.ConfigConflict as e:
+        return [str(e)]
     except config_loader.ConfigError as e:
         return [str(e)]
-    await apply_settings(merged)
+    await _post_commit(rt, needs_refresh)
     await broadcast_json({
         "type": "launcher_changed",
         "kind": kind,
@@ -510,14 +513,21 @@ async def persist_launcher_block(new_launcher: dict, kind: str) -> list[str]:
     return []
 
 
-# Sprach-Aktionen (PROFILE_ACTIVATE, APP_AUTOSTART_*, APP_PLACE) persistieren
-# ueber denselben Kern — Injektion vermeidet den Zirkular-Import.
-assistant_core.PERSIST_LAUNCHER = persist_launcher_block
+def _launcher_hook(rt):
+    """Request-spezifischer semantischer Mutationshook fuer den ActionContext.
+
+    Wird pro WS-Nachricht aus der Runtime der KONKRETEN App erzeugt (RFC-0003):
+    ``actions``/``assistant_core`` bleiben dadurch frei von Runtime-/Server-
+    Abhaengigkeiten.
+    """
+    async def _mutate(intent, kind: str) -> list[str]:
+        return await persist_launcher_intent(rt, intent, kind)
+    return _mutate
 
 
-async def _persist_launcher(new_launcher: dict, kind: str):
+async def _persist_launcher(rt, intent, kind: str):
     """Endpunkt-Wrapper: Fehler des Persist-Kerns als JSONResponse (500)."""
-    errors = await persist_launcher_block(new_launcher, kind)
+    errors = await persist_launcher_intent(rt, intent, kind)
     if errors:
         return None, JSONResponse({"ok": False, "errors": errors}, status_code=500)
     return True, None
@@ -558,10 +568,10 @@ async def launcher_toggle_autostart(app_id: str, request: Request):
             status_code=400,
         )
 
-    new_launcher = app_launcher.launcher_with_app_state(app_id, autostart=value)
-    if new_launcher is None:
+    if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "autostart")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart")
     if err is not None:
         return err
     logger.info("Autostart geaendert (%s): %s -> %s", app_launcher.ACTIVE_PROFILE, app_id, value)
@@ -596,12 +606,11 @@ async def launcher_set_placement(app_id: str, request: Request):
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
 
-    new_launcher = app_launcher.launcher_with_app_state(
-        app_id, placement={"monitor": body["monitor"], "zone": body["zone"]}
-    )
-    if new_launcher is None:
+    if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "placement")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime,
+        configuration.SetPlacement(app_id, body["monitor"], body["zone"]), "placement")
     if err is not None:
         return err
     # Zu diesem Zeitpunkt sind monitor/zone Allowlist-Konstanten, keine Nutzerdaten.
@@ -652,11 +661,11 @@ async def launcher_create_profile(request: Request):
     name, err = _profile_name_from(body)
     if err is not None:
         return err
-    new_launcher = app_launcher.launcher_with_new_profile(body.get("id"), name)
-    if new_launcher is None:
+    intent = configuration.CreateProfile(body.get("id"), name)
+    if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
     logger.info("Profil angelegt: %s", name)
@@ -667,10 +676,10 @@ async def launcher_create_profile(request: Request):
 async def launcher_activate_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    new_launcher = app_launcher.launcher_with_active(profile_id)
-    if new_launcher is None:
+    if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile")
     if err is not None:
         return err
     logger.info("Profil aktiviert: %s", app_launcher.ACTIVE_PROFILE)
@@ -689,12 +698,11 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     name, err = _profile_name_from(body)
     if err is not None:
         return err
-    new_launcher = app_launcher.launcher_with_new_profile(body.get("id"), name,
-                                                          copy_from=profile_id)
-    if new_launcher is None:
+    intent = configuration.DuplicateProfile(profile_id, body.get("id"), name)
+    if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
     logger.info("Profil dupliziert: %s -> %s", profile_id, name)
@@ -711,10 +719,10 @@ async def launcher_rename_profile(profile_id: str, request: Request):
     name, err = _profile_name_from(body)
     if err is not None:
         return err
-    new_launcher = app_launcher.launcher_with_renamed(profile_id, name)
-    if new_launcher is None:
+    if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    _merged, err = await _persist_launcher(
+        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile")
     if err is not None:
         return err
     logger.info("Profil umbenannt: %s -> %s", profile_id, name)
@@ -725,12 +733,13 @@ async def launcher_rename_profile(profile_id: str, request: Request):
 async def launcher_delete_profile(profile_id: str, request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    new_launcher, guard = app_launcher.launcher_without_profile(profile_id)
-    if guard is not None:
-        return JSONResponse({"ok": False, "errors": [guard]}, status_code=400)
-    if new_launcher is None:
+    if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(new_launcher, "profile")
+    intent = configuration.DeleteProfile(profile_id)
+    guards = intent.validate(request.app.state.runtime.configuration.snapshot().as_dict())
+    if guards:
+        return JSONResponse({"ok": False, "errors": guards}, status_code=400)
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
     logger.info("Profil geloescht: %s", profile_id)

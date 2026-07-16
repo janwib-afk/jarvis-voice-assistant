@@ -584,3 +584,129 @@ class SelectMusicIntentTests(_TempConfigTestCase):
         after = json.load(open(self.path, encoding="utf-8"))
         changed = {k for k in after if before.get(k) != after[k]}
         self.assertEqual(changed, {"selected_music_file"})
+
+
+def launcher_document(**over) -> dict:
+    """v1-Dokument mit zwei Apps und zwei Profilen."""
+    return base_document(
+        schema_version=1,
+        apps=[{"id": "obsidian", "name": "Obsidian", "command": "o.exe", "type": "process"},
+              {"id": "vscode", "name": "VS Code", "command": "c.exe", "type": "process"}],
+        launcher={"active_profile": "coding", "profiles": [
+            {"id": "coding", "name": "Coding",
+             "apps": {"obsidian": {"autostart": True}, "vscode": {"autostart": False}}},
+            {"id": "research", "name": "Research",
+             "apps": {"obsidian": {"autostart": False}, "vscode": {"autostart": False}}},
+        ]}, **over)
+
+
+class LauncherIntentTests(_TempConfigTestCase):
+    """Semantische Launcher-Intents gegen die FRISCHE Basis (behebt C und E)."""
+
+    def setUp(self):
+        super().setUp()
+        self.write(launcher_document())
+        self.cfg = configuration.Configuration(self.path)
+        self.cfg.load()
+
+    def run_intent(self, intent):
+        import asyncio as aio
+        return aio.run(self.cfg.mutate(intent))
+
+    def profile(self, pid="coding"):
+        doc = json.load(open(self.path, encoding="utf-8"))
+        return next(p for p in doc["launcher"]["profiles"] if p["id"] == pid)
+
+    # ── Autostart / Placement ───────────────────────────────────────────────
+    def test_set_autostart(self):
+        self.run_intent(configuration.SetAutostart("obsidian", False))
+        self.assertIs(self.profile()["apps"]["obsidian"]["autostart"], False)
+
+    def test_set_autostart_unknown_app_is_rejected(self):
+        before = self.read_raw()
+        with self.assertRaises(config_loader.ConfigError):
+            self.run_intent(configuration.SetAutostart("photoshop", True))
+        self.assertEqual(self.read_raw(), before)
+
+    def test_set_placement(self):
+        self.run_intent(configuration.SetPlacement("obsidian", "left", "right_half"))
+        self.assertEqual(self.profile()["apps"]["obsidian"]["placement"],
+                         {"monitor": "left", "zone": "right_half"})
+
+    # ── Profile ─────────────────────────────────────────────────────────────
+    def test_activate_profile(self):
+        self.run_intent(configuration.ActivateProfile("research"))
+        doc = json.load(open(self.path, encoding="utf-8"))
+        self.assertEqual(doc["launcher"]["active_profile"], "research")
+
+    def test_activate_unknown_profile_is_rejected(self):
+        with self.assertRaises(config_loader.ConfigError):
+            self.run_intent(configuration.ActivateProfile("gaming"))
+
+    def test_create_profile(self):
+        self.run_intent(configuration.CreateProfile("gaming", "Gaming"))
+        self.assertEqual(self.profile("gaming")["name"], "Gaming")
+
+    def test_create_duplicate_id_is_rejected(self):
+        with self.assertRaises(config_loader.ConfigError):
+            self.run_intent(configuration.CreateProfile("coding", "Nochmal"))
+
+    def test_duplicate_profile_copies_states(self):
+        self.run_intent(configuration.DuplicateProfile("coding", "kopie", "Kopie"))
+        self.assertEqual(self.profile("kopie")["apps"]["obsidian"]["autostart"], True)
+
+    def test_rename_profile_keeps_id(self):
+        self.run_intent(configuration.RenameProfile("coding", "Arbeit"))
+        self.assertEqual(self.profile("coding")["name"], "Arbeit")
+
+    def test_delete_profile(self):
+        self.run_intent(configuration.DeleteProfile("research"))
+        doc = json.load(open(self.path, encoding="utf-8"))
+        self.assertEqual([p["id"] for p in doc["launcher"]["profiles"]], ["coding"])
+
+    def test_delete_active_profile_is_refused(self):
+        with self.assertRaises(config_loader.ConfigError):
+            self.run_intent(configuration.DeleteProfile("coding"))
+
+    def test_delete_last_profile_is_refused(self):
+        self.run_intent(configuration.DeleteProfile("research"))
+        with self.assertRaises(config_loader.ConfigError):
+            self.run_intent(configuration.DeleteProfile("coding"))
+
+    # ── Die Kernregressionen (Befunde C und E) ──────────────────────────────
+    def test_manually_added_app_survives_launcher_mutation(self):
+        """Befund C: manuell ergaenzte App darf nicht verloren gehen."""
+        manual = json.load(open(self.path, encoding="utf-8"))
+        manual["apps"].append({"id": "steam", "name": "Steam", "command": "s.exe",
+                               "type": "process"})
+        manual["manual_marker"] = "bleibt"
+        self.write(manual)
+        self.run_intent(configuration.SetAutostart("obsidian", False))
+        doc = json.load(open(self.path, encoding="utf-8"))
+        self.assertIn("steam", [a["id"] for a in doc["apps"]],
+                      "manuell ergaenzte App darf durch eine Launcher-Mutation nicht verschwinden")
+        self.assertEqual(doc["manual_marker"], "bleibt")
+        self.assertIs(self.profile()["apps"]["obsidian"]["autostart"], False)
+
+    def test_two_launcher_changes_from_same_base_keep_both(self):
+        """Befund E: kein Lost-Update durch veraltete Voll-Snapshots."""
+        import asyncio as aio
+
+        async def both():
+            await aio.gather(
+                self.cfg.mutate(configuration.SetAutostart("obsidian", False)),
+                self.cfg.mutate(configuration.SetAutostart("vscode", True)),
+            )
+        aio.run(both())
+        apps = self.profile()["apps"]
+        self.assertIs(apps["obsidian"]["autostart"], False, "erste Aenderung ging verloren")
+        self.assertIs(apps["vscode"]["autostart"], True, "zweite Aenderung ging verloren")
+
+    def test_legacy_app_strings_survive_launcher_mutation(self):
+        manual = json.load(open(self.path, encoding="utf-8"))
+        manual["apps"].append("legacy.exe")
+        self.write(manual)
+        self.run_intent(configuration.SetAutostart("obsidian", False))
+        doc = json.load(open(self.path, encoding="utf-8"))
+        commands = [a if isinstance(a, str) else a.get("command") for a in doc["apps"]]
+        self.assertIn("legacy.exe", commands)
