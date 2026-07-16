@@ -170,11 +170,24 @@ class Collectors:
         self.page_errors = []
         self.failed_requests = []
         self.external_hosts = []
+        self.allowed_console_errors = []
+
+    def allow_console_error(self, substring):
+        """Einen ERWARTETEN Browser-Log-Eintrag zulassen.
+
+        Nur fuer Flows, die bewusst eine Nicht-2xx-Antwort provozieren (z.B. den
+        409-Konflikt): Chromium loggt jede fehlgeschlagene Ressource selbsttaetig
+        als console.error. Die strenge Politik gilt fuer alles andere weiter —
+        die Ausnahme ist eng, benannt und muss im Flow begruendet sein.
+        """
+        self.allowed_console_errors.append(substring)
 
     def assert_clean(self, context=""):
         problems = []
-        if self.console_errors:
-            problems.append(f"console.error: {self.console_errors}")
+        unexpected = [m for m in self.console_errors
+                      if not any(a in m for a in self.allowed_console_errors)]
+        if unexpected:
+            problems.append(f"console.error: {unexpected}")
         if self.page_errors:
             problems.append(f"pageerror: {self.page_errors}")
         if self.failed_requests:

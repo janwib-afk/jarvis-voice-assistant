@@ -29,6 +29,7 @@ import app_launcher
 import monitors
 import assistant_core
 import config_loader
+import configuration
 import memory
 import runtime as runtime_mod
 
@@ -205,12 +206,9 @@ def _settings_token_ok(request: Request) -> bool:
     return secrets.compare_digest(token.encode("utf-8"), expected.encode("utf-8"))
 
 
-def _public_settings() -> dict:
-    _defaults = {"apps": [], "launcher": {}}
-    return {
-        key: config.get(key, _defaults.get(key, ""))
-        for key in sorted(config_loader.UI_EDITABLE_KEYS)
-    }
+def _configuration(request: Request):
+    """Die Configuration der KONKRETEN App-Instanz (RFC-0003 D2) — nie ein Global."""
+    return request.app.state.runtime.configuration
 
 
 async def broadcast_json(payload: dict):
@@ -227,35 +225,65 @@ async def broadcast_health():
     await broadcast_json({"type": "health", "warnings": STARTUP_WARNINGS})
 
 
-async def apply_settings(merged: dict):
-    """Gespeicherte Settings ohne Neustart uebernehmen. System-Prompt und
-    Voice-ID werden pro Anfrage gelesen und greifen damit sofort."""
-    global config, STARTUP_WARNINGS
+def _live_apply(runtime, merged: dict) -> bool:
+    """NOTWENDIGES Live-Apply (RFC-0003 D9): deterministisch, ohne Netz/Broadcast.
 
+    Laeuft INNERHALB der Transaktion — wirft es, stellt der Writer Datei und
+    Snapshot wieder her. Gibt zurueck, ob ein Post-Commit-Refresh noetig ist.
+    """
     needs_refresh = (
         merged.get("city", assistant_core.CITY) != assistant_core.CITY
         or merged.get("obsidian_inbox_path", memory.VAULT_PATH) != memory.VAULT_PATH
         or merged.get("obsidian_inbox_folder", memory.INBOX_PATH) != memory.INBOX_PATH
     )
-    config = merged
-    assistant_core.configure(config)
+    global config, STARTUP_WARNINGS
+    config = merged                      # A6-Adapter (faellt in Slice 5)
+    runtime.config = merged
+    assistant_core.configure(merged)
     memory.configure(
-        vault_path=config.get("obsidian_inbox_path", ""),
-        inbox_path=config.get("obsidian_inbox_folder", ""),
+        vault_path=merged.get("obsidian_inbox_path", ""),
+        inbox_path=merged.get("obsidian_inbox_folder", ""),
     )
-    app_launcher.configure(config.get("apps", []), config.get("launcher"))
-    STARTUP_WARNINGS = config_loader.check_runtime_environment(config)
+    app_launcher.configure(merged.get("apps", []), merged.get("launcher"))
+    STARTUP_WARNINGS = config_loader.check_runtime_environment(merged)
+    runtime.startup_warnings = STARTUP_WARNINGS
+    return needs_refresh
+
+
+async def _post_commit(runtime, needs_refresh: bool) -> list[str]:
+    """POST-COMMIT-Effekte (RFC-0003 D9): duerfen eine gueltig persistierte
+    Configuration NIE zurueckrollen — ihr Fehler erzeugt einen Degraded-Zustand."""
+    degraded: list[str] = []
     if needs_refresh:
-        # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop laufen lassen.
-        await asyncio.to_thread(assistant_core.refresh_data)
-    await broadcast_health()
+        try:
+            # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop.
+            await asyncio.to_thread(assistant_core.refresh_data)
+        except Exception:
+            logger.warning("Kontextdaten-Refresh nach Settings-Save fehlgeschlagen",
+                           exc_info=True)
+            degraded.append("Kontextdaten (Wetter/Vault) konnten nicht neu geladen "
+                            "werden — die Einstellungen sind gespeichert.")
+    try:
+        await broadcast_health()
+    except Exception:
+        logger.warning("Health-Broadcast nach Settings-Save fehlgeschlagen", exc_info=True)
+    return degraded
+
+
+async def apply_settings(merged: dict):
+    """Kompatibilitaets-Adapter fuer Bestandsaufrufer (faellt in Slice 5)."""
+    needs_refresh = _live_apply(runtime, merged)
+    await _post_commit(runtime, needs_refresh)
 
 
 @router.get("/settings")
 async def get_settings(request: Request):
     if not _settings_token_ok(request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
-    return {"ok": True, "settings": _public_settings(), "warnings": STARTUP_WARNINGS}
+    view = _configuration(request).settings_view()
+    # Bestandsfelder unveraendert; 'revision' ist additiv (RFC-0003 §32).
+    return {"ok": True, "settings": view["settings"], "warnings": STARTUP_WARNINGS,
+            "revision": view["revision"]}
 
 
 @router.post("/settings")
@@ -269,14 +297,34 @@ async def post_settings(request: Request):
     errors = config_loader.validate_settings_update(updates)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    rt = request.app.state.runtime
+    # If-Match ist OPTIONAL (Kompatibilitaet): fehlt er, wird gegen die frisch
+    # gelesene Basis gearbeitet. Ist er vorhanden und ueberholt -> 409 (D6).
+    expected = request.headers.get("if-match") or None
+    needs_refresh = False
+
+    def _apply(document):
+        nonlocal needs_refresh
+        needs_refresh = _live_apply(rt, document)
+
     try:
-        merged = config_loader.save_settings(CONFIG_PATH, updates)
+        await rt.configuration.mutate(
+            configuration.SetSettings(updates), expected_revision=expected, apply=_apply)
+    except configuration.ConfigConflict as e:
+        return JSONResponse({"ok": False, "errors": [str(e)], "conflict": True},
+                            status_code=409)
     except config_loader.ConfigError as e:
         # ConfigError-Meldungen nennen nur Schluesselnamen, nie Werte.
         return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
-    await apply_settings(merged)
+
+    degraded = await _post_commit(rt, needs_refresh)
     logger.info("Settings aktualisiert: %s", ", ".join(sorted(updates.keys())))
-    return {"ok": True, "applied": sorted(updates.keys()), "warnings": STARTUP_WARNINGS}
+    body = {"ok": True, "applied": sorted(updates.keys()), "warnings": STARTUP_WARNINGS,
+            "revision": rt.configuration.snapshot().revision}
+    if degraded:
+        body["degraded"] = degraded
+    return body
 
 
 # ── Musik-API ────────────────────────────────────────────────────────────────

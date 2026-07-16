@@ -377,3 +377,138 @@ class RuntimeOwnershipTests(_TempConfigTestCase):
             self.assertIsNot(a.configuration, b.configuration)
         finally:
             aio.run(a.aclose()); aio.run(b.aclose())
+
+
+class MutationCoreTests(_TempConfigTestCase):
+    """mutate(): der EINZIGE Schreibweg — Fresh-Read, Konflikt, Validierung,
+    atomarer Austausch, Live-Apply, Kompensation."""
+
+    def open_config(self, doc=None):
+        self.write(doc if doc is not None else base_document(schema_version=1))
+        cfg = configuration.Configuration(self.path)
+        cfg.load()
+        return cfg
+
+    def mutate(self, cfg, intent, expected_revision=None, apply=None):
+        import asyncio as aio
+        return aio.run(cfg.mutate(intent, expected_revision=expected_revision,
+                                  apply=apply))
+
+    def test_set_settings_writes_and_publishes_new_revision(self):
+        cfg = self.open_config()
+        old_rev = cfg.snapshot().revision
+        result = self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}))
+        self.assertEqual(json.load(open(self.path, encoding="utf-8"))["city"], "Bremen")
+        self.assertEqual(cfg.snapshot().document["city"], "Bremen")
+        self.assertNotEqual(cfg.snapshot().revision, old_rev)
+        self.assertEqual(result.snapshot.revision, cfg.snapshot().revision)
+
+    def test_set_settings_keeps_secrets_and_unknown_fields(self):
+        cfg = self.open_config()
+        self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}))
+        on_disk = json.load(open(self.path, encoding="utf-8"))
+        self.assertEqual(on_disk["anthropic_api_key"], "dummy-anthropic")
+        self.assertEqual(on_disk["_comment"], "unbekanntes Feld — muss erhalten bleiben")
+        self.assertEqual(on_disk["schema_version"], 1)
+
+    def test_protected_key_is_rejected_without_writing(self):
+        cfg = self.open_config()
+        before = self.read_raw()
+        with self.assertRaises(config_loader.ConfigError):
+            self.mutate(cfg, configuration.SetSettings({"anthropic_api_key": "neu"}))
+        self.assertEqual(self.read_raw(), before, "abgelehntes Update darf nichts schreiben")
+
+    def test_stale_revision_conflicts_without_writing_or_applying(self):
+        cfg = self.open_config()
+        stale = cfg.snapshot().revision
+        self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}))  # Revision zieht weiter
+        before = self.read_raw()
+        applied = []
+        with self.assertRaises(configuration.ConfigConflict):
+            self.mutate(cfg, configuration.SetSettings({"city": "Kiel"}),
+                        expected_revision=stale,
+                        apply=lambda doc: applied.append(doc))
+        self.assertEqual(self.read_raw(), before, "Konflikt darf nichts schreiben")
+        self.assertEqual(applied, [], "Konflikt darf kein Live-Apply ausloesen")
+
+    def test_matching_revision_succeeds(self):
+        cfg = self.open_config()
+        rev = cfg.snapshot().revision
+        self.mutate(cfg, configuration.SetSettings({"city": "Kiel"}), expected_revision=rev)
+        self.assertEqual(cfg.snapshot().document["city"], "Kiel")
+
+    def test_manual_change_before_mutation_becomes_new_base(self):
+        cfg = self.open_config()
+        # Manuelle, gueltige Aenderung direkt in der Datei (RFC-0003 D7).
+        manual = json.load(open(self.path, encoding="utf-8"))
+        manual["user_role"] = "haendisch gesetzt"
+        manual["manual_marker"] = "bleibt"
+        self.write(manual)
+        self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}))
+        on_disk = json.load(open(self.path, encoding="utf-8"))
+        self.assertEqual(on_disk["user_role"], "haendisch gesetzt",
+                         "manuelle Aenderung muss neue Basis sein")
+        self.assertEqual(on_disk["manual_marker"], "bleibt")
+        self.assertEqual(on_disk["city"], "Bremen")
+
+    def test_corrupt_file_before_mutation_is_not_overwritten(self):
+        cfg = self.open_config()
+        self.write_raw('{"kaputt": ')
+        before = self.read_raw()
+        with self.assertRaises(config_loader.ConfigError):
+            self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}))
+        self.assertEqual(self.read_raw(), before)
+
+    def test_future_version_before_mutation_is_not_overwritten(self):
+        cfg = self.open_config()
+        self.write(base_document(schema_version=99))
+        before = self.read_raw()
+        with self.assertRaises(config_loader.ConfigError):
+            self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}))
+        self.assertEqual(self.read_raw(), before)
+
+    def test_invalid_value_is_rejected_without_writing(self):
+        cfg = self.open_config()
+        before = self.read_raw()
+        with self.assertRaises(config_loader.ConfigError):
+            self.mutate(cfg, configuration.SetSettings({"music_volume": 5}))
+        self.assertEqual(self.read_raw(), before)
+
+    def test_live_apply_failure_restores_file_and_snapshot(self):
+        cfg = self.open_config()
+        before_file = self.read_raw()
+        before_rev = cfg.snapshot().revision
+
+        def boom(document):
+            raise RuntimeError("Live-Apply kaputt")
+
+        with self.assertRaises(RuntimeError):
+            self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}), apply=boom)
+        self.assertEqual(self.read_raw(), before_file,
+                         "Live-Apply-Fehler muss die alte Datei wiederherstellen")
+        self.assertEqual(cfg.snapshot().revision, before_rev,
+                         "Live-Apply-Fehler muss den alten Snapshot wiederherstellen")
+        self.assertEqual(cfg.snapshot().document["city"], "Hamburg")
+
+    def test_live_apply_receives_the_new_document(self):
+        cfg = self.open_config()
+        seen = {}
+        self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}),
+                    apply=lambda doc: seen.update(doc))
+        self.assertEqual(seen["city"], "Bremen")
+
+    def test_mutations_are_serialized(self):
+        """Zwei gleichzeitige Mutationen laufen nacheinander — keine verliert."""
+        import asyncio as aio
+        cfg = self.open_config()
+
+        async def both():
+            await aio.gather(
+                cfg.mutate(configuration.SetSettings({"city": "Bremen"})),
+                cfg.mutate(configuration.SetSettings({"user_role": "Rolle"})),
+            )
+        aio.run(both())
+        on_disk = json.load(open(self.path, encoding="utf-8"))
+        self.assertEqual(on_disk["city"], "Bremen")
+        self.assertEqual(on_disk["user_role"], "Rolle",
+                         "beide disjunkten Mutationen muessen erhalten bleiben")

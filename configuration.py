@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -242,6 +243,88 @@ class Configuration:
             revision=_revision_of(document),
         )
 
+
+    # ── Schreiben: der EINZIGE Weg ──────────────────────────────────────────
+    async def mutate(self, intent, expected_revision: str | None = None,
+                     apply=None) -> "MutationResult":
+        """Eine semantische Aenderungsabsicht serialisiert anwenden (RFC-0003 §21).
+
+        Ablauf unter dem Lock: Fresh-Read → Version/Migration → Revisionspruefung
+        → Intent anwenden → Vollvalidierung → .tmp → **os.replace** (Linearization
+        Point) → notwendiges Live-Apply → publish. Schlaegt das Live-Apply NACH dem
+        Replace fehl, werden Datei UND Snapshot wiederhergestellt und der Fehler
+        weitergereicht (D9).
+
+        ``expected_revision``: opakes Token aus einem frueheren Snapshot. Ist es
+        ueberholt, wirft ``ConfigConflict`` — es wird NICHTS geschrieben und kein
+        Live-Apply ausgefuehrt.
+        """
+        async with self._lock:
+            # 1) Fresh-Read: eine gueltige manuelle Aenderung ist die neue Basis (D7);
+            #    beschaedigt/zukuenftig => fails-closed, Datei bleibt unberuehrt.
+            current = read_document(self.path)
+            version = schema_version_of(current)
+            if version != SCHEMA_VERSION:
+                current = migrate_document(current)   # wirft bei Future-Version
+            current_revision = _revision_of(current)
+
+            # 2) Konflikt VOR jedem Schreiben pruefen.
+            if expected_revision is not None and expected_revision != current_revision:
+                raise ConfigConflict(
+                    "Die Einstellungen wurden zwischenzeitlich geändert. "
+                    "Bitte neu laden und erneut speichern."
+                )
+
+            # 3) Intent validieren + gegen die frische Basis anwenden.
+            errors = intent.validate(current)
+            if errors:
+                raise config_loader.ConfigError(
+                    "Ungültige Einstellungen:\n- " + "\n- ".join(errors))
+            candidate = intent.apply(copy.deepcopy(current))
+
+            # 4) Vollstaendigen Kandidaten validieren (nie halbgueltig schreiben).
+            errors = config_loader.validate_config(candidate)
+            if errors:
+                raise config_loader.ConfigError(
+                    "Ungültige config.json:\n- " + "\n- ".join(errors))
+
+            # 5) Alten Stand fuer die Kompensation sichern.
+            previous_bytes = None
+            try:
+                with open(self.path, "rb") as f:
+                    previous_bytes = f.read()
+            except OSError:
+                pass
+            previous_snapshot = self._snapshot
+
+            # 6) Linearization Point.
+            self._atomic_write(candidate)
+
+            # 7) Notwendiges Live-Apply — bei Fehler alles zurueckrollen.
+            try:
+                if apply is not None:
+                    result = apply(candidate)
+                    if inspect.isawaitable(result):
+                        await result
+            except BaseException:
+                self._restore(previous_bytes, previous_snapshot)
+                raise
+
+            self._publish(candidate)
+            return MutationResult(snapshot=self._snapshot, document=candidate)
+
+    def _restore(self, previous_bytes, previous_snapshot) -> None:
+        """Kompensation nach fehlgeschlagenem Live-Apply: Datei + Snapshot zurueck."""
+        if previous_bytes is not None:
+            try:
+                with open(self.temp_path, "wb") as f:
+                    f.write(previous_bytes)
+                os.replace(self.temp_path, self.path)
+            except OSError:
+                logger.error("Wiederherstellung der config.json nach Live-Apply-Fehler "
+                             "fehlgeschlagen", exc_info=True)
+        self._snapshot = previous_snapshot
+
     def _backup_once(self) -> None:
         """Bytegenaues Pre-Migration-Backup + Verifikation. Nur das letzte bleibt."""
         try:
@@ -270,3 +353,30 @@ class Configuration:
             except OSError:
                 pass
             raise config_loader.ConfigError(f"config.json konnte nicht geschrieben werden: {e}")
+
+
+# ── Semantische Intents (RFC-0003 D3) ───────────────────────────────────────
+# Eine Aenderungsabsicht beschreibt WAS geaendert werden soll — nicht ein
+# vorberechnetes vollstaendiges Dokument. Sie wird IM Writer gegen den frisch
+# gelesenen kanonischen Zustand angewandt; damit sind veraltete Voll-Snapshots
+# (die Ursache der Befunde C/E) strukturell ausgeschlossen.
+
+@dataclass(frozen=True)
+class SetSettings:
+    """UI-editierbare Felder setzen (Whitelist; Secrets werden abgelehnt)."""
+    updates: dict
+
+    def validate(self, document: dict) -> list[str]:
+        return config_loader.validate_settings_update(self.updates)
+
+    def apply(self, document: dict) -> dict:
+        for key in config_loader.UI_EDITABLE_KEYS & self.updates.keys():
+            document[key] = self.updates[key]
+        return document
+
+
+@dataclass(frozen=True)
+class MutationResult:
+    """Ergebnis einer erfolgreichen Mutation."""
+    snapshot: ConfigSnapshot
+    document: dict
