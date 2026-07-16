@@ -108,7 +108,11 @@ class FinishResearchTests(unittest.TestCase):
 
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class RunResearchThinSourcesTests(unittest.TestCase):
-    """Duenne Quellenlage wird ehrlich an den Summary-Schritt gemeldet."""
+    """Duenne Quellenlage wird ehrlich an den Summary-Schritt gemeldet.
+
+    Seit RFC-0001 ueber die oeffentliche Action-Seam (spec.execute) statt ueber
+    den fruaeheren assistant_core.run_research-Helfer — gleiche Abdeckung.
+    """
 
     def setUp(self):
         import browser_tools
@@ -135,7 +139,7 @@ class RunResearchThinSourcesTests(unittest.TestCase):
             links=[{"title": "A", "url": "https://a.example"}, {"title": "B", "url": "https://b.example"}],
             readable_urls={"https://a.example"},
         )
-        result = asyncio.run(assistant_core.run_research("ssd"))
+        result = asyncio.run(actions.spec_for("RESEARCH").execute("ssd", actions.ActionContext()))
         self.assertIn("QUELLE: ", result)
         self.assertIn("Nur 1 Quelle(n)", result)
         self.assertIn("dünn", result)
@@ -143,7 +147,7 @@ class RunResearchThinSourcesTests(unittest.TestCase):
     def test_three_sources_no_hint(self):
         links = [{"title": t, "url": f"https://{t}.example"} for t in ("a", "b", "c")]
         self._stub(links=links, readable_urls={l["url"] for l in links})
-        result = asyncio.run(assistant_core.run_research("ssd"))
+        result = asyncio.run(actions.spec_for("RESEARCH").execute("ssd", actions.ActionContext()))
         self.assertEqual(result.count("QUELLE: "), 3)
         self.assertNotIn("HINWEIS AN JARVIS", result)
 
@@ -152,29 +156,29 @@ class RunResearchThinSourcesTests(unittest.TestCase):
             links=[{"title": "A", "url": "https://a.example"}],
             readable_urls=set(),
         )
-        result = asyncio.run(assistant_core.run_research("ssd"))
+        result = asyncio.run(actions.spec_for("RESEARCH").execute("ssd", actions.ActionContext()))
         self.assertIn("keine der Quellen war lesbar", result)
 
 
-@unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class SessionSummaryActionTests(unittest.TestCase):
+    """Seit RFC-0001 ueber die oeffentliche Action-Seam: der Verlauf kommt aus
+    ctx.history statt aus dem conversations-Modul-Global."""
+
+    def _run(self, history):
+        return asyncio.run(actions.spec_for("SESSION_SUMMARY").execute(
+            "", actions.ActionContext(history=history)))
+
     def test_session_protocol_from_history(self):
-        sid = "test-session-summary"
-        assistant_core.conversations[sid] = [
+        result = self._run((
             {"role": "user", "content": "Recherchiere zu SSDs"},
             {"role": "assistant", "content": "Erledigt, Sir."},
-        ]
-        try:
-            result = asyncio.run(assistant_core.execute_action(actions.Action("SESSION_SUMMARY"), sid))
-        finally:
-            assistant_core.conversations.pop(sid, None)
+        ))
         self.assertIn("Sitzungsprotokoll:", result)
         self.assertIn("Du: Recherchiere zu SSDs", result)
         self.assertIn("Jarvis: Erledigt, Sir.", result)
 
     def test_empty_session(self):
-        result = asyncio.run(assistant_core.execute_action(actions.Action("SESSION_SUMMARY"), "unbekannt"))
-        self.assertIn("keinen nennenswerten Verlauf", result)
+        self.assertIn("keinen nennenswerten Verlauf", self._run(()))
 
 
 class RecentNotesTests(unittest.TestCase):

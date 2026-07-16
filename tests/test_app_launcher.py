@@ -458,13 +458,14 @@ class ListAppsTests(_RegistryMixin, unittest.TestCase):
         self.assertEqual(app_launcher.APPS[0]["placement"]["zone"], "fullscreen")
 
 
-@unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class ExecuteActionAppOpenTests(_RegistryMixin, unittest.TestCase):
+    """APP_OPEN ueber die oeffentliche Action-Seam (RFC-0001)."""
+
     def test_app_open_returns_launcher_message(self):
         self._use_apps(_APPS)
         with mock.patch.object(app_launcher, "_start_url") as start_url:
-            action = actions.Action(type="APP_OPEN", payload="Obsidian")
-            result = asyncio.run(assistant_core.execute_action(action, "test-session"))
+            result = asyncio.run(actions.spec_for("APP_OPEN").execute(
+                "Obsidian", actions.ActionContext()))
         start_url.assert_called_once_with("obsidian://open")
         self.assertEqual(result, "Obsidian wird geöffnet.")
 

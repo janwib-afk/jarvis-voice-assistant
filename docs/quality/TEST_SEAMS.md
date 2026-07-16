@@ -19,6 +19,7 @@
 | SEAM-REST | Contract (TestClient) | FastAPI-App, echte Routen, Token-Auth | — (nur pro Route, s.u.) | teilweise | approved |
 | SEAM-WS | Contract/Integration (TestClient WS) | `/ws` Handshake + Frames + Stop | LLM/TTS via `process_message`-Stub bzw. Adapter | gut (Handshake/Stop) | approved |
 | SEAM-ACTION | Contract (pur) | `actions.parse_action` + Registry | keine | sehr gut | approved |
+| SEAM-ACTION-EXEC | Contract (Action-Interface) | `spec.execute(payload, ctx)` + `spec.describe(prompt_ctx)` + `render_action_block` | nur externe Grenzen (Browser/Screen/Clipboard/Prozessstart); Vault/Inbox = Tempdir | sehr gut (22/22, `test_action_deep_module`) | approved (RFC-0001, Phase 4B) |
 | SEAM-CONVERSATION | Integration (echter WS-Dialog) | `/ws` Dialog → `process_message` | `ai`, `synthesize_speech` (+ Aktions-Grenzen) | teilweise (nicht über WS) | approved |
 | SEAM-CONFIG | Contract/Integration (Temp-Datei) | `config_loader` Load/Validate/Save | Dateisystem = real (Tempdir) | gut | approved |
 | SEAM-MEMORY | Contract/Integration (Temp-Vault) | `memory` Inbox/Vault/Memory-Fns | Dateisystem = real (Tempdir); `ai` bei Dedup | gut | approved |

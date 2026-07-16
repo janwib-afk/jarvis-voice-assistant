@@ -1,7 +1,9 @@
 # Jarvis – Legacy-Action-Protokoll (`[ACTION:...]`, Ist-Zustand)
 
 > Dokumentiert das **aktuelle** Text-Action-Protokoll (`actions.py`,
-> Ausführung in `assistant_core.execute_action`). Stand 2026-07-14. Dies ist ein
+> Ausführung seit RFC-0001 je Action an ihrem Registry-Eintrag, `actions.py`:
+> `spec.execute(payload, ctx)`; `assistant_core.execute_action` ist nur noch der
+> kompatible Thin Dispatcher). Stand 2026-07-15. Dies ist ein
 > **Legacy-Vertrag**: die LLM-Ausgabe kodiert Aktionen als Text-Tags. Er wird in
 > Prompt 6 **nicht** geändert, nicht erweitert und nicht entfernt. Bezug:
 > [../quality/TEST_SEAMS.md](../quality/TEST_SEAMS.md) (SEAM-ACTION),
@@ -26,16 +28,16 @@
 Nur in `actions.REGISTRY` eingetragene Typen werden geparst/ausgeführt.
 Payload: `req` = Pflicht, `opt` = optional, `none` = wird verworfen.
 
-| # | TYPE | Label | Payload | URL | Risk | Timeout (s) | speaks_result | Ausführung (`execute_action`) |
+| # | TYPE | Label | Payload | URL | Risk | Timeout (s) | speaks_result | Ausführung (`spec.execute`) |
 |---|---|---|---|---|---|---|---|---|
 | 1 | `SEARCH` | Websuche | req | – | low | 60 | – | `browser_tools.search_and_read` |
 | 2 | `BROWSE` | Seite lesen | req | ✓ | low | 60 | – | `browser_tools.visit` |
 | 3 | `OPEN` | Browser öffnen | req | ✓ | low | 60 | – | `browser_tools.open_url` (keine Zusammenfassung) |
 | 4 | `APP_OPEN` | App öffnen | req | – | low | 15 | ✓ | `app_launcher.launch` (Allowlist) |
-| 5 | `PROFILE_ACTIVATE` | Profil aktivieren | req | – | low | 15 | ✓ | Profil-Schicht (`_voice_activate_profile`) |
-| 6 | `PROFILE_STATUS` | Profil-Status | opt | – | low | 15 | ✓ | `_voice_profile_status` |
-| 7 | `APP_AUTOSTART_ON` | Clap-Start an | req | – | low | 15 | ✓ | `_voice_set_autostart(True)` |
-| 8 | `APP_AUTOSTART_OFF` | Clap-Start aus | req | – | low | 15 | ✓ | `_voice_set_autostart(False)` |
+| 5 | `PROFILE_ACTIVATE` | Profil aktivieren | req | – | low | 15 | ✓ | Profil-Schicht (`_exec_profile_activate`) |
+| 6 | `PROFILE_STATUS` | Profil-Status | opt | – | low | 15 | ✓ | `_exec_profile_status` |
+| 7 | `APP_AUTOSTART_ON` | Clap-Start an | req | – | low | 15 | ✓ | `_exec_autostart_on` |
+| 8 | `APP_AUTOSTART_OFF` | Clap-Start aus | req | – | low | 15 | ✓ | `_exec_autostart_off` |
 | 9 | `APP_PLACE` | App platzieren | req | – | low | 15 | ✓ | `_voice_place_app` (`app \| monitor \| zone`) |
 | 10 | `SCREEN` | Bildschirm ansehen | opt | – | low | 60 | – | `screen_capture.describe_screen` (Vision) |
 | 11 | `NEWS` | Nachrichten | none | – | low | 60 | – | `browser_tools.fetch_news` |

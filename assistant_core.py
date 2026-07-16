@@ -160,34 +160,14 @@ def build_system_prompt():
     if TODAY_INBOX:
         inbox_block = f"\nHeutige Inbox-Einträge:\n{TODAY_INBOX}"
 
-    apps_line = ""
-    app_names = ", ".join(a["name"] for a in app_launcher.list_apps())
-    if app_names:
-        profile_names = ", ".join(pr["name"] for pr in app_launcher.PROFILES)
-        apps_line = (
-            f"\n[ACTION:APP_OPEN] app-name - Öffnet eine konfigurierte lokale App, z.B. Obsidian, "
-            f"VS Code oder Chrome. Nutze diese Aktion, wenn {USER_ADDRESS} dich bittet, eine lokale App "
-            f"oder ein Programm zu öffnen. Es können NUR konfigurierte Apps geöffnet werden. "
-            f"Schreibe KEINEN Text vor die Aktion. Verfügbare Apps: {app_names}"
-            f"\n[ACTION:PROFILE_ACTIVATE] profilname - Aktiviert ein vorhandenes Session-Profil für den "
-            f"Clap-Start. Nutze es bei Aussagen wie \"aktiviere Coding-Modus\" oder \"wechsle ins "
-            f"Research-Profil\". Verfügbare Profile: {profile_names}"
-            f"\n[ACTION:PROFILE_STATUS] optionaler profilname - Sagt, welches Profil aktiv ist und welche "
-            f"Apps beim Clap starten. Ohne Payload: das aktive Profil. Nutze bei \"Welches Profil ist "
-            f"aktiv?\" oder \"Welche Apps starten im Research-Profil?\"."
-            f"\n[ACTION:APP_AUTOSTART_ON] app-name - Nimmt eine konfigurierte App im aktiven Profil in den "
-            f"Clap-Start auf. Nutze bei \"starte X beim nächsten Clap mit\"."
-            f"\n[ACTION:APP_AUTOSTART_OFF] app-name - Nimmt eine konfigurierte App im aktiven Profil aus "
-            f"dem Clap-Start. Nutze bei \"nimm X aus dem Clap-Start\"."
-            f"\n[ACTION:APP_PLACE] app-name | monitor | zone - Setzt die Startposition einer konfigurierten "
-            f"App im aktiven Profil. monitor: primary, left, right, leftmost, rightmost. zone: fullscreen, "
-            f"left_half, right_half, top_half, bottom_half, top_left, top_right, bottom_left, bottom_right, "
-            f"center. Beispiel: [ACTION:APP_PLACE] Obsidian | left | right_half"
-            f"\nLauncher-Regeln: Nur konfigurierte Apps und vorhandene Profile verwenden. Ist ein App- oder "
-            f"Profilname unklar, frag nach statt zu raten. Persistente Änderungen (Autostart, Platzierung, "
-            f"Profilwechsel) nur bei klarer Absicht von {USER_ADDRESS}. Profile löschen, anlegen oder "
-            f"überschreiben geht NICHT per Sprache — verweise dafür auf das Jarvis-Fenster."
-        )
+    # Action-Beschreibungen kommen aus der Registry (RFC-0001): eine Quelle der
+    # Wahrheit. Die Launcher-Gruppe erscheint nur mit konfigurierten Apps.
+    action_block = actions.render_action_block(actions.PromptContext(
+        user_name=USER_NAME,
+        user_address=USER_ADDRESS,
+        app_names=", ".join(a["name"] for a in app_launcher.list_apps()),
+        profile_names=", ".join(pr["name"] for pr in app_launcher.PROFILES),
+    ))
 
     memory_block = ""
     memory_content = memory.read_memory_sync()
@@ -205,21 +185,7 @@ WICHTIG: Schreibe NIEMALS Regieanweisungen, Emotionen oder Tags in eckigen Klamm
 Du hast die volle Kontrolle über den Browser von {USER_NAME}. Du kannst im Internet suchen, Webseiten öffnen und den Bildschirm sehen. Wenn {USER_ADDRESS} dich bittet etwas nachzuschauen, zu recherchieren, zu googeln, eine Seite zu öffnen, oder irgendetwas im Internet zu tun — nutze IMMER eine Aktion. Frag nicht ob du es tun sollst, tu es einfach.
 
 AKTIONEN - Schreibe die passende Aktion ans ENDE deiner Antwort. Der Text VOR der Aktion wird vorgelesen, die Aktion selbst wird still ausgeführt. Maximal EINE Aktion pro Antwort.
-[ACTION:SEARCH] suchbegriff - Schnelle Websuche: erstes Ergebnis lesen und zusammenfassen. Für einfache Fakten.
-[ACTION:RESEARCH] thema - Gründliche Recherche: liest 3-5 Quellen und liefert eine Zusammenfassung mit Quellenliste. Nutze wenn {USER_ADDRESS} "recherchiere" sagt oder eine fundierte Antwort mit mehreren Quellen sinnvoll ist.
-[ACTION:OPEN] url - URL im Browser öffnen
-[ACTION:SCREEN] optionale frage - Bildschirm ansehen. Ohne Frage: kurz beschreiben. Mit Frage (z.B. "Was ist das Problem?", "Fasse diese Seite zusammen", "Was soll ich als nächstes tun?"): die Frage anhand des Bildschirms beantworten. WICHTIG: Bei SCREEN schreibe KEINEN Text vor die Aktion.
-[ACTION:NEWS] - Aktuelle Weltnachrichten abrufen. Nutze diese Aktion wenn nach News, Nachrichten, was in der Welt passiert, aktuelle Lage oder Weltgeschehen gefragt wird. Schreibe einen kurzen Satz davor wie "Ich schaue nach den aktuellen Nachrichten."
-[ACTION:INBOX_READ] - Liest die heutigen Einträge aus der Obsidian-Inbox. Nutze wenn {USER_ADDRESS} fragt was heute notiert wurde oder einen Tagesrückblick möchte.
-[ACTION:INBOX_WRITE] [Kategorie] text - Schreibt einen Eintrag in die heutige Inbox-Datei. Kategorie ist GENAU EINE von: Idee, Aufgabe, Termin, Recherche, Erinnerung — wähle die passendste. Beispiel: [ACTION:INBOX_WRITE] [Termin] Zahnarzt Dienstag 9 Uhr. Nutze IMMER wenn {USER_ADDRESS} etwas festhalten, notieren, aufschreiben oder merken möchte. Frag nicht ob, tu es einfach. Formuliere den Text klar und strukturiert.
-[ACTION:MEMORY_WRITE] text - Speichert eine Information DAUERHAFT im Langzeit-Gedächtnis (Präferenzen, laufende Projekte, offene Loops). Nutze NUR wenn {USER_ADDRESS} ausdrücklich sagt, dass du dir etwas dauerhaft/für die Zukunft merken sollst (z.B. "merk dir dauerhaft", "vergiss nie"). Tagesnotizen gehören in INBOX_WRITE. Speichere NIEMALS sensible Inhalte (Passwörter, Gesundheit, Finanzen) ohne ausdrückliche Aufforderung.
-[ACTION:MEMORY_READ] - Zeigt bzw. fasst zusammen, was du dauerhaft über {USER_NAME} gespeichert hast. Nutze wenn {USER_ADDRESS} fragt "Was weißt du über mich?", "Was hast du dir gemerkt?" oder Ähnliches.
-[ACTION:MEMORY_FORGET] stichwort - Löscht einen passenden Eintrag DAUERHAFT aus dem Langzeit-Gedächtnis. Nutze wenn {USER_ADDRESS} sagt "vergiss ..." o.Ä. Gib als Payload knapp das Thema/Stichwort an, das vergessen werden soll (nicht das Wort "vergiss" selbst). Diese Aktion wird vor der Ausführung sicherheitshalber noch einmal mündlich bestätigt.
-[ACTION:NOTES_RECENT] - Fasst die zuletzt bearbeiteten Notizen aus dem Vault zusammen. Nutze wenn {USER_ADDRESS} z.B. "Fasse meine letzten Notizen zusammen" sagt oder wissen will woran er zuletzt gearbeitet hat.
-[ACTION:PROJECT_CONTEXT] frage oder projektname - Durchsucht den Obsidian-Vault lokal nach passenden Notizen und antwortet mit deren Kontext. Nutze wenn {USER_ADDRESS} nach dem Stand, den nächsten Schritten oder offenen Punkten eines Projekts fragt, Kontext zu einem Thema aus seinen Notizen möchte oder fragt "was weißt du über mein Projekt ...".
-[ACTION:CLIPBOARD] auftrag - Verarbeitet den Text in der Zwischenablage (auftrag z.B. "zusammenfassen", "übersetzen", "erklären"). Nutze wenn {USER_ADDRESS} von Zwischenablage, Clipboard oder "das Kopierte" spricht.
-[ACTION:CLIPBOARD_NOTE] - Speichert den Text aus der Zwischenablage als Inbox-Notiz. Nutze wenn {USER_ADDRESS} aus der Zwischenablage eine Notiz machen möchte.
-[ACTION:SESSION_SUMMARY] - Fasst zusammen was in dieser Sitzung besprochen und erledigt wurde. Nutze bei "Was haben wir heute gemacht?" oder am Sitzungsende. Möchte {USER_ADDRESS} das Fazit danach speichern, nutze INBOX_WRITE.{apps_line}
+{action_block}
 
 WENN {USER_NAME} "Jarvis activate" sagt, liefere den Tagesüberblick (maximal 6 Sätze):
 - Begrüße ihn kreativ und passend zur Tageszeit (aktuelle Zeit: {{time}}).
@@ -307,268 +273,40 @@ def _llm_error_hint(e: Exception) -> str:
 
 
 # ── Aktionen ─────────────────────────────────────────────────────────────────
-
-# Erfolgreiche Recherche-Ergebnisse enthalten pro Quelle eine solche Zeile —
-# daraus baut process_message die Quellenliste fürs Transcript und den Autosave.
-RESEARCH_SOURCE_PREFIX = "QUELLE: "
+# Die Ausfuehrung liegt seit RFC-0001 je Action am Registry-Eintrag (actions.py);
+# hier bleibt nur die Orchestrierung (Timeout/Cancel/Summary/TTS/WS/Autosave).
 
 
-async def run_research(topic: str) -> str:
-    """Recherche-Modus: 3–5 Quellen lesen statt nur des ersten Treffers."""
-    links = await browser_tools.search_links(topic, limit=5)
-    if not links:
-        return "Recherche fehlgeschlagen: keine Suchergebnisse gefunden."
-    parts = [f"Recherche zu: {topic}"]
-    gelesen = 0
-    for link in links:
-        if gelesen >= 4:
-            break
-        result = await browser_tools.visit(link["url"], max_chars=1500)
-        if "error" in result:
-            logger.info("Recherche-Quelle übersprungen: %s", link["url"])
-            continue
-        gelesen += 1
-        title = (result.get("title") or link["title"]).strip()
-        parts.append(f"{RESEARCH_SOURCE_PREFIX}{title} — {link['url']}\n{result.get('content', '')}")
-    if gelesen == 0:
-        return "Recherche fehlgeschlagen: keine der Quellen war lesbar."
-    if gelesen < 3:
-        # Duenne Quellenlage ehrlich benennen statt Scheinsicherheit vorzulesen.
-        parts.append(
-            f"HINWEIS AN JARVIS: Nur {gelesen} Quelle(n) waren lesbar — sag ehrlich dazu, "
-            "dass die Quellenlage dünn ist und die Antwort entsprechend vorsichtig zu werten ist."
-        )
-    return "\n\n".join(parts)
+def _action_context(session_id: str) -> actions.ActionContext:
+    """Request-scoped Kontext aus dem AKTUELLEN Prozesszustand bauen (RFC-0001).
 
-
-# ── Launcher-Sprachsteuerung (Phase 5) ──────────────────────────────────────
-# Antworten sind fertige deutsche Saetze (speaks_result) — kein Zusammenfassungs-LLM.
-
-_MONITOR_SPEECH = {
-    "primary": "auf dem Hauptmonitor", "left": "auf dem linken Monitor",
-    "right": "auf dem rechten Monitor", "leftmost": "ganz links",
-    "rightmost": "ganz rechts",
-}
-_ZONE_SPEECH = {
-    "fullscreen": "im Vollbild", "left_half": "in der linken Hälfte",
-    "right_half": "in der rechten Hälfte", "top_half": "in der oberen Hälfte",
-    "bottom_half": "in der unteren Hälfte", "top_left": "oben links",
-    "top_right": "oben rechts", "bottom_left": "unten links",
-    "bottom_right": "unten rechts", "center": "zentriert",
-}
-
-
-def _available_apps() -> str:
-    return ", ".join(a["name"] for a in app_launcher.APPS)
-
-
-def _available_profiles() -> str:
-    return ", ".join(p["name"] for p in app_launcher.PROFILES)
-
-
-def _unknown_app_message(query: str) -> str:
-    available = _available_apps()
-    if not available:
-        return "Es sind keine Apps konfiguriert — trage Apps in den Einstellungen ein."
-    return f"Die App '{(query or '').strip()}' ist nicht konfiguriert. Verfügbar: {available}."
-
-
-async def _persist_launcher_or_error(new_launcher: dict, kind: str) -> str | None:
-    """Persist via injizierten Server-Hook; None = ok, sonst sprechbarer Fehler."""
-    if PERSIST_LAUNCHER is None:
-        return "Profil-Änderungen sind gerade nicht möglich."
-    errors = await PERSIST_LAUNCHER(new_launcher, kind)
-    if errors:
-        return "Das konnte ich nicht speichern: " + " ".join(errors)
-    return None
-
-
-async def _voice_activate_profile(payload: str) -> str:
-    profile = app_launcher.find_profile(payload)
-    if profile is None:
-        return (f"Das Profil '{(payload or '').strip()}' kenne ich nicht. "
-                f"Verfügbar: {_available_profiles()}.")
-    if profile["id"] == app_launcher.ACTIVE_PROFILE:
-        return f"{profile['name']} ist bereits aktiv."
-    new_launcher = app_launcher.launcher_with_active(profile["id"])
-    error = await _persist_launcher_or_error(new_launcher, "profile")
-    if error:
-        return error
-    return f"{profile['name']} ist jetzt aktiv."
-
-
-def _voice_profile_status(payload: str) -> str:
-    if payload.strip():
-        profile = app_launcher.find_profile(payload)
-        if profile is None:
-            return (f"Das Profil '{payload.strip()}' kenne ich nicht. "
-                    f"Verfügbar: {_available_profiles()}.")
-    else:
-        profile = app_launcher.find_profile(app_launcher.ACTIVE_PROFILE)
-        if profile is None:
-            return "Es ist kein Profil konfiguriert."
-    enabled = [a["name"] for a in app_launcher.effective_apps(profile["id"]) if a["autostart"]]
-    is_active = profile["id"] == app_launcher.ACTIVE_PROFILE
-    prefix = f"Aktiv ist '{profile['name']}'." if is_active else f"Im Profil '{profile['name']}':"
-    if not enabled:
-        return f"{prefix} Beim Clap startet nichts automatisch."
-    return f"{prefix} Beim Clap starten: {', '.join(enabled)}."
-
-
-async def _voice_set_autostart(payload: str, enabled: bool) -> str:
-    app = app_launcher.find_app(payload)
-    if app is None:
-        return _unknown_app_message(payload)
-    new_launcher = app_launcher.launcher_with_app_state(app["id"], autostart=enabled)
-    if new_launcher is None:
-        return _unknown_app_message(payload)
-    error = await _persist_launcher_or_error(new_launcher, "autostart")
-    if error:
-        return error
-    if enabled:
-        return f"{app['name']} startet beim nächsten Clap mit."
-    return f"{app['name']} ist aus dem Clap-Start raus."
-
-
-async def _voice_place_app(payload: str) -> str:
-    parsed, parse_error = actions.parse_place_payload(payload)
-    if parse_error:
-        return parse_error
-    app_query, monitor, zone = parsed
-    app = app_launcher.find_app(app_query)
-    if app is None:
-        return _unknown_app_message(app_query)
-    new_launcher = app_launcher.launcher_with_app_state(
-        app["id"], placement={"monitor": monitor, "zone": zone}
+    Der Verlauf wird als unveraenderlicher Snapshot uebergeben — die Action sieht
+    weder ``session_id`` noch das ``conversations``-Dict.
+    """
+    return actions.ActionContext(
+        ai=ai,
+        history=tuple(dict(msg) for msg in conversations.get(session_id, [])),
+        persist_launcher=PERSIST_LAUNCHER,
     )
-    if new_launcher is None:
-        return _unknown_app_message(app_query)
-    error = await _persist_launcher_or_error(new_launcher, "placement")
-    if error:
-        return error
-    return f"{app['name']} liegt jetzt {_ZONE_SPEECH[zone]} {_MONITOR_SPEECH[monitor]}."
 
 
 async def execute_action(action: actions.Action, session_id: str) -> str:
-    t = action.type
-    p = action.payload
+    """Thin Dispatcher (RFC-0001): Kontext bauen, Registry-Lookup, ausfuehren.
 
-    if t == "SEARCH":
-        result = await browser_tools.search_and_read(p)
-        if "error" not in result:
-            return f"Seite: {result.get('title', '')}\nURL: {result.get('url', '')}\n\n{result.get('content', '')[:2000]}"
-        return f"Suche fehlgeschlagen: {result.get('error', '')}"
-
-    elif t == "BROWSE":
-        result = await browser_tools.visit(p)
-        if "error" not in result:
-            return f"Seite: {result.get('title', '')}\n\n{result.get('content', '')[:2000]}"
-        return f"Seite nicht erreichbar: {result.get('error', '')}"
-
-    elif t == "OPEN":
-        await browser_tools.open_url(p)
-        return f"Geöffnet: {p}"
-
-    elif t == "APP_OPEN":
-        result = await asyncio.to_thread(app_launcher.launch, p)
-        return result["message"]
-
-    elif t == "PROFILE_ACTIVATE":
-        return await _voice_activate_profile(p)
-
-    elif t == "PROFILE_STATUS":
-        return _voice_profile_status(p)
-
-    elif t == "APP_AUTOSTART_ON":
-        return await _voice_set_autostart(p, True)
-
-    elif t == "APP_AUTOSTART_OFF":
-        return await _voice_set_autostart(p, False)
-
-    elif t == "APP_PLACE":
-        return await _voice_place_app(p)
-
-    elif t == "SCREEN":
-        return await screen_capture.describe_screen(ai, question=p)
-
-    elif t == "NEWS":
-        result = await browser_tools.fetch_news()
-        return result
-
-    elif t == "RESEARCH":
-        return await run_research(p)
-
-    elif t == "INBOX_READ":
-        if not memory.inbox_available():
-            return "Inbox-Ordner nicht konfiguriert oder nicht gefunden."
-        content = await asyncio.to_thread(memory.read_today_inbox_sync)
-        if content is None:
-            return f"Noch keine Einträge für heute ({time.strftime('%Y-%m-%d')})."
-        return content
-
-    elif t == "INBOX_WRITE":
-        kategorie, text = actions.split_inbox_category(p)
-        return await memory.write_inbox_entry(text, kategorie, ai=ai)
-
-    elif t == "MEMORY_WRITE":
-        return await asyncio.to_thread(memory.append_memory, p)
-
-    elif t == "MEMORY_READ":
-        content = await asyncio.to_thread(memory.read_memory_sync)
-        if not content.strip():
-            return "Ich habe mir dauerhaft noch nichts gemerkt."
-        return f"Langzeit-Gedächtnis (dauerhaft gespeichert):\n{content}"
-
-    elif t == "MEMORY_FORGET":
-        return await asyncio.to_thread(memory.forget_memory, p)
-
-    elif t == "NOTES_RECENT":
-        notes = await asyncio.to_thread(memory.read_recent_notes_sync)
-        if not notes:
-            return "Keine Notizen gefunden — Vault nicht konfiguriert oder leer."
-        return notes
-
-    elif t == "PROJECT_CONTEXT":
-        if not memory.vault_available():
-            return "Kein Obsidian-Vault konfiguriert — bitte den Vault-Pfad in den Einstellungen hinterlegen."
-        context = await asyncio.to_thread(memory.get_project_context_sync, p)
-        if not context:
-            return f'Im Vault habe ich zu "{p}" nichts Passendes gefunden.'
-        return f'Frage: "{p}"\n\n{context}'
-
-    elif t == "CLIPBOARD":
-        clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
-        if not clip:
-            return "Die Zwischenablage ist leer oder enthält keinen Text."
-        auftrag = p or "Fasse den Inhalt kurz zusammen."
-        return f"Auftrag: {auftrag}\n\nInhalt der Zwischenablage:\n{clip}"
-
-    elif t == "CLIPBOARD_NOTE":
-        clip = await asyncio.to_thread(clipboard_tools.get_clipboard_text)
-        if not clip:
-            return "Die Zwischenablage ist leer oder enthält keinen Text."
-        return await memory.write_inbox_entry(clip, actions.INBOX_FALLBACK_CATEGORY, ai=ai)
-
-    elif t == "SESSION_SUMMARY":
-        history = conversations.get(session_id, [])
-        lines = [
-            f"{'Du' if msg['role'] == 'user' else 'Jarvis'}: {msg['content']}"
-            for msg in history[-40:]
-        ]
-        log = "\n".join(lines)[-6000:]
-        if not log.strip():
-            return "Diese Sitzung hat noch keinen nennenswerten Verlauf."
-        return f"Sitzungsprotokoll:\n{log}"
-
-    return ""
+    Die Action beschreibt und fuehrt sich selbst aus; hier bleibt nur die
+    Uebersetzung von (action, session_id) in einen request-scoped Kontext.
+    Nur validierte Actions erreichen diesen Punkt (parse_action ist der Adapter).
+    """
+    return await actions.spec_for(action.type).execute(
+        action.payload, _action_context(session_id))
 
 
 async def _finish_research(summary: str, action_result: str) -> str | None:
     """Quellenliste für die Anzeige anhängen und das Ergebnis in den Brain Dump sichern."""
     sources = [
-        line[len(RESEARCH_SOURCE_PREFIX):].strip()
+        line[len(actions.RESEARCH_SOURCE_PREFIX):].strip()
         for line in action_result.splitlines()
-        if line.startswith(RESEARCH_SOURCE_PREFIX)
+        if line.startswith(actions.RESEARCH_SOURCE_PREFIX)
     ]
     if not sources:
         return None

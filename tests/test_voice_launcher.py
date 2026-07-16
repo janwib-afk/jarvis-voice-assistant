@@ -1,10 +1,11 @@
 """
 Tests fuer die Launcher-Sprachaktionen (Phase 5): PROFILE_ACTIVATE,
-PROFILE_STATUS, APP_AUTOSTART_ON/OFF, APP_PLACE in assistant_core.execute_action.
+PROFILE_STATUS, APP_AUTOSTART_ON/OFF, APP_PLACE.
 
-Die Persistenz laeuft ueber den injizierten Hook ``PERSIST_LAUNCHER`` — hier
-gestubbt (sammelt Aufrufe, schreibt nichts). Der echte Persist-Pfad wird in
-tests/test_launcher_api.py integrativ getestet.
+Seit RFC-0001 ueber die oeffentliche Action-Seam (spec.execute); die Persistenz
+laeuft ueber ``ctx.persist_launcher`` — hier gestubbt (sammelt Aufrufe, schreibt
+nichts). Der echte Persist-Pfad wird in tests/test_launcher_api.py integrativ
+getestet.
 
     python -m unittest discover -s tests
 """
@@ -42,7 +43,6 @@ _LAUNCHER = {"active_profile": "coding", "profiles": [
 class VoiceLauncherTests(unittest.TestCase):
     def setUp(self):
         self._saved = (app_launcher.APPS, app_launcher.PROFILES, app_launcher.ACTIVE_PROFILE)
-        self._saved_persist = assistant_core.PERSIST_LAUNCHER
         app_launcher.configure(_APPS, _LAUNCHER)
 
         self.persist_calls = []
@@ -51,16 +51,13 @@ class VoiceLauncherTests(unittest.TestCase):
             self.persist_calls.append((new_launcher, kind))
             return []
 
-        assistant_core.PERSIST_LAUNCHER = _stub
+        self.ctx = actions.ActionContext(persist_launcher=_stub)
 
     def tearDown(self):
         app_launcher.APPS, app_launcher.PROFILES, app_launcher.ACTIVE_PROFILE = self._saved
-        assistant_core.PERSIST_LAUNCHER = self._saved_persist
 
     def _run(self, action_type, payload=""):
-        return asyncio.run(
-            assistant_core.execute_action(actions.Action(action_type, payload), "test-session")
-        )
+        return asyncio.run(actions.spec_for(action_type).execute(payload, self.ctx))
 
     @staticmethod
     def _profile(launcher, pid):
@@ -167,12 +164,13 @@ class VoiceLauncherTests(unittest.TestCase):
     def test_persist_error_is_spoken(self):
         async def _failing(new_launcher, kind):
             return ["Datei gesperrt."]
-        assistant_core.PERSIST_LAUNCHER = _failing
+        self.ctx = actions.ActionContext(persist_launcher=_failing)
         result = self._run("APP_AUTOSTART_OFF", "VS Code")
         self.assertTrue(result.startswith("Das konnte ich nicht speichern"))
 
     def test_persist_missing_is_graceful(self):
-        assistant_core.PERSIST_LAUNCHER = None
+        # Kein Hook im Kontext (Standalone/Tests ohne Server).
+        self.ctx = actions.ActionContext()
         result = self._run("PROFILE_ACTIVATE", "Deep Work")
         self.assertEqual(result, "Profil-Änderungen sind gerade nicht möglich.")
 
