@@ -24,14 +24,12 @@ import copy
 import hashlib
 import inspect
 import json
-import logging
 import os
 from dataclasses import dataclass
 from types import MappingProxyType
 
 import config_loader
-
-logger = logging.getLogger("jarvis.configuration")
+import obslog
 
 # Aktuelle Zielversion des persistierten Formats. Fehlender Marker = Legacy v0.
 SCHEMA_VERSION = 1
@@ -226,7 +224,7 @@ class Configuration:
                     "Ungültige config.json:\n- " + "\n- ".join(errors))
             self._backup_once()
             self._atomic_write(migrated)
-            logger.info("config.json von Version %d auf %d migriert", version, SCHEMA_VERSION)
+            obslog.event("config.migrated", from_version=version, to_version=SCHEMA_VERSION)
             document = migrated
         else:
             errors = config_loader.validate_config(document)
@@ -320,9 +318,8 @@ class Configuration:
                 with open(self.temp_path, "wb") as f:
                     f.write(previous_bytes)
                 os.replace(self.temp_path, self.path)
-            except OSError:
-                logger.error("Wiederherstellung der config.json nach Live-Apply-Fehler "
-                             "fehlgeschlagen", exc_info=True)
+            except OSError as e:
+                obslog.event("config.restore_failed", error_type=type(e).__name__)
         self._snapshot = previous_snapshot
 
     def _backup_once(self) -> None:
