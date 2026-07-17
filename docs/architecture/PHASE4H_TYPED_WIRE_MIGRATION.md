@@ -100,3 +100,30 @@ bauen keine Wire-Dicts mehr.
 - **Offene Punkte:** `present_rest`/`RestResult` (REST-Presentation) entstehen in Slice 7
   gemeinsam mit der Routenmigration; `ConversationChannel`/`EventSink`/`ConnectionRegistry`
   in Slice 3.
+
+### Slice 3 — Legacy Channel + Runtime-owned Registry
+- **Ziel:** allen Legacy-Verkehr durch den typisierten Kanal leiten; `assistant_core`
+  erhält keinen rohen WebSocket mehr; kein App-Code baut Wire-Dicts; opake Session-ID
+  statt `str(id(ws))`; Broadcasts über die runtime-besessene Registry. Beobachtbarer
+  Legacy-Output UNVERÄNDERT.
+- **Seams:** SEAM-WIRE/MIXED-WIRE (Channel/Registry mit Fake-send), SEAM-WS/SEAM-CONVERSATION
+  (echter Dialog, Golden), SEAM-REST (Broadcasts via Registry).
+- **Änderungen:** `runtime.py` (`wire_protocol`/`connections` Ownership); `server.py`
+  (WS-Endpoint: `connections.register`→Channel, `decode_command`, Health/Stop via
+  `channel.emit`, Disconnect→`unregister`; Broadcasts→`connections.broadcast`;
+  Modul-Global `ws_clients` + `broadcast_json` + `import time` entfernt);
+  `assistant_core.py` (`send_error`/`send_spoken_response`/`send_action_event`/
+  `process_message`/`run_action_and_respond`: `ws`→`sink`, emittieren semantische Events).
+- **Implementierungsnahe Alt-Tests** (send_json/broadcast_json-gekoppelt) über den
+  `tests/wire_testing.legacy_sink`-Adapter bzw. Registry-Empfänger auf gleichwertige
+  öffentliche Abdeckung umgestellt (test_ws/test_confirm_flow/test_integration_research/
+  test_logging_privacy/test_music_api/test_settings_api) — keine Verhaltensabdeckung gelöscht.
+- **Tests:** Send-Lock serialisiert konkurrierende Emits; Disconnect leert die Registry;
+  Golden-Legacy weiter byte-/shape-exakt. Volle Suite **786** grün; smoke EXIT 0;
+  import-sicher (0 Root-Handler); Fixture bytegleich.
+- **Sicherheitsinvarianten:** Origin/Token-Gate unverändert vor jeder Verarbeitung;
+  opake Session-ID ist nie der Auth-Token; kein `secret` auf dem Wire.
+- **Rollback:** diesen Commit reverten (Channel/Registry-Prep `a5727ed` bleibt nutzbar).
+- **Commit:** `refactor(protocol): route legacy traffic through typed channel`.
+- **Offene Risiken:** alle Verbindungen sind in Slice 3 Legacy (V1-Aushandlung erst Slice 4);
+  `rt.ws_clients`-Attribut bleibt (Isolationstest), wird aber nicht mehr genutzt.

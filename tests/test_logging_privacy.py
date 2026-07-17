@@ -14,6 +14,7 @@ import time
 import unittest
 from unittest import mock
 
+import wire_testing as wt
 import tests  # noqa: F401  — synthetische Config-Fixture
 
 import obslog
@@ -117,7 +118,7 @@ class ActionResultLeakTests(_PrivacyTestCase):
         try:
             with _RootCapture() as cap:
                 run(assistant_core.run_action_and_respond(
-                    "sess-l2", actions.Action("CLIPBOARD", "zusammenfassen"), _FakeWS()))
+                    "sess-l2", actions.Action("CLIPBOARD", "zusammenfassen"), wt.legacy_sink(_FakeWS().send_json)))
             combined = self.combined(cap)
         finally:
             clipboard_tools.get_clipboard_text = self._saved_clip
@@ -138,7 +139,7 @@ class ActionResultLeakTests(_PrivacyTestCase):
                     spec, execute=lambda payload, ctx: fake_ctx(payload))}):
             with _RootCapture() as cap:
                 run(assistant_core.run_action_and_respond(
-                    "sess-l3", actions.Action("PROJECT_CONTEXT", "Nordlicht"), _FakeWS()))
+                    "sess-l3", actions.Action("PROJECT_CONTEXT", "Nordlicht"), wt.legacy_sink(_FakeWS().send_json)))
             combined = self.combined(cap)
         self.assertNotIn(S_VAULT, combined, "L3: Vault-Inhalt im Log")
 
@@ -157,7 +158,7 @@ class ExceptionLeakTests(_PrivacyTestCase):
                 {"SEARCH": dataclasses.replace(spec, execute=boom)}):
             with _RootCapture() as cap:
                 run(assistant_core.run_action_and_respond(
-                    "sess-l5", actions.Action("SEARCH", "x"), _FakeWS()))
+                    "sess-l5", actions.Action("SEARCH", "x"), wt.legacy_sink(_FakeWS().send_json)))
             combined = self.combined(cap)
         self.assertNotIn(S_EXC, combined, "L5/L6: Exception-Inhalt/Traceback im Log")
         # Sichere Exception-Metadaten bleiben sichtbar.

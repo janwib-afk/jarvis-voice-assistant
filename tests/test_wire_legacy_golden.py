@@ -230,6 +230,20 @@ class LegacyBroadcastAndRestGoldenTests(unittest.TestCase):
         self.assertIsNone(frame["app"])
         self.assertIsInstance(frame["ts"], float)
 
+    def test_disconnect_unregisters_from_registry(self):
+        # Nach dem Schließen der Verbindung ist die ConnectionRegistry wieder leer
+        # (kein Verbindungs-Leak); ein Broadcast bricht danach nicht.
+        with self._ws() as sock:
+            sock.receive_json()  # health
+            self.assertEqual(self.runtime.connections.count(), 1)
+        # Kurze Verarbeitungszeit fürs finally (Worker-Cancel + unregister).
+        import time as _t
+        for _ in range(50):
+            if self.runtime.connections.count() == 0:
+                break
+            _t.sleep(0.02)
+        self.assertEqual(self.runtime.connections.count(), 0)
+
     def test_launcher_changed_broadcast_shape(self):
         with self._ws() as sock:
             sock.receive_json()  # health

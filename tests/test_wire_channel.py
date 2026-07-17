@@ -46,6 +46,25 @@ class ConversationChannelTests(unittest.TestCase):
         self.assertEqual(env["session_id"], "sess-1")
         self.assertEqual(env["type"], "response")
 
+    def test_send_lock_serializes_concurrent_emits(self):
+        # Worker vs. REST-Broadcast: der Send-Lock verhindert verschränkte send_json.
+        order = []
+
+        async def slow_send(frame):
+            order.append(("start", frame["type"]))
+            await asyncio.sleep(0.01)
+            order.append(("end", frame["type"]))
+
+        ch = wp.ConversationChannel(slow_send, wp.ProtocolContext.legacy(),
+                                    session_id="s", protocol=_proto())
+
+        async def both():
+            await asyncio.gather(ch.emit(wp.Health(warnings=())), ch.emit(wp.StopAck()))
+
+        run(both())
+        # Serialisiert => start,end,start,end (nie start,start).
+        self.assertEqual([o[0] for o in order], ["start", "end", "start", "end"])
+
 
 class ConnectionRegistryTests(unittest.TestCase):
     def _registry(self):

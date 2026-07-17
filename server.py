@@ -15,7 +15,6 @@ import contextlib
 import json
 import os
 import secrets
-import time
 
 import anthropic
 import httpx
@@ -32,6 +31,7 @@ import configuration
 import memory
 import obslog
 import runtime as runtime_mod
+import wire_protocol as wp
 
 # Logging: strukturierte Operational Events mit zentraler Redaction (RFC-0004).
 # Der Import konfiguriert NICHTS (Import-Sicherheit, D9) — die Verdrahtung passiert
@@ -67,8 +67,8 @@ runtime = runtime_mod.Runtime.for_production()
 # ihrer Configuration (RFC-0003 Slice 5: A6-Cleanup) — es gibt keine zweite,
 # veraenderbare Wahrheit mehr.
 SESSION_TOKEN = runtime.session_token
-# Verbundene WS-Clients — fuer Push-Updates (z.B. frische Warnings nach Settings-Save).
-ws_clients: set[WebSocket] = runtime.ws_clients
+# Verbundene WS-Clients werden jetzt in der Runtime-ConnectionRegistry gehalten
+# (RFC-0005 §12) — kein Modul-Global mehr; Broadcasts laufen über rt.connections.
 
 # Routen werden auf einem APIRouter registriert, damit create_app(runtime) sie
 # auf einer frischen, isolierten App montieren kann.
@@ -99,12 +99,15 @@ async def websocket_endpoint(ws: WebSocket):
         return
 
     await ws.accept()
-    session_id = str(id(ws))
-    rt.ws_clients.add(ws)
+    # Verbindung in der Runtime-Registry anmelden (RFC-0005): opake Session-ID statt
+    # str(id(ws)); Sendepfad via ConversationChannel (Send-Lock). Slice 3: Legacy
+    # (kein Subprotokoll angeboten) — der beobachtbare Output bleibt unverändert.
+    channel, _accepted = rt.connections.register(ws.send_json, [])
+    session_id = channel.session_id
     obslog.event("ws.connected")
 
-    # Startup-Warnungen ans Status-Center melden.
-    await ws.send_json({"type": "health", "warnings": rt.startup_warnings})
+    # Startup-Warnungen ans Status-Center melden (sofortiger Health-Frame).
+    await channel.emit(wp.Health(warnings=tuple(rt.startup_warnings)))
 
     # Nachrichten laufen als Task neben der Receive-Loop — so kommt ein "Stopp"
     # auch WÄHREND einer langen Aktion (z.B. 3-Minuten-Recherche) durch.
@@ -117,14 +120,17 @@ async def websocket_endpoint(ws: WebSocket):
     # Ohne dieses Flag koennte ein Stopp, der zeitgleich mit einem Disconnect
     # eintrifft, den Worker seinen eigenen CancelledError schlucken lassen
     # (task.cancelled() waere True) — der Worker wuerde leaken.
-    queue: asyncio.Queue[str] = asyncio.Queue()
+    # Queue-Einträge tragen Command UND Correlation zusammen (RFC-0005 §4): ein
+    # dekodierter SayText (Text + serverseitige/gespiegelte correlation_id).
+    queue: asyncio.Queue = asyncio.Queue()
     state: dict = {"task": None, "stopping": False}
 
     async def worker():
         while True:
-            text = await queue.get()
+            cmd = await queue.get()
+            sink = channel.event_sink(cmd.correlation_id)  # Correlation pro Command gebunden
             task = asyncio.create_task(assistant_core.process_message(
-                session_id, text, ws, mutate_launcher=_launcher_hook(rt)))
+                session_id, cmd.text, sink, mutate_launcher=_launcher_hook(rt)))
             state["task"] = task
             try:
                 await task
@@ -141,7 +147,7 @@ async def websocket_endpoint(ws: WebSocket):
                 # Unerwartete Fehler beenden nie die Verbindung.
                 obslog.event("message.failed", error_type=type(e).__name__, where="worker")
                 try:
-                    await assistant_core.send_error(ws, "llm", "Interner Fehler bei der Verarbeitung.")
+                    await assistant_core.send_error(sink, "llm", "Interner Fehler bei der Verarbeitung.")
                 except Exception:
                     pass
             finally:
@@ -152,11 +158,13 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         while True:
             data = await ws.receive_json()
-            user_text = data.get("text", "").strip()
+            cmd = rt.wire_protocol.decode_command(data, channel.ctx)
 
-            # Stopp: laufende Verarbeitung/Aktion abbrechen, Queue leeren,
-            # Frontend stoppt die Audio-Wiedergabe (Frame type=stop).
-            if data.get("type") == "stop" or actions.is_stop_command(user_text):
+            # Stopp: explizites Stop-Command ODER ein Stop-Wort als SayText.
+            is_stop = isinstance(cmd, wp.Stop) or (
+                isinstance(cmd, wp.SayText) and actions.is_stop_command(cmd.text))
+            if is_stop:
+                stop_corr = cmd.correlation_id
                 task = state["task"]
                 was_busy = task is not None and not task.done()
                 if was_busy:
@@ -165,16 +173,17 @@ async def websocket_endpoint(ws: WebSocket):
                     queue.get_nowait()
                 assistant_core.pending_confirm.pop(session_id, None)
                 obslog.event("message.stopped", was_busy=was_busy)
-                await ws.send_json({"type": "stop"})
+                await channel.emit(wp.StopAck(), correlation_id=stop_corr)
                 if was_busy:
-                    await ws.send_json({"type": "response", "text": "Okay, gestoppt.", "audio": ""})
+                    await channel.emit(wp.SpokenResponse(text="Okay, gestoppt.", audio=""),
+                                       correlation_id=stop_corr)
                 continue
 
-            if not user_text:
-                continue
+            if not isinstance(cmd, wp.SayText):
+                continue  # None (Legacy ignoriert) — kein Fehlerframe
 
-            obslog.event("message.received", text_len=len(user_text))
-            await queue.put(user_text)
+            obslog.event("message.received", text_len=len(cmd.text))
+            await queue.put(cmd)
 
     except WebSocketDisconnect:
         pass
@@ -186,7 +195,7 @@ async def websocket_endpoint(ws: WebSocket):
         worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await worker_task
-        rt.ws_clients.discard(ws)
+        rt.connections.unregister(channel)
         assistant_core.end_session(session_id)
 
 
@@ -224,18 +233,10 @@ def _configuration(request: Request):
     return request.app.state.runtime.configuration
 
 
-async def broadcast_json(payload: dict):
-    """Ein Event an alle verbundenen WS-Clients pushen (tote Clients aufraeumen)."""
-    for client in list(ws_clients):
-        try:
-            await client.send_json(payload)
-        except Exception:
-            ws_clients.discard(client)
-
-
 async def broadcast_health(rt):
-    """Frische Warnings der App-Runtime an alle verbundenen Clients pushen."""
-    await broadcast_json({"type": "health", "warnings": rt.startup_warnings})
+    """Frische Warnings der App-Runtime an alle Clients — semantisches Health-Event,
+    versionsabhängig pro Empfänger encodiert (RFC-0005 §20)."""
+    await rt.connections.broadcast(wp.Health(warnings=tuple(rt.startup_warnings)))
 
 
 def _live_apply(rt, merged: dict) -> bool:
@@ -426,7 +427,7 @@ async def music_selection(request: Request):
     await _post_commit(rt, needs_refresh)
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
-    await broadcast_json({"type": "music_changed", "selected": file, "ts": time.time()})
+    await rt.connections.broadcast(wp.MusicChanged(selected=file))
     obslog.event("settings.saved", changed=1)
     return {"ok": True, "selected": file}
 
@@ -472,14 +473,8 @@ async def command_app_open(request: Request):
         return JSONResponse({"ok": False, "errors": ["Feld 'app' fehlt."]}, status_code=400)
 
     result = await asyncio.to_thread(app_launcher.launch, app_query)
-    await broadcast_json({
-        "type": "app_event",
-        "ok": result["ok"],
-        "app": result["app"],
-        "name": result["name"],
-        "message": result["message"],
-        "ts": time.time(),
-    })
+    await request.app.state.runtime.connections.broadcast(wp.AppEvent(
+        ok=result["ok"], app=result["app"], name=result["name"], message=result["message"]))
     status_code = 200 if result["ok"] else (404 if result["app"] is None else 500)
     return JSONResponse(result, status_code=status_code)
 
@@ -510,12 +505,8 @@ async def persist_launcher_intent(rt, intent, kind: str) -> list[str]:
     except config_loader.ConfigError as e:
         return [str(e)]
     await _post_commit(rt, needs_refresh)
-    await broadcast_json({
-        "type": "launcher_changed",
-        "kind": kind,
-        "active_profile": app_launcher.ACTIVE_PROFILE,
-        "ts": time.time(),
-    })
+    await rt.connections.broadcast(wp.LauncherChanged(
+        kind=kind, active_profile=app_launcher.ACTIVE_PROFILE))
     return []
 
 
@@ -776,9 +767,8 @@ async def _server_lifespan(app):
     _configure_logging()   # uvicorn-Weg: erst hier, nicht beim Import (D9)
     rt = app.state.runtime
     await rt.aopen()
-    global SESSION_TOKEN, ws_clients
+    global SESSION_TOKEN
     SESSION_TOKEN = rt.session_token
-    ws_clients = rt.ws_clients
     if rt.startup_warnings:
         # Warnungstexte enthalten lokale Pfade -> nur die Anzahl loggen (D3).
         obslog.event("config.startup_degraded", count=len(rt.startup_warnings))

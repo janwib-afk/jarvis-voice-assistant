@@ -19,6 +19,7 @@ import anthropic
 
 import actions
 import obslog
+import wire_protocol as wp
 import app_launcher
 import browser_tools
 import clipboard_tools
@@ -209,37 +210,43 @@ async def synthesize_speech(text: str) -> tuple[bytes, str | None]:
     )
 
 
-async def send_error(ws, component: str, text: str, hint: str = ""):
-    """Strukturierter Fehler ans Frontend: component ∈ {llm, tts, browser, action, config}."""
-    await ws.send_json({"type": "error", "component": component, "text": text, "hint": hint})
+_RETRYABLE_COMPONENTS = ("llm", "tts", "browser")
 
 
-async def send_spoken_response(ws, text: str, display_text: str | None = None):
+def _error_code(component: str) -> str:
+    return f"{component}_failed"
+
+
+async def send_error(sink, component: str, text: str, hint: str = ""):
+    """Strukturierter Fehler ans Frontend: component ∈ {llm, tts, browser, action, config}.
+
+    Emittiert ein semantisches ErrorEvent; die Wire-Projektion (Legacy: text/hint,
+    V1: zusätzlich code/retryable) erledigt der Codec. Kein Wire-Dict im App-Code.
+    """
+    await sink.emit(wp.ErrorEvent(
+        component=component, message=text, hint=hint,
+        code=_error_code(component), retryable=component in _RETRYABLE_COMPONENTS))
+
+
+async def send_spoken_response(sink, text: str, display_text: str | None = None):
     """Antwort mit TTS senden; bei komplettem TTS-Ausfall zusätzlich einen tts-Fehler melden.
 
     ``display_text`` erlaubt eine längere Anzeige-Version (z.B. mit Quellen-URLs),
     während nur ``text`` vorgelesen wird.
     """
     audio, tts_err = await synthesize_speech(text)
-    await ws.send_json({
-        "type": "response",
-        "text": display_text or text,
-        "audio": base64.b64encode(audio).decode("utf-8") if audio else "",
-    })
+    await sink.emit(wp.SpokenResponse(
+        text=display_text or text,
+        audio=base64.b64encode(audio).decode("utf-8") if audio else ""))
     if not audio and tts_err:
-        await send_error(ws, "tts", "Sprachausgabe fehlgeschlagen — Antwort wird nur als Text angezeigt.", tts_err)
+        await send_error(sink, "tts", "Sprachausgabe fehlgeschlagen — Antwort wird nur als Text angezeigt.", tts_err)
 
 
-async def send_action_event(ws, phase: str, action_type: str, detail: str = ""):
-    """Aktionshistorie-Event: phase ∈ {start, done, error}."""
-    await ws.send_json({
-        "type": "action",
-        "phase": phase,
-        "action": action_type,
-        "label": actions.label_for(action_type),
-        "detail": detail,
-        "ts": time.time(),
-    })
+async def send_action_event(sink, phase: str, action_type: str, detail: str = ""):
+    """Aktionshistorie-Event: phase ∈ {start, done, error}. Legacy-`ts` setzt der Codec."""
+    await sink.emit(wp.ActionLifecycle(
+        phase=phase, action=action_type,
+        label=actions.label_for(action_type), detail=detail))
 
 
 def summary_system_prompt(action_type: str) -> str:
@@ -314,34 +321,34 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
     return f"{summary}\n\n{quellen_block}"
 
 
-async def run_action_and_respond(session_id: str, action: actions.Action, ws,
+async def run_action_and_respond(session_id: str, action: actions.Action, sink,
                                  mutate_launcher=None):
     """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events)."""
     obslog.event("action.started", action=action.type)
 
     # Quick voice feedback for SCREEN so user knows Jarvis is working
     if action.type == "SCREEN":
-        await send_spoken_response(ws, "Ich werfe kurz einen Blick auf deinen Bildschirm.")
+        await send_spoken_response(sink, "Ich werfe kurz einen Blick auf deinen Bildschirm.")
 
     spec = actions.spec_for(action.type)
-    await send_action_event(ws, "start", action.type, (action.payload or "")[:80])
+    await send_action_event(sink, "start", action.type, (action.payload or "")[:80])
     try:
         # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
         action_result = await asyncio.wait_for(
             execute_action(action, session_id, mutate_launcher), timeout=spec.timeout)
         obslog.event("action.finished", action=action.type, result_len=len(action_result))
-        await send_action_event(ws, "done", action.type)
+        await send_action_event(sink, "done", action.type)
     except asyncio.CancelledError:
         # Nutzer hat "Stopp" gesagt: Historie markieren, Abbruch weiterreichen.
         obslog.event("action.cancelled", action=action.type)
-        await send_action_event(ws, "error", action.type, "abgebrochen")
+        await send_action_event(sink, "error", action.type, "abgebrochen")
         raise
     except Exception as e:
         component = "browser" if spec.is_browser else "action"
         obslog.event("action.failed", action=action.type,
                      error_type=type(e).__name__, component=component)
-        await send_action_event(ws, "error", action.type, type(e).__name__)
-        await send_error(ws, component, f"Aktion '{spec.label}' fehlgeschlagen.", type(e).__name__)
+        await send_action_event(sink, "error", action.type, type(e).__name__)
+        await send_error(sink, component, f"Aktion '{spec.label}' fehlgeschlagen.", type(e).__name__)
         action_result = f"Fehler: {e}"
 
     if action.type == "OPEN":
@@ -354,7 +361,7 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws,
         if not msg or msg.startswith("Fehler:"):
             msg = f"Das hat leider nicht funktioniert, {USER_ADDRESS}."
         _remember(session_id, "assistant", msg)
-        await send_spoken_response(ws, msg)
+        await send_spoken_response(sink, msg)
         return
 
     # Ergebnis zusammenfassen — Aufgabe und Länge sind aktionsspezifisch.
@@ -373,7 +380,7 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws,
                 display_text = await _finish_research(summary, action_result)
         except Exception as e:
             obslog.event("llm.request_failed", error_type=type(e).__name__)
-            await send_error(ws, "llm", "KI-Anfrage fehlgeschlagen.", _llm_error_hint(e))
+            await send_error(sink, "llm", "KI-Anfrage fehlgeschlagen.", _llm_error_hint(e))
             summary = f"Das hat leider nicht funktioniert, {USER_ADDRESS}."
     else:
         summary = f"Das hat leider nicht funktioniert, {USER_ADDRESS}."
@@ -381,10 +388,10 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws,
     # Anzeige-Version (mit Quellen) in die Historie — so funktionieren Folgefragen
     # wie "Öffne die zweite Quelle".
     _remember(session_id, "assistant", display_text or summary)
-    await send_spoken_response(ws, summary, display_text)
+    await send_spoken_response(sink, summary, display_text)
 
 
-async def process_message(session_id: str, user_text: str, ws, mutate_launcher=None):
+async def process_message(session_id: str, user_text: str, sink, mutate_launcher=None):
     """Process message and send responses via WebSocket.
 
     ``mutate_launcher``: semantischer Launcher-Hook der KONKRETEN App-Runtime,
@@ -401,11 +408,11 @@ async def process_message(session_id: str, user_text: str, ws, mutate_launcher=N
         if verdict is not None:
             _remember(session_id, "user", user_text)
             if verdict:
-                await run_action_and_respond(session_id, pending, ws, mutate_launcher)
+                await run_action_and_respond(session_id, pending, sink, mutate_launcher)
             else:
                 msg = f"Verstanden, {USER_ADDRESS} — ich lasse es bleiben."
                 _remember(session_id, "assistant", msg)
-                await send_spoken_response(ws, msg)
+                await send_spoken_response(sink, msg)
             return
 
     # Refresh weather + tasks on activate — blockiert die Event-Loop nicht.
@@ -425,7 +432,7 @@ async def process_message(session_id: str, user_text: str, ws, mutate_launcher=N
         )
     except Exception as e:
         obslog.event("llm.request_failed", error_type=type(e).__name__)
-        await send_error(ws, "llm", "KI-Anfrage fehlgeschlagen.", _llm_error_hint(e))
+        await send_error(sink, "llm", "KI-Anfrage fehlgeschlagen.", _llm_error_hint(e))
         return
     reply = response.content[0].text
     obslog.event("llm.response_received", reply_len=len(reply))
@@ -437,7 +444,7 @@ async def process_message(session_id: str, user_text: str, ws, mutate_launcher=N
     # Speak the main response immediately
     if spoken_text:
         _remember(session_id, "assistant", spoken_text)
-        await send_spoken_response(ws, spoken_text)
+        await send_spoken_response(sink, spoken_text)
 
     # Execute action if any
     if action:
@@ -448,6 +455,6 @@ async def process_message(session_id: str, user_text: str, ws, mutate_launcher=N
             detail = f" ({action.payload[:60]})" if action.payload else ""
             frage = f"Soll ich das wirklich ausführen: {label}{detail}? Ja oder Nein, {USER_ADDRESS}."
             _remember(session_id, "assistant", frage)
-            await send_spoken_response(ws, frage)
+            await send_spoken_response(sink, frage)
             return
-        await run_action_and_respond(session_id, action, ws, mutate_launcher)
+        await run_action_and_respond(session_id, action, sink, mutate_launcher)
