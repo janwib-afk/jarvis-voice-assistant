@@ -33,11 +33,22 @@ Diese Logs persistieren im rotierenden `jarvis-launcher.log` (stdout/stderr-Erfa
 | **4** | `f99d411` | Externe Grenzen: `browser_tools` (behebt **L1**), `tts`, `memory`, `clipboard_tools`, `app_launcher`, `monitors` | Commit reverten |
 | **5** | `bd638e1` | `install_protection()`: zentrales, sanitierendes Schutznetz am Root-Handler (uvicorn/httpx/anthropic/playwright): URL→Host, Query-Secrets/Token→`<redacted>`, kein Traceback | Commit reverten → nur Allowlist-Events (kein Netz) |
 | **6** | `c58f8e8` | Fault-Injection (§23) + Datenschutz-Härtung; Logging-Suiten 5× flake-frei | Commit reverten |
-| **7** | _(dieser Commit)_ | Doku + CI-Gates (`obslog.py` in `compileall`/Smoke-Import), **SI-9-Verschärfung**, dieser Bericht | Commit reverten |
+| **7** | `2717e51` | Doku + CI-Gates (`obslog.py` in `compileall`/Smoke-Import), **SI-9-Verschärfung**, dieser Bericht | Commit reverten |
+| **4-Nachtrag** | `0bd9886` | Nachträglich migriert: `configuration.py` (das in Slice 4 übersehene RFC-0003-Modul) → `config.migrated` / `config.restore_failed`; totes `logger`/`import logging` entfernt | Commit reverten |
+
+### Recovery-Slices (nach dem ersten Hosted-Run, siehe Verifikation)
+
+| Slice | Commit | Inhalt | Rückrollpunkt |
+|---|---|---|---|
+| **R1** | `2d04691` | `fix(ci)`: Smoke-Harness ersetzte `logging.disable(CRITICAL)` durch kontrollierte Stream-Erfassung + Handler-Ablösung (behebt die 4 roten Fast-Gate-Tests) | Commit reverten |
+| **R2** | `f8575ce` | `fix(logging)`: Schutz-/Fail-closed-Lücken — bestehende Handler neutralisiert, `propagate=False`-Logger, `handleError`, JSONL-Konsistenz, Sink-Erhalt, Schema `ts`+`logger`, D6-`location` | Commit reverten (Netz/Schema-Zusatz revertierbar) |
+| **R3** | `137e994` | `test(logging)`: Sink-Regressionen für `configuration.py` (Migration/Restore) | Commit reverten |
+| **R4** | _(dieser Commit)_ | `docs(logging)`: dieser Recovery-Bericht | Commit reverten |
 
 Jeder Slice ist ein eigener, grüner, einzeln revertierbarer Commit. Es gab **keine**
-absichtlich roten Commits; jeder der sechs Leckvektor-Tests wurde vor dem Fix rot und
-danach grün belegt (Red-Green im Verlauf dokumentiert).
+absichtlich roten Commits; jeder der sechs Leckvektor-Tests (L1–L6) sowie die
+Recovery-Fixes (Handler-/Fail-closed-Lücken, Sink-Erhalt, Schema, Configuration-
+Regressionen) wurden vor dem Fix rot und danach grün belegt.
 
 ## Finale obslog-Schnittstelle
 
@@ -82,14 +93,24 @@ Runtime-Zustand.
 
 ## Legacy-/Drittanbieter-Schutznetz (§17) — Netz, keine Garantie
 
-`install_protection()` hängt genau einen sanitierenden Handler an den Root-Logger. Der
-`_ProtectionFormatter` rendert nur `name level <sanitierte Nachricht>`:
+`install_protection()` tut zweierlei (verschärft im Recovery-Slice R2): **(1)** es hängt
+einen eigenen, fail-closed Handler (`_ProtectionHandler`) an den Root-Logger, und **(2)**
+es neutralisiert **alle bereits vorhandenen** Handler — an Root **und** an jedem benannten
+Logger, auch `propagate=False` — mit einem sanitierenden Filter (`_SanitizingFilter`), der
+den Record **in-place** bereinigt, bevor irgendein Handler ihn formatiert. Ein
+zusätzlicher sicherer Handler allein genügt nicht.
+
+Der `_ProtectionFormatter` rendert `ts logger [level] <sanitierte Nachricht>` (bzw. eine
+gültige JSON-Zeile bei JSONL):
 
 - **URLs** → Schema+Host;
 - **sensible Query-Werte** (`token/key/api_key/password/secret/access_token/auth`, auch in
   bloßen Pfaden wie `uvicorn.access "GET /ws?token=…"`) → `<redacted>`;
 - **Secret-Muster** (`sk-…`, `Bearer …`, JWT) → `<redacted>`;
-- **Traceback/exc_text** werden gar nicht erst angehängt.
+- **Traceback/exc_text/rohe Args** werden entfernt und nie angehängt;
+- **`handleError`** (auch bei `logging.raiseExceptions=True` + kaputtem Stream) gibt nie
+  den Rohrecord/-Traceback aus — höchstens eine statische, datenfreie Fallback-Zeile;
+- der Formatter **wirft nie** (Fallback-Zeile).
 
 Laute INFO-Logger (`httpx`, `anthropic`, `uvicorn.access`, `httpcore`, `playwright`)
 werden konservativ auf WARNING gehoben. Die **harte Garantie** liefern die
@@ -103,13 +124,37 @@ Allowlist-Ereignisse des eigenen Codes; das Netz ist die bewusst benannte Grenze
 - **Kein** neuer Sink/FileHandler, **keine** neue Dependency. Rotation/Aufbewahrung
   unverändert (Launcher). REST-/WS-/Config-/Memory-/UI-Verträge unberührt.
 
-## Verifikation
+## Hosted-CI-Historie (Recovery)
 
-- Volle Suite grün (`python -m unittest discover -s tests`): **723** Tests, 0 Skips-Regression.
+- **Erster Hosted-Run `29605541336` (auf `0bd9886`) war ROT.** Browser-Gate grün,
+  **Fast-Gate rot**: 723 Tests, **4 Failures**, 0 Errors, 0 Skips — die vier
+  obslog-Schutznetz-Tests (`ProtectionNetTests` + `FaultInjectionTests.
+  test_protection_formatter_survives_unrenderable_message`) mit leerem formatiertem
+  Stream.
+- **Ursache (Test-Harness-Konflikt, kein Produktfehler):** `scripts/smoke-test.py`
+  rief vor der Suite `logging.disable(logging.CRITICAL)` auf — das unterdrückt auch
+  WARNING/ERROR global, sodass die Schutznetz-Tests keinen Output erhielten. Behoben in
+  R1 (`2d04691`) durch kontrollierte Stream-Erfassung statt globalem Abschalten.
+- Ein PC-Ausfall stoppte lediglich einen funktionslosen CI-Monitor (er nutzte ein nicht
+  installiertes externes `jq` und gab nur `jq: command not found` aus) — **keine
+  Implementierung und kein Commit gingen verloren** (lokaler HEAD = Remote = `0bd9886`,
+  nichts gestaged, kein Merge-/Rebase-Zustand).
+- **Neuer grüner Hosted-Run auf dem Recovery-HEAD:** _wird nach dem Push ergänzt_
+  (Freigabe erst, wenn Fast **und** Browser auf dem neuen Branch-HEAD grün sind).
+
+## Verifikation (frische lokale Läufe nach allen Fixes)
+
+- Volle Suite grün (`python -m unittest discover -s tests`): **734** Tests, 0 Failures,
+  0 Errors, 0 unerwartete Skips.
 - Alle sechs Leckvektoren L1–L6 mit Regressionstest am Sink-Output, je ohne Fix rot belegt.
-- Fault-Injection (§23) + Import-Sicherheit (Subprozess) grün; Logging-Suiten 5× flake-frei.
+- Recovery-Sicherheitstests (5A bestehende Handler, 5B `propagate=False`, 5C `handleError`,
+  5D JSONL, 5E Lifespan-Sink-Erhalt, 5F Schema, D6 Codeort) je rot→grün belegt.
+- Configuration-Producer-Regressionen (`config.migrated`/`config.restore_failed`) grün;
+  Migrations-Regression rot→grün belegt.
+- Fault-Injection (§23) + Import-Sicherheit (Subprozess: `ROOT_HANDLERS 0`) grün;
+  Logging-Suiten 5× flake-frei; Smoke-Test grün (734 Tests, EXIT 0).
 - Eingecheckte Test-Fixture `tests/fixtures/config.test.json` bytegleich unverändert.
-- CI-Gates ergänzt: `obslog.py` in `compileall` (`pr.yml`, `CI_PIPELINE.md`) und im
+- CI-Gates: `obslog.py` in `compileall` (`pr.yml`, `CI_PIPELINE.md`) und im
   Smoke-Import-Gate.
 
 ## Bewusst außerhalb des Scopes

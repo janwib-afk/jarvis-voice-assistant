@@ -10,14 +10,17 @@
 > Variante C). Das neue Modul [`obslog.py`](../../obslog.py) ist das **einzige**
 > Emit-Interface (`event(name, **fields)`) mit geschlossener Feld-Allowlist und
 > fail-closed Redaction; es gibt kein Freitextfeld. Alle Producer (server, assistant_core,
-> actions, browser_tools, tts, memory, clipboard_tools, app_launcher, monitors) sind
-> migriert; `logging.basicConfig` beim Import ist entfernt (Import-sicher, 0 Root-Handler),
-> die Verdrahtung passiert am Startpfad. Ein zentrales Schutznetz
-> (`obslog.install_protection`) sanitiert Legacy-/Drittanbieter-Records
-> (uvicorn/httpx/anthropic/playwright: URL→Host, Token/Secrets→`<redacted>`, kein
-> Traceback). Alle **sechs** Leckvektoren L1–L6 haben je einen Regressionstest am
-> Sink-Output, der ohne den Fix rot ist (u. a. die volle Such-URL auf INFO → nur noch
-> Zielhost). **SI-9 verschärft:** rohe private Inhalte auf **keinem** Level. Details:
+> actions, browser_tools, tts, memory, clipboard_tools, app_launcher, monitors,
+> **configuration**) sind migriert; `logging.basicConfig` beim Import ist entfernt
+> (Import-sicher, 0 Root-Handler), die Verdrahtung passiert am Startpfad. Formatierte
+> Events tragen Timestamp, Logger-Namespace, Level, Eventname und sichere Felder (Text
+> und JSONL). Ein zentrales Schutznetz (`obslog.install_protection`) **neutralisiert auch
+> bereits vorhandene und nicht-propagierende Handler** und sanitiert
+> Legacy-/Drittanbieter-Records (uvicorn/httpx/anthropic/playwright: URL→Host,
+> Token/Secrets→`<redacted>`, kein Traceback; fail-closed `handleError`). Alle **sechs**
+> Leckvektoren L1–L6 haben je einen Regressionstest am Sink-Output, der ohne den Fix rot
+> ist (u. a. die volle Such-URL auf INFO → nur noch Zielhost). **SI-9 verschärft:** rohe
+> private Inhalte auf **keinem** Level. Details:
 > [PHASE4F_STRUCTURED_LOGGING_REDACTION_MIGRATION.md](../architecture/PHASE4F_STRUCTURED_LOGGING_REDACTION_MIGRATION.md).
 
 > **Status 2026-07-16 (Phase 4D, RFC-0003 IMPLEMENTIERT):** Die Configuration ist
