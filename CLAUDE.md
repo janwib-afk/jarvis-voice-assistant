@@ -39,6 +39,10 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 │                         #   Single Writer — snapshot()/settings_view()/mutate(intent),
 │                         #   schema_version v1 + Migration, atomarer Austausch, Rollback
 ├── config_loader.py       # Leaf: Config laden/validieren (Settings-Whitelist, apps-Registry)
+├── obslog.py              # Strukturierte Betriebslogs als deep module (RFC-0004): einziges
+│                         #   Emit-Interface event(name, **fields) mit geschlossener Feld-
+│                         #   Allowlist + fail-closed Redaction; install_protection() als
+│                         #   Schutznetz fuer uvicorn/httpx/… — rohe private Inhalte auf keinem Level
 ├── actions.py             # Action als deep module: Registry (ActionSpec) mit Metadaten,
 │                         #   Ausfuehrung (execute) + Prompt-Selbstbeschreibung (describe)
 │                         #   je Action; Parsing + URL/Origin-Policies + Stop-Woerter

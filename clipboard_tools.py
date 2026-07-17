@@ -3,10 +3,9 @@ Jarvis V2 — Clipboard Tools
 Liest die Windows-Zwischenablage ohne Zusatzpakete (PowerShell Get-Clipboard).
 """
 
-import logging
 import subprocess
 
-logger = logging.getLogger("jarvis.clipboard")
+import obslog
 
 MAX_CLIPBOARD_CHARS = 4000
 
@@ -26,11 +25,11 @@ def get_clipboard_text(max_chars: int = MAX_CLIPBOARD_CHARS) -> str:
             timeout=5,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except Exception:
-        logger.warning("Zwischenablage konnte nicht gelesen werden", exc_info=True)
+    except Exception as e:
+        obslog.event("clipboard.read_failed", error_type=type(e).__name__)
         return ""
     if result.returncode != 0:
-        logger.warning("Get-Clipboard Exit-Code %s", result.returncode)
+        obslog.event("clipboard.read_failed", code=result.returncode)
         return ""
     text = result.stdout.decode("utf-8", errors="replace").strip()
     return text[:max_chars]

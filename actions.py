@@ -8,7 +8,6 @@ damit es isoliert (ohne Serverstart) getestet werden kann.
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import time
 from dataclasses import dataclass
@@ -21,7 +20,7 @@ import clipboard_tools
 import memory
 import screen_capture
 
-logger = logging.getLogger("jarvis.actions")
+import obslog
 
 # Gleiche Regex wie bisher: [ACTION:TYP] optionaler payload bis Zeilenende.
 ACTION_PATTERN = re.compile(r'\[ACTION:(\w+)\]\s*(.*?)$', re.DOTALL | re.MULTILINE)
@@ -147,7 +146,7 @@ async def _exec_research(payload: str, ctx: ActionContext) -> str:
             break
         result = await browser_tools.visit(link["url"], max_chars=1500)
         if "error" in result:
-            logger.info("Recherche-Quelle übersprungen: %s", link["url"])
+            obslog.event("browser.source_skipped", url=link["url"])
             continue
         gelesen += 1
         title = (result.get("title") or link["title"]).strip()

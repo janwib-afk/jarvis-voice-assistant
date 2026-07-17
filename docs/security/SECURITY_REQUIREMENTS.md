@@ -27,8 +27,15 @@
 - **SI-8 (Preview vor sensitiver Cloud-Übertragung):** Screen/Clipboard und künftige
   `external-write` benötigen eine sichtbare Übertragungsvorschau + Datenklasse (geplant).
   (TM-005, TM-006)
-- **SI-9 (Minimale Logs):** Keine vollständigen Gespräche/Screens/Clipboard/Vault-Inhalte
-  in Standardlogs; private Inhalte nur DEBUG (Default aus). (TM-005/006)
+- **SI-9 (Minimale Logs):** **Rohe private Inhalte erscheinen auf KEINEM Log-Level**
+  (verschärft mit RFC-0004, 2026-07-17 — zuvor „nur DEBUG"). Betriebslogs sind
+  strukturierte, benannte Ereignisse mit einer geschlossenen Feld-Allowlist
+  (`obslog.event`); es gibt kein Freitextfeld und keine Möglichkeit, roh zu loggen.
+  Unbekannte/falsch getippte Felder werden verworfen (nur `dropped_fields=<Anzahl>`),
+  URLs auf Schema+Host reduziert, Exceptions auf Typ/Ort. Legacy-/Drittanbieter-Logs
+  (uvicorn/httpx/anthropic/playwright) laufen durch ein zentrales Schutznetz
+  (`obslog.install_protection`) — ein Netz, keine Garantie; die Garantie liefern die
+  Allowlist-Ereignisse. (TM-005/006)
 
 ## 2. Datenklassen
 
@@ -36,7 +43,7 @@
 |---|---|---|---|---|---|---|---|---|
 | `public` | Nachrichten, öffentliche Webseiten, Wetter | erlaubt | erlaubt (network-read) | nein | Metadaten ok | keine besondere | n/a | beliebig lokal |
 | `local` | App-Registry, Profile, Monitor-Map, Health, `city` | erlaubt | nur wenn nötig | nein | ok | dauerhaft (config) | via Settings/UI | entsperrt |
-| `personal` | user_name/role, History, Inbox, Vault-Summary, Memory | erlaubt | nur als LLM-Kontext mit Zweck | künftig | nur DEBUG | Datei/Session | nutzer-editierbare Dateien | entsperrt |
+| `personal` | user_name/role, History, Inbox, Vault-Summary, Memory | erlaubt | nur als LLM-Kontext mit Zweck | künftig | nur Metadaten (nie roh, kein Level) | Datei/Session | nutzer-editierbare Dateien | entsperrt |
 | `sensitive` | Screen-Capture, Clipboard, volle Vault-Notizen, Recherche-Rohtext | transient bevorzugt | **nur mit Vorschau + Secret-Filter** (geplant) | **ja (geplant)** | nie voller Inhalt | transient | n/a | **nur entsperrt** |
 | `secret` | Anthropic/ElevenLabs-Keys, Session-Token | `config.json` Klartext (heute) → **DPAPI (Ziel)** | **nie als Inhalt** | n/a | **nie (redacted)** | bis Rotation | Nutzer verwaltet Config | n/a |
 
@@ -92,8 +99,21 @@ Für alle URL-Navigationen (`browser_tools.visit/open_url/fetch_page_text_fallba
 
 ## 8. Logging und Redaction
 
-- Betriebslogs INFO; private Inhalte nur DEBUG (`server.py:36`). Werte von Secrets nie
-  (redacted). Geplant (Phase 11): strukturierte Logs + durchgehende Redaction + Korrelation.
+- **Strukturierte Betriebslogs (RFC-0004, umgesetzt 2026-07-17):** ausschließlich benannte
+  Ereignisse mit geschlossener Feld-Allowlist über `obslog.event(name, **fields)`. Kein
+  Freitext-Payload; rohe private Inhalte erscheinen auf **keinem** Level (SI-9). Zentrale,
+  fail-closed Redaction: unbekannte/falsch getippte Felder werden verworfen (nur
+  `dropped_fields=<Anzahl>`, ohne `str()`/`repr()` auf dem Rohwert), URLs auf Schema+Host,
+  Exceptions auf Typ/Ort (nie Message/Traceback). Werte von Secrets sind strukturell nicht
+  darstellbar.
+- **Import-sicher:** der Import konfiguriert nichts (kein Handler, keine Datei, keine
+  Root-Logger-Änderung); die Verdrahtung passiert am Startpfad (`server._configure_logging`).
+- **Schutznetz für Legacy/Dritte:** `obslog.install_protection()` sanitiert propagierte
+  Records von uvicorn/httpx/anthropic/playwright (URL→Host, Query-Secrets/Token→`<redacted>`,
+  kein Traceback) — ein Netz, keine Garantie.
+- **Format/Level:** menschenlesbar per Default, JSONL via `JARVIS_LOG_FORMAT`; Level via
+  `JARVIS_LOG_LEVEL`. Kein neuer Sink/FileHandler, keine neue Dependency.
+- Offen (Phase 11): durchgehende Korrelation (`correlation_id`).
 
 ## 9. Panic Lock (geplant, nicht implementiert)
 

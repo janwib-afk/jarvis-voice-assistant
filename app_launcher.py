@@ -23,13 +23,12 @@ normalisierte Default (primary/fullscreen) dient nur der UI-Anzeige.
 und bleibt wie ``command`` serverseitig.
 """
 
-import logging
 import os
 import re
 import shutil
 import subprocess
 
-logger = logging.getLogger("jarvis.apps")
+import obslog
 
 APP_TYPES = ("url", "process")
 
@@ -70,16 +69,16 @@ def _normalize_placement(raw) -> dict:
     if raw is None:
         return placement
     if not isinstance(raw, dict):
-        logger.warning("Ungueltiges placement-Objekt — Standard (primary/fullscreen) verwendet.")
+        obslog.event("launcher.normalize_warning", reason="bad_placement_obj")
         return placement
     if raw.get("monitor") in PLACEMENT_MONITORS:
         placement["monitor"] = raw["monitor"]
     elif "monitor" in raw:
-        logger.warning("Ungueltiger placement.monitor — Standard 'primary' verwendet.")
+        obslog.event("launcher.normalize_warning", reason="bad_monitor")
     if raw.get("zone") in PLACEMENT_ZONES:
         placement["zone"] = raw["zone"]
     elif "zone" in raw:
-        logger.warning("Ungueltige placement.zone — Standard 'fullscreen' verwendet.")
+        obslog.event("launcher.normalize_warning", reason="bad_zone")
     return placement
 
 
@@ -126,7 +125,7 @@ def normalize_apps(raw) -> list[dict]:
     for i, entry in enumerate(raw or []):
         app = normalize_app_entry(entry)
         if app is None:
-            logger.warning("apps-Eintrag %d ist unbrauchbar und wird uebersprungen.", i)
+            obslog.event("launcher.normalize_warning", reason="bad_app_entry")
             continue
         normalized.append(app)
     return normalized
@@ -168,11 +167,11 @@ def normalize_launcher(raw_apps, raw_launcher) -> dict:
     seen: set[str] = set()
     for raw_profile in raw_launcher.get("profiles") or []:
         if not isinstance(raw_profile, dict):
-            logger.warning("Ungueltiges Profil uebersprungen (kein Objekt).")
+            obslog.event("launcher.normalize_warning", reason="profile_not_object")
             continue
         pid = _slugify(str(raw_profile.get("id", "") or "").strip())
         if not pid or pid in seen:
-            logger.warning("Profil ohne/mit doppelter ID uebersprungen.")
+            obslog.event("launcher.normalize_warning", reason="profile_bad_id")
             continue
         seen.add(pid)
         name = str(raw_profile.get("name", "") or "").strip() or pid.capitalize()
@@ -182,20 +181,17 @@ def normalize_launcher(raw_apps, raw_launcher) -> dict:
             for app_key, raw_state in raw_states.items():
                 app_id = ids_by_fold.get(str(app_key).strip().casefold())
                 if app_id is None:
-                    logger.warning("Profil '%s': App-Eintrag '%s' ist keiner App "
-                                   "zugeordnet — entfernt.", pid, app_key)
+                    obslog.event("launcher.normalize_warning", reason="profile_app_unmatched")
                     continue
                 if not isinstance(raw_state, dict):
-                    logger.warning("Profil '%s': App-Eintrag '%s' ist kein Objekt "
-                                   "— entfernt.", pid, app_key)
+                    obslog.event("launcher.normalize_warning", reason="profile_app_not_object")
                     continue
                 state = {"autostart": bool(raw_state.get("autostart", True))}
                 if isinstance(raw_state.get("placement"), dict):
                     # dict-Placement gilt als explizit; Teilobjekte werden gefuellt.
                     state["placement"] = _normalize_placement(raw_state["placement"])
                 elif "placement" in raw_state:
-                    logger.warning("Profil '%s', App '%s': ungueltiges placement "
-                                   "entfernt.", pid, app_id)
+                    obslog.event("launcher.normalize_warning", reason="profile_bad_placement")
                 states[app_id] = state
         profiles.append({"id": pid, "name": name, "apps": states})
 
@@ -203,7 +199,7 @@ def normalize_launcher(raw_apps, raw_launcher) -> dict:
         return _derive_default_launcher(raw_apps)
     active = _slugify(str(raw_launcher.get("active_profile", "") or "").strip())
     if active not in {p["id"] for p in profiles}:
-        logger.warning("Unbekanntes active_profile — erstes Profil verwendet.")
+        obslog.event("launcher.normalize_warning", reason="unknown_active_profile")
         active = profiles[0]["id"]
     return {"active_profile": active, "profiles": profiles}
 
@@ -215,8 +211,8 @@ def configure(raw_apps, raw_launcher=None) -> None:
     launcher = normalize_launcher(raw_apps, raw_launcher)
     PROFILES = launcher["profiles"]
     ACTIVE_PROFILE = launcher["active_profile"]
-    logger.info("App-Registry: %d App(s), %d Profil(e), aktiv: '%s'.",
-                len(APPS), len(PROFILES), ACTIVE_PROFILE)
+    obslog.event("launcher.configured", apps=len(APPS), profiles=len(PROFILES),
+                 active=ACTIVE_PROFILE)
 
 
 def _profile_by_id(profile_id) -> dict | None:
@@ -498,10 +494,10 @@ def launch(query: str) -> dict:
         else:
             _start_process(app["command"])
     except Exception as e:
-        logger.warning("App '%s' konnte nicht gestartet werden", app["id"], exc_info=True)
+        obslog.event("app.launch_failed", app=app["id"], error_type=type(e).__name__)
         return {"ok": False, "app": app["id"], "name": app["name"],
                 "message": f"'{app['name']}' konnte nicht gestartet werden ({type(e).__name__})."}
 
-    logger.info("App gestartet: %s (%s)", app["id"], app["type"])
+    obslog.event("app.launched", app=app["id"], kind=app["type"])
     return {"ok": True, "app": app["id"], "name": app["name"],
             "message": f"{app['name']} wird geöffnet."}

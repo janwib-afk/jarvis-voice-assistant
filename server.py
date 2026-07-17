@@ -13,7 +13,6 @@ sys.stderr.reconfigure(encoding='utf-8')
 import asyncio
 import contextlib
 import json
-import logging
 import os
 import secrets
 import time
@@ -31,15 +30,28 @@ import assistant_core
 import config_loader
 import configuration
 import memory
+import obslog
 import runtime as runtime_mod
 
-# Logging: Betriebs-Logs auf INFO, private Inhalte nur auf DEBUG (Default aus).
-# Level per Umgebungsvariable JARVIS_LOG_LEVEL ueberschreibbar.
-logging.basicConfig(
-    level=os.environ.get("JARVIS_LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("jarvis")
+# Logging: strukturierte Operational Events mit zentraler Redaction (RFC-0004).
+# Der Import konfiguriert NICHTS (Import-Sicherheit, D9) — die Verdrahtung passiert
+# einmalig am expliziten Startpfad (_configure_logging), fuer beide Entry Points:
+#   - python server.py  -> vor dem Config-Load
+#   - uvicorn server:app -> im Lifespan-Start (nicht beim Import)
+
+
+def _configure_logging() -> None:
+    """Einmalig am Startpfad: produktiver stderr-Sink + Format-/Level-Schalter.
+
+    Idempotent (obslog.configure ist idempotent). JARVIS_LOG_LEVEL (Default INFO)
+    und JARVIS_LOG_FORMAT=text|jsonl (Default text, ungueltig -> text) steuern die
+    Ausgabe. Kein FileHandler, keine neue Dependency (D10)."""
+    obslog.configure(
+        fmt=obslog.format_from_env(),
+        level=os.environ.get("JARVIS_LOG_LEVEL", "INFO"),
+    )
+    # Schutznetz fuer Legacy-/Drittanbieter-Records (uvicorn/httpx/anthropic/…).
+    obslog.install_protection()
 
 import browser_tools
 import health
@@ -76,20 +88,20 @@ async def websocket_endpoint(ws: WebSocket):
     # 1. Origin-Policy: lokale Origins immer; 'null' nur mit gueltigem Token
     #    (pywebview/WebView2-Sandbox); fremde/fehlende Origins abgelehnt.
     if not actions.is_origin_acceptable(origin, token_valid):
-        logger.warning("WS-Verbindung mit unzulaessigem Origin abgelehnt: %r", origin)
+        obslog.event("ws.rejected", reason="bad_origin")
         await ws.close(code=1008)
         return
 
     # 2. Session-Token hart pruefen (schuetzt auch lokale Origins).
     if not token_valid:
-        logger.warning("WS-Verbindung mit ungueltigem Token abgelehnt")
+        obslog.event("ws.rejected", reason="bad_token")
         await ws.close(code=1008)
         return
 
     await ws.accept()
     session_id = str(id(ws))
     rt.ws_clients.add(ws)
-    logger.info("Client verbunden")
+    obslog.event("ws.connected")
 
     # Startup-Warnungen ans Status-Center melden.
     await ws.send_json({"type": "health", "warnings": rt.startup_warnings})
@@ -125,9 +137,9 @@ async def websocket_endpoint(ws: WebSocket):
                         await task
                     raise
                 # Reiner Stopp: Child wurde abgebrochen — weiter mit der naechsten Nachricht.
-            except Exception:
+            except Exception as e:
                 # Unerwartete Fehler beenden nie die Verbindung.
-                logger.exception("Nachrichtenverarbeitung fehlgeschlagen")
+                obslog.event("message.failed", error_type=type(e).__name__, where="worker")
                 try:
                     await assistant_core.send_error(ws, "llm", "Interner Fehler bei der Verarbeitung.")
                 except Exception:
@@ -152,7 +164,7 @@ async def websocket_endpoint(ws: WebSocket):
                 while not queue.empty():
                     queue.get_nowait()
                 assistant_core.pending_confirm.pop(session_id, None)
-                logger.info("Stopp empfangen (Task aktiv: %s)", was_busy)
+                obslog.event("message.stopped", was_busy=was_busy)
                 await ws.send_json({"type": "stop"})
                 if was_busy:
                     await ws.send_json({"type": "response", "text": "Okay, gestoppt.", "audio": ""})
@@ -161,7 +173,7 @@ async def websocket_endpoint(ws: WebSocket):
             if not user_text:
                 continue
 
-            logger.debug("You: %s", user_text)
+            obslog.event("message.received", text_len=len(user_text))
             await queue.put(user_text)
 
     except WebSocketDisconnect:
@@ -255,15 +267,15 @@ async def _post_commit(rt, needs_refresh: bool) -> list[str]:
         try:
             # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop.
             await asyncio.to_thread(assistant_core.refresh_data)
-        except Exception:
-            logger.warning("Kontextdaten-Refresh nach Settings-Save fehlgeschlagen",
-                           exc_info=True)
+        except Exception as e:
+            obslog.event("context.refresh_failed", stage="settings",
+                         error_type=type(e).__name__)
             degraded.append("Kontextdaten (Wetter/Vault) konnten nicht neu geladen "
                             "werden — die Einstellungen sind gespeichert.")
     try:
         await broadcast_health(rt)
-    except Exception:
-        logger.warning("Health-Broadcast nach Settings-Save fehlgeschlagen", exc_info=True)
+    except Exception as e:
+        obslog.event("health.broadcast_failed", error_type=type(e).__name__)
     return degraded
 
 
@@ -311,7 +323,7 @@ async def post_settings(request: Request):
         return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
 
     degraded = await _post_commit(rt, needs_refresh)
-    logger.info("Settings aktualisiert: %s", ", ".join(sorted(updates.keys())))
+    obslog.event("settings.saved", changed=len(updates))
     body = {"ok": True, "applied": sorted(updates.keys()),
             "warnings": rt.startup_warnings,
             "revision": rt.configuration.snapshot().revision}
@@ -415,7 +427,7 @@ async def music_selection(request: Request):
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
     await broadcast_json({"type": "music_changed", "selected": file, "ts": time.time()})
-    logger.info("Musik-Auswahl: %s", file or "(keine)")
+    obslog.event("settings.saved", changed=1)
     return {"ok": True, "selected": file}
 
 
@@ -568,7 +580,7 @@ async def launcher_toggle_autostart(app_id: str, request: Request):
         request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart")
     if err is not None:
         return err
-    logger.info("Autostart geaendert (%s): %s -> %s", app_launcher.ACTIVE_PROFILE, app_id, value)
+    obslog.event("autostart.changed", app=app_id, enabled=value)
     return {"ok": True, "apps": app_launcher.list_apps()}
 
 
@@ -608,8 +620,8 @@ async def launcher_set_placement(app_id: str, request: Request):
     if err is not None:
         return err
     # Zu diesem Zeitpunkt sind monitor/zone Allowlist-Konstanten, keine Nutzerdaten.
-    logger.info("Platzierung geaendert (%s): %s -> %s/%s",
-                app_launcher.ACTIVE_PROFILE, app_id, body["monitor"], body["zone"])
+    obslog.event("placement.changed", app=app_id,
+                 monitor=body["monitor"], zone=body["zone"])
     return {"ok": True, "apps": app_launcher.list_apps()}
 
 
@@ -662,7 +674,7 @@ async def launcher_create_profile(request: Request):
     _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
-    logger.info("Profil angelegt: %s", name)
+    obslog.event("profile.changed", kind="created", active=app_launcher.ACTIVE_PROFILE)
     return _profiles_response()
 
 
@@ -676,7 +688,7 @@ async def launcher_activate_profile(profile_id: str, request: Request):
         request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile")
     if err is not None:
         return err
-    logger.info("Profil aktiviert: %s", app_launcher.ACTIVE_PROFILE)
+    obslog.event("profile.changed", kind="activated", active=app_launcher.ACTIVE_PROFILE)
     return _profiles_response()
 
 
@@ -699,7 +711,7 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
-    logger.info("Profil dupliziert: %s -> %s", profile_id, name)
+    obslog.event("profile.changed", kind="duplicated", active=app_launcher.ACTIVE_PROFILE)
     return _profiles_response()
 
 
@@ -719,7 +731,7 @@ async def launcher_rename_profile(profile_id: str, request: Request):
         request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile")
     if err is not None:
         return err
-    logger.info("Profil umbenannt: %s -> %s", profile_id, name)
+    obslog.event("profile.changed", kind="renamed", active=app_launcher.ACTIVE_PROFILE)
     return _profiles_response()
 
 
@@ -736,7 +748,7 @@ async def launcher_delete_profile(profile_id: str, request: Request):
     _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
     if err is not None:
         return err
-    logger.info("Profil geloescht: %s", profile_id)
+    obslog.event("profile.changed", kind="deleted", active=app_launcher.ACTIVE_PROFILE)
     return _profiles_response()
 
 
@@ -761,13 +773,15 @@ async def _server_lifespan(app):
     """Öffnet/schließt die Ressourcen der App-Runtime und spiegelt die
     A6-Residual-Modul-Globals (config/CONFIG_PATH/STARTUP_WARNINGS) + per-App
     session_token/ws_clients aus der aktiven Runtime — Routen/Helfer lesen diese."""
+    _configure_logging()   # uvicorn-Weg: erst hier, nicht beim Import (D9)
     rt = app.state.runtime
     await rt.aopen()
     global SESSION_TOKEN, ws_clients
     SESSION_TOKEN = rt.session_token
     ws_clients = rt.ws_clients
-    for _warning in rt.startup_warnings:
-        logger.warning("Startup-Check: %s", _warning)
+    if rt.startup_warnings:
+        # Warnungstexte enthalten lokale Pfade -> nur die Anzahl loggen (D3).
+        obslog.event("config.startup_degraded", count=len(rt.startup_warnings))
     try:
         yield
     finally:
@@ -791,19 +805,26 @@ app = create_app(runtime)
 
 if __name__ == "__main__":
     import uvicorn
+    _configure_logging()   # direkter Startweg: VOR Config-Load/moeglichem Fehler
     # Fail-fast: ohne gültige Config gar nicht starten (Launcher-„exited"-Signal
     # bleibt erhalten). Dieser Config-Load ist der explizite Produktions-Check;
     # der Lifespan (aopen) lädt sie dann nicht erneut.
     try:
         runtime.load_config()
     except config_loader.ConfigError as e:
-        logger.error("Konfigurationsfehler:\n%s", e)
+        obslog.event("config.startup_failed", error_type=type(e).__name__)
+        print("  Konfigurationsfehler — bitte config.json pruefen.", flush=True)
         sys.exit(1)
     print("=" * 50, flush=True)
     print("  J.A.R.V.I.S. V2 Server", flush=True)
     print(f"  http://localhost:8340", flush=True)
     print("=" * 50, flush=True)
-    for _warning in runtime.startup_warnings:
-        print(f"  WARNUNG: {_warning}", flush=True)
+    if runtime.startup_warnings:
+        # Details stehen im Kontrollzentrum; hier keine (pfadhaltigen) Rohtexte in
+        # das von jarvis-launcher.log erfasste stdout schreiben (D3).
+        print(f"  {len(runtime.startup_warnings)} Startup-Warnung(en) — "
+              "Details im Kontrollzentrum.", flush=True)
     # Nur lokal binden — nicht im LAN erreichbar.
-    uvicorn.run(app, host="127.0.0.1", port=8340)
+    # log_config=None: uvicorn installiert KEINE eigene Logging-Konfiguration und
+    # ueberschreibt damit unsere Sinks nicht (Slice 5 schuetzt uvicorns Logger).
+    uvicorn.run(app, host="127.0.0.1", port=8340, log_config=None)
