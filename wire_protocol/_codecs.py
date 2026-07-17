@@ -79,15 +79,15 @@ class V1Codec:
         self._clock = clock
         self._idgen = idgen
 
-    def encode(self, event, ctx, correlation_id) -> dict:
+    def encode(self, event, ctx, correlation_id, *, event_id=None, timestamp=None) -> dict:
         proj = _PROJECTIONS[type(event)]
         return {
             "protocol_version": 1,
             "type": proj.legacy_type,
-            "event_id": self._idgen.new_id(),
+            "event_id": event_id if event_id is not None else self._idgen.new_id(),
             "correlation_id": correlation_id,
             "session_id": ctx.session_id,
-            "timestamp": self._clock.now_iso(),
+            "timestamp": timestamp if timestamp is not None else self._clock.now_iso(),
             "sensitivity": proj.sensitivity.value,
             "payload": proj.v1_fields(event),
         }

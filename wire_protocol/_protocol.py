@@ -13,9 +13,11 @@ class WireProtocol:
         self._legacy = LegacyCodec(self._clock)
         self._v1 = V1Codec(self._clock, self._idgen)
 
-    def encode_event(self, event, ctx, *, correlation_id=None) -> dict:
+    def encode_event(self, event, ctx, *, correlation_id=None, event_id=None,
+                     timestamp=None) -> dict:
         if ctx.is_v1:
-            return self._v1.encode(event, ctx, correlation_id)
+            return self._v1.encode(event, ctx, correlation_id,
+                                   event_id=event_id, timestamp=timestamp)
         return self._legacy.encode(event)
 
     def decode_command(self, raw, ctx):
@@ -23,3 +25,10 @@ class WireProtocol:
         if ctx.is_v1:
             return decode_v1(raw, self._idgen)
         return decode_legacy(raw, self._idgen)
+
+    def new_event_id(self) -> str:
+        """Serverseitige Event-ID (für gemeinsame Broadcast-Event-ID)."""
+        return self._idgen.new_id()
+
+    def now_iso(self) -> str:
+        return self._clock.now_iso()

@@ -8,6 +8,7 @@ from ._decode import decode_legacy as _decode_legacy  # noqa: F401 (intern)
 from ._model import (ActionLifecycle, AppEvent, ErrorEvent, Health, LauncherChanged,
                      MusicChanged, ProtocolContext, ProtocolError, SayText, Sensitivity,
                      SpokenResponse, Stop, StopAck)
+from ._channel import ConnectionRegistry, ConversationChannel, EventSink
 from ._negotiation import RestNegotiation, WsNegotiation, negotiate_rest, negotiate_ws
 from ._protocol import WireProtocol
 from ._seams import FixedClock, SequenceIdGen, SystemClock, UuidGen
@@ -21,6 +22,8 @@ __all__ = [
     "SayText", "Stop",
     # Negotiation
     "negotiate_ws", "negotiate_rest", "WsNegotiation", "RestNegotiation",
+    # Transport-Kanal
+    "ConversationChannel", "EventSink", "ConnectionRegistry",
     # Seams
     "SystemClock", "FixedClock", "UuidGen", "SequenceIdGen",
 ]
