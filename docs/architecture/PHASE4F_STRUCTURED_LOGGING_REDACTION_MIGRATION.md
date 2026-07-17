@@ -139,8 +139,12 @@ Allowlist-Ereignisse des eigenen Codes; das Netz ist die bewusst benannte Grenze
   installiertes externes `jq` und gab nur `jq: command not found` aus) — **keine
   Implementierung und kein Commit gingen verloren** (lokaler HEAD = Remote = `0bd9886`,
   nichts gestaged, kein Merge-/Rebase-Zustand).
-- **Neuer grüner Hosted-Run auf dem Recovery-HEAD:** _wird nach dem Push ergänzt_
-  (Freigabe erst, wenn Fast **und** Browser auf dem neuen Branch-HEAD grün sind).
+- **Neuer grüner Hosted-Run auf dem Recovery-HEAD `f7aca3d`:** Run `29609969580` —
+  **Fast-Gate grün UND Browser-Gate grün** (beide `COMPLETED/SUCCESS`), PR #6
+  `mergeStateStatus=CLEAN`. Damit sind die vier zuvor roten Schutznetz-Tests hosted
+  grün; der frühere grüne Browser-Run zählt nicht allein, sondern beide Gates auf
+  demselben neuen HEAD. (Diese Doku-Ergänzung selbst löst einen weiteren, rein
+  dokumentarischen Run aus — ohne Code-/Teständerung.)
 
 ## Verifikation (frische lokale Läufe nach allen Fixes)
 
