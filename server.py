@@ -31,15 +31,27 @@ import assistant_core
 import config_loader
 import configuration
 import memory
+import obslog
 import runtime as runtime_mod
 
-# Logging: Betriebs-Logs auf INFO, private Inhalte nur auf DEBUG (Default aus).
-# Level per Umgebungsvariable JARVIS_LOG_LEVEL ueberschreibbar.
-logging.basicConfig(
-    level=os.environ.get("JARVIS_LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+# Logging: strukturierte Operational Events mit zentraler Redaction (RFC-0004).
+# Der Import konfiguriert NICHTS (Import-Sicherheit, D9) — die Verdrahtung passiert
+# einmalig am expliziten Startpfad (_configure_logging), fuer beide Entry Points:
+#   - python server.py  -> vor dem Config-Load
+#   - uvicorn server:app -> im Lifespan-Start (nicht beim Import)
 logger = logging.getLogger("jarvis")
+
+
+def _configure_logging() -> None:
+    """Einmalig am Startpfad: produktiver stderr-Sink + Format-/Level-Schalter.
+
+    Idempotent (obslog.configure ist idempotent). JARVIS_LOG_LEVEL (Default INFO)
+    und JARVIS_LOG_FORMAT=text|jsonl (Default text, ungueltig -> text) steuern die
+    Ausgabe. Kein FileHandler, keine neue Dependency (D10)."""
+    obslog.configure(
+        fmt=obslog.format_from_env(),
+        level=os.environ.get("JARVIS_LOG_LEVEL", "INFO"),
+    )
 
 import browser_tools
 import health
@@ -761,6 +773,7 @@ async def _server_lifespan(app):
     """Öffnet/schließt die Ressourcen der App-Runtime und spiegelt die
     A6-Residual-Modul-Globals (config/CONFIG_PATH/STARTUP_WARNINGS) + per-App
     session_token/ws_clients aus der aktiven Runtime — Routen/Helfer lesen diese."""
+    _configure_logging()   # uvicorn-Weg: erst hier, nicht beim Import (D9)
     rt = app.state.runtime
     await rt.aopen()
     global SESSION_TOKEN, ws_clients
@@ -791,6 +804,7 @@ app = create_app(runtime)
 
 if __name__ == "__main__":
     import uvicorn
+    _configure_logging()   # direkter Startweg: VOR Config-Load/moeglichem Fehler
     # Fail-fast: ohne gültige Config gar nicht starten (Launcher-„exited"-Signal
     # bleibt erhalten). Dieser Config-Load ist der explizite Produktions-Check;
     # der Lifespan (aopen) lädt sie dann nicht erneut.
@@ -806,4 +820,6 @@ if __name__ == "__main__":
     for _warning in runtime.startup_warnings:
         print(f"  WARNUNG: {_warning}", flush=True)
     # Nur lokal binden — nicht im LAN erreichbar.
-    uvicorn.run(app, host="127.0.0.1", port=8340)
+    # log_config=None: uvicorn installiert KEINE eigene Logging-Konfiguration und
+    # ueberschreibt damit unsere Sinks nicht (Slice 5 schuetzt uvicorns Logger).
+    uvicorn.run(app, host="127.0.0.1", port=8340, log_config=None)

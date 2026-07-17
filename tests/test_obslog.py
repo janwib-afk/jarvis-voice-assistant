@@ -161,5 +161,60 @@ class SecretsAreUnrepresentableTests(_SinkTestCase):
             self.assertNotIn(s, self.text)
 
 
+class StartupWiringTests(unittest.TestCase):
+    """Slice 2: Konfiguration am Startpfad, nicht beim Import; beide Startwege
+    geschuetzt; Test-Sinks werden nicht ungefragt ueberschrieben."""
+
+    def tearDown(self):
+        obslog.reset()
+
+    def _fresh_import(self, code):
+        import subprocess, sys, os
+        env = dict(os.environ); env["PYTHONUTF8"] = "1"
+        env.pop("JARVIS_CONFIG_PATH", None)
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            env=env, capture_output=True, text=True, timeout=90)
+
+    def test_importing_server_installs_no_root_handler(self):
+        # Rot bis basicConfig aus dem Import raus ist: basicConfig haengt einen
+        # StreamHandler an den Root-Logger. Nach Slice 2 darf der Import KEINEN
+        # Handler installieren (Import-Sicherheit, D9).
+        r = self._fresh_import(
+            "import logging, server; "
+            "n = len(logging.getLogger().handlers); "
+            "print('ROOT_HANDLERS', n)")
+        self.assertIn("ROOT_HANDLERS 0", r.stdout,
+                      f"server-Import installierte Root-Handler.\nstderr:\n{r.stderr}")
+
+    def test_importing_server_does_not_configure_obslog(self):
+        r = self._fresh_import(
+            "import obslog, server; "
+            "assert obslog._sink is None, 'server-Import hat obslog konfiguriert'; "
+            "print('OBSLOG_UNSET')")
+        self.assertIn("OBSLOG_UNSET", r.stdout, r.stderr)
+
+    def test_format_from_env_defaults_to_text(self):
+        self.assertEqual(obslog.format_from_env({}), "text")
+        self.assertEqual(obslog.format_from_env({"JARVIS_LOG_FORMAT": "jsonl"}), "jsonl")
+        self.assertEqual(obslog.format_from_env({"JARVIS_LOG_FORMAT": "bogus"}), "text")
+        self.assertEqual(obslog.format_from_env({"JARVIS_LOG_FORMAT": "JSONL"}), "jsonl")
+
+    def test_configure_is_idempotent_no_duplicate_lines(self):
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="text", level="INFO")
+        obslog.configure(sink=sink, fmt="text", level="INFO")  # erneut
+        obslog.event("server.started")
+        self.assertEqual(len(sink.lines), 1, "wiederholte Konfiguration darf nicht doppeln")
+
+    def test_reconfigure_replaces_sink_cleanly(self):
+        a = obslog.MemorySink(); b = obslog.MemorySink()
+        obslog.configure(sink=a); obslog.event("server.started")
+        obslog.configure(sink=b); obslog.event("server.started")
+        self.assertEqual(len(a.lines), 1)
+        self.assertEqual(len(b.lines), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
