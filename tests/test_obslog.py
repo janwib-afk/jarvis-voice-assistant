@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import unittest
+from unittest import mock
 
 import obslog
 
@@ -216,6 +217,84 @@ class StartupWiringTests(unittest.TestCase):
         obslog.configure(sink=b); obslog.event("server.started")
         self.assertEqual(len(a.lines), 1)
         self.assertEqual(len(b.lines), 1)
+
+
+class _RaiseOnceSink:
+    """Sink, dessen erster write_line-Aufruf (die echte Zeile) wirft; der zweite
+    (die Fallback-Zeile) gelingt — so wird der Fallback-Pfad beobachtbar."""
+
+    def __init__(self):
+        self.lines: list[str] = []
+        self.calls = 0
+
+    def write_line(self, line: str) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("Datentraeger voll")
+        self.lines.append(line)
+
+
+class _AlwaysRaiseSink:
+    def write_line(self, line: str) -> None:
+        raise RuntimeError("Stream kaputt")
+
+
+class FaultInjectionTests(unittest.TestCase):
+    """§23: injizierte Fehler -> datenfreie Ersatzzeile, Ablauf laeuft weiter,
+    nie ein Rohwert. event() wirft nie."""
+
+    def tearDown(self):
+        obslog.reset()
+
+    def test_sink_failure_falls_back_to_data_free_line(self):
+        sink = _RaiseOnceSink()
+        obslog.configure(sink=sink, fmt="text", level="DEBUG")
+        # result_len traegt keinen Sentinel, aber ein unbekanntes Feld mit Sentinel schon.
+        obslog.event("action.finished", action="CLIPBOARD", result_len=1, leak=S_CLIP)
+        self.assertEqual(sink.lines, ["[ERROR] logging.error"])
+        self.assertNotIn(S_CLIP, "\n".join(sink.lines))
+
+    def test_sink_failure_on_every_call_is_swallowed(self):
+        obslog.configure(sink=_AlwaysRaiseSink(), fmt="text", level="DEBUG")
+        # Darf NICHT werfen — der Ablauf des Aufrufers laeuft weiter.
+        obslog.event("action.finished", action="X", result_len=1)
+
+    def test_render_failure_falls_back_without_raw_data(self):
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="text", level="DEBUG")
+        with mock.patch.object(obslog, "_render", side_effect=RuntimeError("boom")):
+            obslog.event("action.finished", action="SEARCH", result_len=1, leak=S_SECRET)
+        self.assertEqual(sink.lines, ["[ERROR] logging.error"])
+        self.assertNotIn(S_SECRET, "\n".join(sink.lines))
+
+    def test_jsonl_serialization_failure_falls_back(self):
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="jsonl", level="DEBUG")
+        with mock.patch.object(obslog.json, "dumps", side_effect=ValueError("nope")):
+            obslog.event("action.finished", action="NEWS", result_len=1, leak=S_CLIP)
+        self.assertEqual(sink.lines, ['{"event":"logging.error","level":"ERROR"}'])
+        self.assertNotIn(S_CLIP, "\n".join(sink.lines))
+
+    def test_event_before_configure_is_a_noop(self):
+        obslog.reset()  # kein Sink
+        obslog.event("action.finished", action="X", result_len=1)  # darf nicht werfen
+
+    def test_protection_formatter_survives_unrenderable_message(self):
+        stream = io.StringIO()
+        obslog.uninstall_protection()
+        obslog.install_protection(stream=stream)
+        try:
+            class _Hostile:
+                def __str__(self):
+                    raise RuntimeError(S_SECRET)
+
+            # %s mit feindlichem Arg: getMessage() wirft -> '<unrenderable>', kein Absturz.
+            logging.getLogger("uvicorn.error").warning("boom %s", _Hostile())
+            out = stream.getvalue()
+        finally:
+            obslog.uninstall_protection()
+        self.assertIn("<unrenderable>", out)
+        self.assertNotIn(S_SECRET, out)
 
 
 class ProtectionNetTests(unittest.TestCase):
