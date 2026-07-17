@@ -4,15 +4,21 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
-> **Status 2026-07-17 (Phase 4E, RFC-0004 akzeptiert):** Für strukturierte Betriebslogs
-> und zentrale Redaction wurde
-> [RFC-0004](../architecture/RFC-0004-structured-operational-logging-redaction.md)
-> `Accepted for incremental implementation` (Variante C: semantische Allowlist-Events +
-> zentraler Schutzfilter für Legacy/Drittanbieter). Sechs Leckvektoren sind mit
-> synthetischen Sentinels belegt — darunter **die volle Such-URL auf INFO** (verletzt die
-> bestehende Datenklassen-Regel „log Zielhost") sowie Clipboard-/Vault-/Nutzerinhalte und
-> Exception-Messages, die im rotierenden `jarvis-launcher.log` persistieren. Reiner
-> Architekturpass — **kein Produktionscode geändert**; Umsetzung folgt in Prompt 13.
+> **Status 2026-07-17 (Phase 4F, RFC-0004 IMPLEMENTIERT):** Strukturierte Betriebslogs
+> und zentrale Redaction sind umgesetzt
+> ([RFC-0004](../architecture/RFC-0004-structured-operational-logging-redaction.md),
+> Variante C). Das neue Modul [`obslog.py`](../../obslog.py) ist das **einzige**
+> Emit-Interface (`event(name, **fields)`) mit geschlossener Feld-Allowlist und
+> fail-closed Redaction; es gibt kein Freitextfeld. Alle Producer (server, assistant_core,
+> actions, browser_tools, tts, memory, clipboard_tools, app_launcher, monitors) sind
+> migriert; `logging.basicConfig` beim Import ist entfernt (Import-sicher, 0 Root-Handler),
+> die Verdrahtung passiert am Startpfad. Ein zentrales Schutznetz
+> (`obslog.install_protection`) sanitiert Legacy-/Drittanbieter-Records
+> (uvicorn/httpx/anthropic/playwright: URL→Host, Token/Secrets→`<redacted>`, kein
+> Traceback). Alle **sechs** Leckvektoren L1–L6 haben je einen Regressionstest am
+> Sink-Output, der ohne den Fix rot ist (u. a. die volle Such-URL auf INFO → nur noch
+> Zielhost). **SI-9 verschärft:** rohe private Inhalte auf **keinem** Level. Details:
+> [PHASE4F_STRUCTURED_LOGGING_REDACTION_MIGRATION.md](../architecture/PHASE4F_STRUCTURED_LOGGING_REDACTION_MIGRATION.md).
 
 > **Status 2026-07-16 (Phase 4D, RFC-0003 IMPLEMENTIERT):** Die Configuration ist
 > jetzt ein Runtime-eigenes deep module mit genau EINEM serialisierten Schreibweg
@@ -258,7 +264,7 @@ Unit-Suite und benötigen einen manuell gestarteten Harness.
 | Scheduler | **nicht vorhanden** | Grep `apscheduler/croniter/schedule`: 0 |
 | Persistenter Memory-Index / SQLite FTS | **nicht vorhanden** | Memory ist Markdown-Datei + Vault-Walk; kein Index/FTS |
 | Connector-Runtime | **nicht vorhanden** | keine Kalender-/Mail-/Task-Connectoren |
-| Strukturiertes Audit mit Korrelations-IDs | **nicht vorhanden** | Logging vorhanden, aber ohne durchgehende `correlation_id` |
+| Strukturiertes Audit mit Korrelations-IDs | **teilweise** | strukturierte Betriebslogs vorhanden (RFC-0004, `obslog`), aber ohne durchgehende `correlation_id` |
 | Safe Mode / Backup-Restore / Installer / Rollback | **nicht vorhanden** | kein entsprechender Code/Skript gefunden |
 | CI-Konfiguration | **nicht vorhanden** | kein `.github/`-Verzeichnis |
 
@@ -299,7 +305,9 @@ Reduced Motion) — alle Exit 0.
 - **Startup-Kostenschutz für Tests/Harness:** `JARVIS_SKIP_STARTUP_REFRESH`; der
   Harness stubt LLM/TTS, weil das Frontend beim ersten Connect automatisch „Jarvis
   activate" sendet (sonst realer Anthropic-+ElevenLabs-Call).
-- **Logging-Trennung:** Betriebslogs INFO, private Inhalte nur DEBUG (Default aus).
+- **Strukturierte Betriebslogs (RFC-0004):** benannte Allowlist-Ereignisse via
+  `obslog.event`; rohe private Inhalte auf **keinem** Level (SI-9 verschärft), zentrales
+  Schutznetz für Legacy/Dritte.
 
 **Schlussfolgerung.** Solide Grundabsicherung auf Prozess-/Netz-/Allowlist-Ebene; es
 fehlen die im Masterplan geforderten Schichten (Datenklassen/Wirkungsklassen,

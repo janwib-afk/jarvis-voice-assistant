@@ -105,8 +105,9 @@ def check_config():
 
 def check_imports():
     for name in (
-        "actions", "config_loader", "browser_tools", "screen_capture",
-        "tts", "memory", "health", "assistant_core", "server",
+        "obslog", "actions", "config_loader", "browser_tools", "screen_capture",
+        "tts", "memory", "clipboard_tools", "app_launcher", "monitors",
+        "health", "assistant_core", "server",
     ):
         try:
             __import__(name)
