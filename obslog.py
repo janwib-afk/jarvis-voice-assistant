@@ -1,0 +1,259 @@
+"""obslog — strukturierte Operational Log Events mit zentraler, fail-closed Redaction.
+
+RFC-0004 (Variante C). Das EINZIGE Emit-Interface des Anwendungscodes ist
+``event(name, **fields)``. Jedes Event hat eine geschlossene Feld-Allowlist mit
+festen Typen und Transformationen; alles andere wird verworfen (ohne ``str()``/
+``repr()`` darauf aufzurufen). Es gibt kein Freitextfeld.
+
+Sicherheitsgarantien:
+- Rohe private Inhalte erscheinen auf KEINEM Level (D3): es gibt schlicht kein Feld
+  dafuer.
+- Unbekannte Event-Namen werden nie ausgegeben (sie koennten Daten tragen); nur ein
+  neutraler Marker (D5).
+- URLs werden auf ``schema://host`` reduziert (D7).
+- Redaction/Formatierung/Sink koennen nie den Rohwert ausgeben; bei Fehler ein
+  statischer, datenfreier Fallback (D8). ``event()`` wirft nie.
+- Import-sicher (D9): der Import installiert keinen Handler, erzeugt keine Datei und
+  aendert die Root-Logger-Konfiguration nicht. Logging ist prozessweit, kein
+  Runtime-Zustand.
+- Keine neue Dependency (D10).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sys
+from urllib.parse import urlsplit
+
+# ── Feldtransformationen ─────────────────────────────────────────────────────
+# Jede gibt einen SICHEREN Wert zurueck oder wirft/gibt _DROP, damit das Feld
+# verworfen wird. Sie rufen NIE str()/repr() auf nicht vertrauenswuerdigen Werten.
+
+_DROP = object()
+
+
+def _as_int(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) else _DROP
+
+
+def _as_bool(v):
+    return v if isinstance(v, bool) else _DROP
+
+
+def _as_id(v):
+    """Stabile, kurze Bezeichner (Action-Typ, App-/Profil-ID, Reason-Code, Zone).
+
+    Nur ASCII-Wortzeichen plus einige unbedenkliche Trenner; harte Laengengrenze.
+    Freitext/Inhalt faellt damit strukturell raus (kein Leerzeichen erlaubt).
+    """
+    if not isinstance(v, str) or not v or len(v) > 64:
+        return _DROP
+    if not all(c.isalnum() or c in "._-:/" for c in v):
+        return _DROP
+    return v
+
+
+def _as_host(v):
+    """URL auf ``schema://host`` reduzieren — Pfad/Query/Fragment/Userinfo entfallen."""
+    if not isinstance(v, str) or not v:
+        return _DROP
+    try:
+        parts = urlsplit(v)
+    except ValueError:
+        return _DROP
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return _DROP
+    host = parts.hostname
+    return f"{parts.scheme}://{host}"
+
+
+# ── Eventkatalog (geschlossen) ───────────────────────────────────────────────
+# name -> (level, {feld: transform}). Nur diese Felder erscheinen je Event.
+
+_CATALOG: dict[str, tuple[int, dict]] = {
+    # WebSocket / Nachrichten
+    "ws.connected":        (logging.INFO,    {}),
+    "ws.rejected":         (logging.WARNING, {"reason": _as_id}),
+    "message.received":    (logging.DEBUG,   {"text_len": _as_int}),
+    "message.stopped":     (logging.INFO,    {"was_busy": _as_bool}),
+    "message.failed":      (logging.WARNING, {"error_type": _as_id, "where": _as_id}),
+    # Settings / Config
+    "settings.saved":      (logging.INFO,    {"changed": _as_int}),
+    "settings.refresh_failed": (logging.WARNING, {"error_type": _as_id}),
+    "settings.conflict":   (logging.INFO,    {}),
+    "config.migrated":     (logging.INFO,    {"from_version": _as_int, "to_version": _as_int}),
+    "config.restore_failed": (logging.ERROR, {"error_type": _as_id}),
+    "config.startup_failed": (logging.ERROR, {"error_type": _as_id}),
+    "config.startup_degraded": (logging.WARNING, {"count": _as_int}),
+    # Actions
+    "action.started":      (logging.INFO,    {"action": _as_id}),
+    "action.finished":     (logging.INFO,    {"action": _as_id, "result_len": _as_int}),
+    "action.cancelled":    (logging.INFO,    {"action": _as_id}),
+    "action.failed":       (logging.WARNING, {"action": _as_id, "error_type": _as_id,
+                                              "component": _as_id, "where": _as_id}),
+    "action.rejected":     (logging.INFO,    {"reason": _as_id}),
+    # LLM / TTS
+    "llm.request_failed":  (logging.WARNING, {"error_type": _as_id}),
+    "llm.response_received": (logging.DEBUG, {"reply_len": _as_int}),
+    "tts.request_failed":  (logging.WARNING, {"error_type": _as_id, "status": _as_int}),
+    "tts.chunk_received":  (logging.DEBUG,   {"status": _as_int, "size": _as_int}),
+    "tts.synthesis_failed": (logging.WARNING, {"error_type": _as_id}),
+    # Browser
+    "browser.fallback":    (logging.INFO,    {"url": _as_host, "reason": _as_id}),
+    "browser.request_failed": (logging.WARNING, {"url": _as_host, "status": _as_int,
+                                                 "error_type": _as_id}),
+    "browser.source_skipped": (logging.INFO, {"url": _as_host}),
+    "browser.foreground_failed": (logging.DEBUG, {"error_type": _as_id}),
+    # Memory / Vault
+    "memory.read_failed":  (logging.WARNING, {"error_type": _as_id}),
+    "memory.write_failed": (logging.WARNING, {"error_type": _as_id}),
+    "vault.scan_failed":   (logging.WARNING, {"error_type": _as_id}),
+    "inbox.autosave_failed": (logging.WARNING, {"error_type": _as_id}),
+    # Launcher / Apps / Monitors
+    "launcher.configured": (logging.INFO,    {"apps": _as_int, "profiles": _as_int,
+                                              "active": _as_id}),
+    "launcher.normalize_warning": (logging.WARNING, {"reason": _as_id}),
+    "app.launched":        (logging.INFO,    {"app": _as_id, "kind": _as_id}),
+    "app.launch_failed":   (logging.WARNING, {"app": _as_id, "error_type": _as_id}),
+    "autostart.changed":   (logging.INFO,    {"app": _as_id, "enabled": _as_bool}),
+    "placement.changed":   (logging.INFO,    {"app": _as_id, "monitor": _as_id, "zone": _as_id}),
+    "profile.changed":     (logging.INFO,    {"kind": _as_id, "active": _as_id}),
+    "monitor.detect_failed": (logging.WARNING, {"error_type": _as_id}),
+    # Server-Lifecycle
+    "server.started":      (logging.INFO,    {}),
+}
+
+_LEVEL_NAMES = {logging.DEBUG: "DEBUG", logging.INFO: "INFO",
+                logging.WARNING: "WARNING", logging.ERROR: "ERROR",
+                logging.CRITICAL: "CRITICAL"}
+
+
+# ── Sinks ────────────────────────────────────────────────────────────────────
+
+class MemorySink:
+    """Test-Sink: sammelt die fertig gerenderten Zeilen (D12)."""
+
+    def __init__(self):
+        self.lines: list[str] = []
+
+    def write_line(self, line: str) -> None:
+        self.lines.append(line)
+
+
+class _StderrSink:
+    """Produktiver Sink: eine Zeile pro Event nach stderr. Kein FileHandler (D10)."""
+
+    def write_line(self, line: str) -> None:
+        stream = sys.stderr
+        stream.write(line + "\n")
+        stream.flush()
+
+
+# ── Modulzustand (prozessweit, kein Runtime-State) ───────────────────────────
+
+_sink = None            # None => noch nicht konfiguriert: Events werden verworfen
+_fmt = "text"
+_min_level = logging.INFO
+
+
+def configure(sink=None, fmt: str = "text", level=None) -> None:
+    """Einmalig am Startpfad aufrufen. Idempotent; ungueltiges fmt -> 'text'.
+
+    Ohne ``sink`` wird der produktive stderr-Sink gesetzt. Tests uebergeben einen
+    MemorySink. KEINE Datei, KEIN Root-Handler.
+    """
+    global _sink, _fmt, _min_level
+    _sink = sink if sink is not None else _StderrSink()
+    _fmt = fmt if fmt in ("text", "jsonl") else "text"
+    if level is not None:
+        resolved = getattr(logging, str(level).upper(), None) if isinstance(level, str) else level
+        _min_level = resolved if isinstance(resolved, int) else logging.INFO
+
+
+def reset() -> None:
+    """Testhilfe: Konfiguration zuruecksetzen (kein Sink)."""
+    global _sink, _fmt, _min_level
+    _sink = None
+    _fmt = "text"
+    _min_level = logging.INFO
+
+
+# ── Redaction + Formatierung ─────────────────────────────────────────────────
+
+def _redact(name: str, fields: dict) -> tuple[dict, int]:
+    """Nur erlaubte, korrekt transformierbare Felder behalten. Rueckgabe
+    ``(safe_fields, dropped_count)``. Ruft nie str()/repr() auf Rohwerten auf."""
+    allowed = _CATALOG[name][1]
+    safe: dict = {}
+    dropped = 0
+    for key, value in fields.items():
+        transform = allowed.get(key)
+        if transform is None:
+            dropped += 1
+            continue
+        try:
+            out = transform(value)
+        except Exception:
+            out = _DROP
+        if out is _DROP:
+            dropped += 1
+        else:
+            safe[key] = out
+    return safe, dropped
+
+
+def _render(name: str, level: int, safe: dict, dropped: int) -> str:
+    if dropped:
+        safe = {**safe, "dropped_fields": dropped}
+    if _fmt == "jsonl":
+        record = {"event": name, "level": _LEVEL_NAMES.get(level, "INFO"), **safe}
+        return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+    parts = " ".join(f"{k}={v}" for k, v in safe.items())
+    lvl = _LEVEL_NAMES.get(level, "INFO")
+    return f"[{lvl}] {name}" + (f" {parts}" if parts else "")
+
+
+def _fallback_line() -> str:
+    """Statischer, datenfreier Fallback (D8): keine Quelldaten, keine Namen."""
+    if _fmt == "jsonl":
+        return '{"event":"logging.error","level":"ERROR"}'
+    return "[ERROR] logging.error"
+
+
+# ── Emit ─────────────────────────────────────────────────────────────────────
+
+def event(name: str, **fields) -> None:
+    """Das EINZIGE Emit-Interface. Wirft nie; bricht den Ablauf nie ab (D8)."""
+    sink = _sink
+    if sink is None:
+        return
+    try:
+        spec = _CATALOG.get(name)
+        if spec is None:
+            # Unbekannter Name koennte Daten tragen -> nie ausgeben, nur Marker.
+            line = ('{"event":"unknown_event","level":"WARNING"}'
+                    if _fmt == "jsonl" else "[WARNING] unknown_event")
+            sink.write_line(line)
+            return
+        level, _ = spec
+        if level < _min_level:
+            return
+        safe, dropped = _redact(name, fields)
+        sink.write_line(_render(name, level, safe, dropped))
+    except Exception:
+        # Fail-closed, keine Rekursion: statische, datenfreie Zeile — und selbst
+        # deren Fehler wird sicher verschluckt.
+        try:
+            sink.write_line(_fallback_line())
+        except Exception:
+            pass
+
+
+# ── Startverdrahtung (Slice 2 nutzt dies) ────────────────────────────────────
+
+def format_from_env(environ=None) -> str:
+    """JARVIS_LOG_FORMAT=text|jsonl; ungueltig -> 'text'."""
+    environ = os.environ if environ is None else environ
+    value = (environ.get("JARVIS_LOG_FORMAT") or "text").strip().lower()
+    return value if value in ("text", "jsonl") else "text"
