@@ -22,6 +22,11 @@ import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
 
 import config_loader
 import configuration
+import obslog
+
+# Synthetische Sentinels — duerfen in KEINEM Log/Sink erscheinen.
+S_SECRET = "SENTINEL-CONFIG-anthropic-key-NEVER"
+S_PATH = "SENTINEL-CONFIG-C-Users-Geheim-Vault-NEVER"
 
 
 def base_document(**over) -> dict:
@@ -975,3 +980,72 @@ class ConcurrencyTests(_TempConfigTestCase):
         self.assertEqual(a_doc["user_role"], "")
         self.assertEqual(b_doc["city"], "Kiel")
         self.assertEqual(b_doc["user_role"], "B-Rolle")
+
+
+class ConfigProducerLeakTests(_TempConfigTestCase):
+    """Recovery 6: die obslog-Events des Configuration-Moduls (config.migrated,
+    config.restore_failed) duerfen nur SICHERE Metadaten am Sink zeigen — nie
+    Config-Inhalt, Secret, vollen Pfad, Backup-Inhalt oder Exception-Message.
+    Getestet ueber load()/mutate() am formatierten Sink-Output."""
+
+    def mutate(self, cfg, intent, apply=None):
+        import asyncio as aio
+        return aio.run(cfg.mutate(intent, apply=apply))
+
+    def test_migration_logs_only_safe_versions(self):
+        # v0-Dokument mit Secret + Pfad-Sentinel -> Migration.
+        doc = base_document()  # versionlos = v0
+        doc["anthropic_api_key"] = S_SECRET
+        doc["obsidian_inbox_path"] = S_PATH
+        self.write(doc)
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="text", level="DEBUG")
+        try:
+            configuration.Configuration(self.path).load()
+            blob = "\n".join(sink.lines)
+        finally:
+            obslog.reset()
+        self.assertIn("config.migrated", blob)
+        self.assertIn("from_version=0", blob)
+        self.assertIn("to_version=1", blob)
+        # Kein Config-Inhalt / Secret / Pfad / Feldname.
+        self.assertNotIn(S_SECRET, blob)
+        self.assertNotIn(S_PATH, blob)
+        self.assertNotIn("anthropic_api_key", blob)
+
+    def test_restore_failure_logs_only_exception_type(self):
+        cfg = self.open_config_v1()
+
+        def boom(document):
+            raise RuntimeError("Live-Apply kaputt")
+
+        real_replace = configuration.os.replace
+        state = {"n": 0}
+
+        def flaky_replace(src, dst):
+            state["n"] += 1
+            if state["n"] >= 2:  # #1 = atomarer Schreibvorgang, #2 = Kompensation (_restore)
+                raise OSError(f"replace kaputt fuer {S_PATH}")
+            return real_replace(src, dst)
+
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="text", level="DEBUG")
+        try:
+            with mock.patch.object(configuration.os, "replace", flaky_replace):
+                with self.assertRaises(RuntimeError):
+                    self.mutate(cfg, configuration.SetSettings({"city": "Bremen"}),
+                                apply=boom)
+            blob = "\n".join(sink.lines)
+        finally:
+            obslog.reset()
+        self.assertIn("config.restore_failed", blob)
+        self.assertIn("error_type=OSError", blob)   # nur sicherer Exception-Typ
+        # Keine Exception-Message, kein Pfad-Sentinel.
+        self.assertNotIn(S_PATH, blob)
+        self.assertNotIn("replace kaputt", blob)
+
+    def open_config_v1(self):
+        self.write(base_document(schema_version=1))
+        cfg = configuration.Configuration(self.path)
+        cfg.load()
+        return cfg
