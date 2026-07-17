@@ -13,20 +13,18 @@ Settings-Save. server.py bleibt damit die reine HTTP-/WS-Schicht.
 import asyncio
 import base64
 import json
-import logging
 import time
 
 import anthropic
 
 import actions
+import obslog
 import app_launcher
 import browser_tools
 import clipboard_tools
 import memory
 import screen_capture
 import tts
-
-logger = logging.getLogger("jarvis.core")
 
 LLM_MODEL = "claude-haiku-4-5-20251001"
 
@@ -109,10 +107,10 @@ def get_weather_sync():
             }
         except Exception:
             if attempt == 0:
-                logger.warning("Wetterabruf fehlgeschlagen — zweiter Versuch")
+                obslog.event("context.refresh_failed", stage="weather")
                 time.sleep(1)
             else:
-                logger.warning("Wetterabruf fehlgeschlagen", exc_info=True)
+                obslog.event("context.refresh_failed", stage="weather")
     return None
 
 
@@ -125,10 +123,10 @@ def refresh_data():
     TODAY_INBOX = memory.read_today_inbox_sync(max_chars=800)
     DATA_LOADED = True
     LAST_REFRESH = time.time()
-    logger.info("Wetter geladen: %s", "ja" if WEATHER_INFO else "nein")
-    logger.info("Tasks geladen: %d", len(TASKS_INFO))
-    logger.info("Vault: %s Notizen", VAULT_SUMMARY['total'] if VAULT_SUMMARY else "n/a")
-    logger.info("Heutige Inbox: %s", "vorhanden" if TODAY_INBOX else "leer")
+    obslog.event("context.refreshed",
+                 weather_ok=bool(WEATHER_INFO), tasks=len(TASKS_INFO),
+                 notes=(VAULT_SUMMARY["total"] if VAULT_SUMMARY else 0),
+                 inbox_present=bool(TODAY_INBOX))
 
 
 # ── System-Prompt ────────────────────────────────────────────────────────────
@@ -223,7 +221,6 @@ async def send_spoken_response(ws, text: str, display_text: str | None = None):
     während nur ``text`` vorgelesen wird.
     """
     audio, tts_err = await synthesize_speech(text)
-    logger.debug("Audio bytes: %d", len(audio))
     await ws.send_json({
         "type": "response",
         "text": display_text or text,
@@ -312,16 +309,15 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
     # Autosave: Obsidian sortiert die Inbox am Tagesende selbst ein.
     try:
         await memory.write_inbox_entry(f"{summary}\n\n{quellen_block}", "Recherche", dedup=False)
-    except Exception:
-        logger.warning("Recherche-Autosave in die Inbox fehlgeschlagen", exc_info=True)
+    except Exception as e:
+        obslog.event("inbox.autosave_failed", error_type=type(e).__name__)
     return f"{summary}\n\n{quellen_block}"
 
 
 async def run_action_and_respond(session_id: str, action: actions.Action, ws,
                                  mutate_launcher=None):
     """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events)."""
-    logger.info("Action: %s", action.type)
-    logger.debug("Action payload: %s", action.payload)
+    obslog.event("action.started", action=action.type)
 
     # Quick voice feedback for SCREEN so user knows Jarvis is working
     if action.type == "SCREEN":
@@ -333,17 +329,17 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws,
         # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
         action_result = await asyncio.wait_for(
             execute_action(action, session_id, mutate_launcher), timeout=spec.timeout)
-        logger.info("Action %s lieferte %d Zeichen", action.type, len(action_result))
-        logger.debug("Action-Ergebnis: %s", action_result)
+        obslog.event("action.finished", action=action.type, result_len=len(action_result))
         await send_action_event(ws, "done", action.type)
     except asyncio.CancelledError:
         # Nutzer hat "Stopp" gesagt: Historie markieren, Abbruch weiterreichen.
-        logger.info("Action %s abgebrochen (Stopp)", action.type)
+        obslog.event("action.cancelled", action=action.type)
         await send_action_event(ws, "error", action.type, "abgebrochen")
         raise
     except Exception as e:
-        logger.warning("Action %s fehlgeschlagen", action.type, exc_info=True)
         component = "browser" if spec.is_browser else "action"
+        obslog.event("action.failed", action=action.type,
+                     error_type=type(e).__name__, component=component)
         await send_action_event(ws, "error", action.type, type(e).__name__)
         await send_error(ws, component, f"Aktion '{spec.label}' fehlgeschlagen.", type(e).__name__)
         action_result = f"Fehler: {e}"
@@ -376,7 +372,7 @@ async def run_action_and_respond(session_id: str, action: actions.Action, ws,
                 # Quellen nur anzeigen (nicht vorlesen) + Autosave in die Inbox.
                 display_text = await _finish_research(summary, action_result)
         except Exception as e:
-            logger.error("KI-Zusammenfassung fehlgeschlagen", exc_info=True)
+            obslog.event("llm.request_failed", error_type=type(e).__name__)
             await send_error(ws, "llm", "KI-Anfrage fehlgeschlagen.", _llm_error_hint(e))
             summary = f"Das hat leider nicht funktioniert, {USER_ADDRESS}."
     else:
@@ -428,19 +424,18 @@ async def process_message(session_id: str, user_text: str, ws, mutate_launcher=N
             messages=history,
         )
     except Exception as e:
-        logger.error("KI-Anfrage fehlgeschlagen", exc_info=True)
+        obslog.event("llm.request_failed", error_type=type(e).__name__)
         await send_error(ws, "llm", "KI-Anfrage fehlgeschlagen.", _llm_error_hint(e))
         return
     reply = response.content[0].text
-    logger.debug("LLM raw: %s", reply[:200])
+    obslog.event("llm.response_received", reply_len=len(reply))
     spoken_text, action, action_err = actions.parse_action(reply)
     if action_err:
         # Tag war vorhanden, aber ungueltig: nicht ausfuehren, nur Text sprechen.
-        logger.warning("Ungueltige Aktion verworfen: %s", action_err)
+        obslog.event("action.rejected")
 
     # Speak the main response immediately
     if spoken_text:
-        logger.debug("Jarvis: %s", spoken_text[:80])
         _remember(session_id, "assistant", spoken_text)
         await send_spoken_response(ws, spoken_text)
 

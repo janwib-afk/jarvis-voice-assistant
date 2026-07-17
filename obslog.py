@@ -86,6 +86,10 @@ _CATALOG: dict[str, tuple[int, dict]] = {
     "config.restore_failed": (logging.ERROR, {"error_type": _as_id}),
     "config.startup_failed": (logging.ERROR, {"error_type": _as_id}),
     "config.startup_degraded": (logging.WARNING, {"count": _as_int}),
+    # Kontextdaten-Refresh
+    "context.refreshed":   (logging.INFO,    {"weather_ok": _as_bool, "tasks": _as_int,
+                                              "notes": _as_int, "inbox_present": _as_bool}),
+    "context.refresh_failed": (logging.WARNING, {"stage": _as_id, "error_type": _as_id}),
     # Actions
     "action.started":      (logging.INFO,    {"action": _as_id}),
     "action.finished":     (logging.INFO,    {"action": _as_id, "result_len": _as_int}),
@@ -122,6 +126,7 @@ _CATALOG: dict[str, tuple[int, dict]] = {
     "monitor.detect_failed": (logging.WARNING, {"error_type": _as_id}),
     # Server-Lifecycle
     "server.started":      (logging.INFO,    {}),
+    "health.broadcast_failed": (logging.WARNING, {"error_type": _as_id}),
 }
 
 _LEVEL_NAMES = {logging.DEBUG: "DEBUG", logging.INFO: "INFO",
