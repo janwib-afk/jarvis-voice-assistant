@@ -109,11 +109,13 @@ _CATALOG: dict[str, tuple[int, dict]] = {
                                                  "error_type": _as_id}),
     "browser.source_skipped": (logging.INFO, {"url": _as_host}),
     "browser.foreground_failed": (logging.DEBUG, {"error_type": _as_id}),
+    "browser.reconnecting": (logging.WARNING, {"error_type": _as_id}),
     # Memory / Vault
     "memory.read_failed":  (logging.WARNING, {"error_type": _as_id}),
     "memory.write_failed": (logging.WARNING, {"error_type": _as_id}),
     "vault.scan_failed":   (logging.WARNING, {"error_type": _as_id}),
     "inbox.autosave_failed": (logging.WARNING, {"error_type": _as_id}),
+    "clipboard.read_failed": (logging.WARNING, {"error_type": _as_id, "code": _as_int}),
     # Launcher / Apps / Monitors
     "launcher.configured": (logging.INFO,    {"apps": _as_int, "profiles": _as_int,
                                               "active": _as_id}),

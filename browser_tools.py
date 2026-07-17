@@ -5,14 +5,13 @@ Web search via DuckDuckGo Lite, page visits via Playwright, URL opening.
 
 import contextlib
 import html as html_module
-import logging
 import re
 import webbrowser
 import subprocess
 from urllib.parse import unquote, parse_qs, urlparse, quote_plus
 import httpx
 
-logger = logging.getLogger("jarvis.browser")
+import obslog
 
 # Maximal so viele Tabs gleichzeitig — der aelteste wird automatisch geschlossen.
 MAX_TABS = 5
@@ -33,8 +32,8 @@ def _bring_chromium_to_front():
             'public class W { [DllImport(\\\"user32.dll\\\")] public static extern bool SetForegroundWindow(IntPtr h); }"; '
             '[W]::SetForegroundWindow($_) }'
         ], capture_output=True, timeout=3)
-    except Exception:
-        logger.debug("Chromium-Fenster konnte nicht in den Vordergrund geholt werden", exc_info=True)
+    except Exception as e:
+        obslog.event("browser.foreground_failed", error_type=type(e).__name__)
 
 
 async def _get_browser():
@@ -76,10 +75,10 @@ async def _new_page_capped():
             while len(ctx.pages) >= MAX_TABS:
                 await ctx.pages[0].close()
             return await ctx.new_page()
-        except Exception:
+        except Exception as e:
             # Fenster wurde zwischen Check und Nutzung geschlossen: einmal neu starten.
             if attempt == 0:
-                logger.warning("Browser nicht mehr erreichbar, starte neu", exc_info=True)
+                obslog.event("browser.reconnecting", error_type=type(e).__name__)
                 _browser = None
                 _context = None
             else:
@@ -180,11 +179,11 @@ async def _search_links_fallback(query: str, limit: int) -> list[dict]:
             follow_redirects=True,
         ) as client:
             resp = await client.get(url)
-    except Exception:
-        logger.warning("HTML-Fallback-Suche fehlgeschlagen", exc_info=True)
+    except Exception as e:
+        obslog.event("browser.request_failed", url=url, error_type=type(e).__name__)
         return []
     if resp.status_code != 200:
-        logger.warning("HTML-Fallback-Suche: Status %s", resp.status_code)
+        obslog.event("browser.request_failed", url=url, status=resp.status_code)
         return []
     return parse_ddg_html(resp.text, limit)
 
@@ -213,12 +212,12 @@ async def search_links(query: str, limit: int = 4) -> list[dict]:
             title = (await link.inner_text()).strip()
             if href and href.startswith("http"):
                 results.append({"title": title or href, "url": href})
-    except Exception:
-        logger.warning("Browser-Suche nach Quellen-Links fehlgeschlagen", exc_info=True)
+    except Exception as e:
+        obslog.event("browser.request_failed", error_type=type(e).__name__)
 
     if results:
         return results
-    logger.info("Quellensuche: Browser lieferte nichts — nutze HTML-Fallback")
+    obslog.event("browser.fallback", reason="empty_result")
     return await _search_links_fallback(query, limit)
 
 
@@ -282,7 +281,7 @@ async def fetch_page_text_fallback(url: str, max_chars: int = 5000) -> dict:
                         break
                 encoding = resp.encoding or "utf-8"
     except Exception as e:
-        logger.warning("HTTP-Lesefallback fehlgeschlagen fuer %s", url, exc_info=True)
+        obslog.event("browser.request_failed", url=url, error_type=type(e).__name__)
         return {"error": type(e).__name__, "url": url}
 
     html = b"".join(chunks).decode(encoding, errors="replace")
@@ -300,7 +299,7 @@ async def visit(url: str, max_chars: int = 5000) -> dict:
     try:
         page = await _new_page_capped()
     except Exception:
-        logger.info("Playwright nicht verfuegbar — HTTP-Lesefallback fuer %s", url)
+        obslog.event("browser.fallback", url=url, reason="no_playwright")
         return await fetch_page_text_fallback(url, max_chars=max_chars)
     try:
         await page.goto(url, timeout=15000, wait_until="domcontentloaded")
@@ -319,7 +318,7 @@ async def visit(url: str, max_chars: int = 5000) -> dict:
         title = await page.title()
         return {"title": title, "url": url, "content": text[:max_chars]}
     except Exception as e:
-        logger.info("Browser-Besuch fehlgeschlagen — HTTP-Lesefallback fuer %s", url)
+        obslog.event("browser.fallback", url=url, reason="visit_failed")
         fallback = await fetch_page_text_fallback(url, max_chars=max_chars)
         if "error" not in fallback:
             return fallback

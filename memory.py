@@ -13,12 +13,11 @@ Serverstart und nach jedem Settings-Save.
 """
 from __future__ import annotations
 
-import logging
 import os
 import re
 import time
 
-logger = logging.getLogger("jarvis.memory")
+import obslog
 
 # Wird von configure() gesetzt (server-Start + Settings-Save).
 VAULT_PATH = ""   # Obsidian-Vault (config: obsidian_inbox_path)
@@ -67,8 +66,8 @@ def read_today_inbox_sync(max_chars: int = 3000) -> str | None:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()[:max_chars]
-    except OSError:
-        logger.warning("Inbox konnte nicht gelesen werden", exc_info=True)
+    except OSError as e:
+        obslog.event("memory.read_failed", error_type=type(e).__name__)
         return None
 
 
@@ -116,8 +115,8 @@ def get_tasks_sync() -> list[str]:
         with open(tasks_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         return [l.strip().replace("- [ ]", "").strip() for l in lines if l.strip().startswith("- [ ]")]
-    except Exception:
-        logger.warning("Tasks konnten nicht gelesen werden", exc_info=True)
+    except Exception as e:
+        obslog.event("memory.read_failed", error_type=type(e).__name__)
         return []
 
 
@@ -152,8 +151,8 @@ def get_vault_summary_sync():
             "by_folder": dict(sorted(folder_counts.items(), key=lambda x: x[1], reverse=True)),
             "recent": [name for _, _, name in entries[:5]],
         }
-    except Exception:
-        logger.warning("Vault-Zusammenfassung fehlgeschlagen", exc_info=True)
+    except Exception as e:
+        obslog.event("vault.scan_failed", error_type=type(e).__name__)
         return None
 
 
@@ -163,8 +162,8 @@ def read_recent_notes_sync(n: int = 5, chars_per_note: int = 1500) -> str:
         return ""
     try:
         entries = _walk_vault_md(VAULT_PATH)
-    except Exception:
-        logger.warning("Vault-Scan fehlgeschlagen", exc_info=True)
+    except Exception as e:
+        obslog.event("vault.scan_failed", error_type=type(e).__name__)
         return ""
     entries.sort(reverse=True)
     parts = []
@@ -263,8 +262,8 @@ def get_project_context_sync(query: str, limit: int = 5, max_chars: int = 3000) 
 
     try:
         entries = _walk_vault_md(VAULT_PATH)
-    except Exception:
-        logger.warning("Vault-Scan fehlgeschlagen", exc_info=True)
+    except Exception as e:
+        obslog.event("vault.scan_failed", error_type=type(e).__name__)
         return ""
 
     now = time.time()
@@ -345,8 +344,8 @@ def read_memory_sync(max_chars: int = 1500) -> str:
     try:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
-    except OSError:
-        logger.warning("Memory-Datei konnte nicht gelesen werden", exc_info=True)
+    except OSError as e:
+        obslog.event("memory.read_failed", error_type=type(e).__name__)
         return ""
     body = content[len(_MEMORY_HEADER):] if content.startswith(_MEMORY_HEADER) else content
     body = body.strip()
@@ -369,7 +368,7 @@ def append_memory(text: str) -> str:
         with open(path, "a", encoding="utf-8") as f:
             f.write(entry)
     except OSError as e:
-        logger.warning("Memory-Datei konnte nicht geschrieben werden", exc_info=True)
+        obslog.event("memory.write_failed", error_type=type(e).__name__)
         return f"Konnte mir das nicht merken (Dateifehler: {type(e).__name__})."
     return f"Dauerhaft gemerkt: {text}"
 
@@ -392,8 +391,8 @@ def forget_memory(query: str) -> str:
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-    except OSError:
-        logger.warning("Memory-Datei konnte nicht gelesen werden", exc_info=True)
+    except OSError as e:
+        obslog.event("memory.read_failed", error_type=type(e).__name__)
         return "Konnte das Gedächtnis nicht lesen (Dateifehler)."
 
     q_lower = query.lower()
@@ -419,7 +418,7 @@ def forget_memory(query: str) -> str:
         with open(path, "w", encoding="utf-8") as f:
             f.writelines(kept)
     except OSError as e:
-        logger.warning("Memory-Datei konnte nicht geschrieben werden", exc_info=True)
+        obslog.event("memory.write_failed", error_type=type(e).__name__)
         return f"Konnte den Eintrag nicht löschen (Dateifehler: {type(e).__name__})."
 
     excerpts = "; ".join(l.strip().lstrip("- ").strip() for l in removed)[:300]

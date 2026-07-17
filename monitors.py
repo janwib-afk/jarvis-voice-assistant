@@ -15,9 +15,7 @@ Bewusst KEIN SetProcessDPIAware: der Server kann im pywebview-Prozess laufen;
 fuer die proportionale Darstellung sind skalierte Koordinaten gleichwertig.
 """
 
-import logging
-
-logger = logging.getLogger("jarvis.monitors")
+import obslog
 
 _MONITORINFOF_PRIMARY = 1
 
@@ -88,7 +86,6 @@ def detect_monitors() -> list[dict]:
     """Monitore erkennen; leere Liste bei jedem Fehler (Frontend-Fallback)."""
     try:
         return _assign_ids(_enum_monitors_raw())
-    except Exception:
-        logger.warning("Monitor-Erkennung fehlgeschlagen — Frontend nutzt Standardansicht.",
-                       exc_info=True)
+    except Exception as e:
+        obslog.event("monitor.detect_failed", error_type=type(e).__name__)
         return []

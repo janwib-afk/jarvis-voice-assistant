@@ -7,12 +7,11 @@ Aenderungen (Voice-ID) greifen automatisch pro Aufruf.
 """
 
 import asyncio
-import logging
 import re
 
 import httpx
 
-logger = logging.getLogger("jarvis.tts")
+import obslog
 
 # Laengere Texte werden an Satzgrenzen gestueckelt, um ElevenLabs-Cutoffs zu vermeiden.
 # Bewusst grosszuegig (600), damit normale Antworten (System-Prompt: max. 3 Saetze,
@@ -107,18 +106,18 @@ async def synthesize_speech(
                     "model_id": "eleven_turbo_v2_5",
                     "voice_settings": {"stability": 0.5, "similarity_boost": 0.85},
                 }, timeout=TTS_TIMEOUT)
-            except Exception:
-                logger.warning("TTS-Aufruf fehlgeschlagen (Versuch %d)", attempt + 1, exc_info=True)
+            except Exception as e:
+                obslog.event("tts.request_failed", error_type=type(e).__name__)
                 error = "Netzwerkfehler zu ElevenLabs."
                 if attempt == 0:
                     await asyncio.sleep(0.5)
                     continue
                 break
-            logger.debug("TTS chunk status: %s, size: %d", resp.status_code, len(resp.content))
+            obslog.event("tts.chunk_received", status=resp.status_code, size=len(resp.content))
             if resp.status_code == 200:
                 audio_parts.append(resp.content)
                 break
-            logger.warning("TTS-Fehler (Status %s): %s", resp.status_code, resp.text[:200])
+            obslog.event("tts.request_failed", status=resp.status_code)
             if resp.status_code in (401, 403):
                 error = f"ElevenLabs-Status {resp.status_code} — API-Key prüfen."
                 break

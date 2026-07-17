@@ -36,6 +36,7 @@ S_CLIP = "SENTINEL-CLIPBOARD-Kontonummer-NEVER"
 S_VAULT = "SENTINEL-VAULT-Projekt-Nordlicht-NEVER"
 S_USER = "SENTINEL-USERINPUT-Passwort-NEVER"
 S_EXC = "SENTINEL-EXCEPTION-Inhalt-NEVER"
+S_QUERY = "SENTINEL-QUERY-Krankheit-NEVER"
 
 
 class _FakeWS:
@@ -161,6 +162,33 @@ class ExceptionLeakTests(_PrivacyTestCase):
         # Sichere Exception-Metadaten bleiben sichtbar.
         self.assertIn("action.failed", combined)
         self.assertIn("RuntimeError", combined)
+
+
+class SearchUrlLeakTests(_PrivacyTestCase):
+    """L1: Der Such-/Besuchs-URL darf nur als Zielhost erscheinen — nie mit
+    Query/Pfad, in dem der Suchbegriff (potenziell sensibel) steckt."""
+
+    def test_search_query_never_logged_only_target_host(self):
+        import browser_tools
+
+        class _BoomClient:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                raise RuntimeError("Netzwerk down")
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with _RootCapture() as cap, \
+                mock.patch.object(browser_tools.httpx, "AsyncClient", _BoomClient):
+            # Der Suchbegriff landet via quote_plus im DDG-URL; der Fehlerpfad loggt ihn.
+            run(browser_tools._search_links_fallback(S_QUERY, 4))
+        combined = self.combined(cap)
+        self.assertNotIn(S_QUERY, combined, "L1: Suchbegriff (URL-Query) im Log")
+        # Der Zielhost bleibt sichtbar — nur Pfad/Query fallen weg.
+        self.assertIn("html.duckduckgo.com", combined)
 
 
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_WS_IMPORT_ERROR!r}")
