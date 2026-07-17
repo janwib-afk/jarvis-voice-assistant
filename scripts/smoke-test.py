@@ -17,6 +17,7 @@ mocken alle LLM-/TTS-/Browser-Aufrufe.
 
 Exit-Code 0 = alles ok, 1 = mindestens ein Schritt fehlgeschlagen.
 """
+import contextlib
 import importlib.util
 import logging
 import os
@@ -147,12 +148,26 @@ def check_tests():
         fixture_before = f.read()
 
     suite = unittest.TestLoader().discover(os.path.join(ROOT, "tests"))
-    logging.disable(logging.CRITICAL)  # Test-Logs nicht in die ✓/✗-Ausgabe mischen
+    # Test-Logs/-Prints nicht in die ✓/✗-Ausgabe mischen — ABER das Logging-
+    # Subsystem NICHT global abschalten. `logging.disable(CRITICAL)` wuerde auch
+    # WARNING/ERROR-Records unterdruecken, sodass die obslog-Schutznetz-Tests einen
+    # leeren Stream saehen (echter Records-fuehrender Fehlerpfad = Fast-Gate rot).
+    # Stattdessen: (1) Konsolen-Streams waehrend des Laufs auf devnull umleiten —
+    # `sys.stderr` wird dynamisch gelesen (obslog `_StderrSink`, `lastResort`), also
+    # verstummt die Konsole, waehrend echte Records weiter verarbeitet werden; und
+    # (2) bereits am Root haengende Handler fuer den Lauf loesen (ein frueherer
+    # check_health-Start kann ueber den Lifespan einen Handler installiert haben, der
+    # das *damalige* stderr gebunden hat und die Umleitung sonst umginge). Beides wird
+    # im finally garantiert wiederhergestellt.
+    root_logger = logging.getLogger()
+    saved_handlers = root_logger.handlers[:]
+    root_logger.handlers[:] = []
     try:
         with open(os.devnull, "w", encoding="utf-8") as devnull:
-            result = unittest.TextTestRunner(verbosity=0, stream=devnull).run(suite)
+            with contextlib.redirect_stderr(devnull), contextlib.redirect_stdout(devnull):
+                result = unittest.TextTestRunner(verbosity=0, stream=devnull).run(suite)
     finally:
-        logging.disable(logging.NOTSET)
+        root_logger.handlers[:] = saved_handlers
 
     with open(fixture, "rb") as f:
         fixture_after = f.read()
