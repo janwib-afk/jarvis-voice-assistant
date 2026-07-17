@@ -77,3 +77,26 @@ bauen keine Wire-Dicts mehr.
 - **Commit:** `test(protocol): lock legacy wire contracts`.
 - **Offene Risiken:** `ts`-Exaktwert noch nicht eingefroren (kein Clock-Seam vor Slice 2) —
   hier nur Typ/Epoch-Charakter gelockt.
+
+### Slice 2 — Reiner Typed Core + LegacyCodec/V1Codec
+- **Ziel:** transportneutrales Typmodell + Codecs + Decode + Negotiation als reine Logik,
+  ohne Produktions-Wiring. Tracer: Health Legacy + Health V1, dann Event für Event.
+- **Seam:** SEAM-WIRE (öffentliche `wire_protocol`-Schnittstelle, vollständig serialisierter
+  Output; Clock/ID über injizierte Seams eingefroren).
+- **RED:** `python -m unittest tests.test_wire_core` — Modul/Events/Decode/Negotiation
+  fehlten → 1, dann 13, dann 19 Fehler.
+- **GREEN:** 32 Tests OK; import-sicher (ROOT_HANDLERS_DELTA 0). Volle Suite 778 OK.
+- **Inhalt:** `wire_protocol/` (Package): `_seams` (System/Fixed-Clock, Uuid/Sequence-IdGen),
+  `_model` (Sensitivity, ProtocolContext, 8 Server Events, SayText/Stop, ProtocolError),
+  `_codecs` (LegacyCodec byte-/shape-exakt inkl. Epoch-`ts`, V1Codec nested Envelope +
+  Sensitivität), `_decode` (Legacy + V1 mit Reserved-Field-/Version-/Größen-/Root-Prüfung),
+  `_negotiation` (WS-Subprotocol + REST-Media-Type), `_protocol` (WireProtocol-Fassade).
+- **Sicherheitsinvarianten:** keine neue Dependency; kein Pydantic; Import ohne I/O; V1
+  weist Server-Feld-Spoofing (`reserved_field`), falsche Major (`unsupported_version`,
+  Close 1002), Übergröße (`too_large`), falschen Root (`bad_root`) ab.
+- **Geänderte Dateien:** `wire_protocol/*` (neu), `tests/test_wire_core.py` (neu), dieses Dok.
+- **Rollback:** Commit reverten (kein Produktions-Wiring — server/assistant_core unberührt).
+- **Commit:** `feat(protocol): add typed wire core and codecs`.
+- **Offene Punkte:** `present_rest`/`RestResult` (REST-Presentation) entstehen in Slice 7
+  gemeinsam mit der Routenmigration; `ConversationChannel`/`EventSink`/`ConnectionRegistry`
+  in Slice 3.
