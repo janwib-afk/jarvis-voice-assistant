@@ -61,4 +61,19 @@ bauen keine Wire-Dicts mehr.
 - **Rollback:** Commit reverten (reine Doku).
 - **Commit:** `docs(architecture): clarify wire protocol implementation contracts`.
 
-<!-- Slices 1–10 werden hier je nach Abschluss ergänzt. -->
+### Slice 1 — Legacy charakterisieren (Golden-Contracts)
+- **Ziel:** die 8 ausgehenden Legacy-Frame-Shapes, eingehende Commands, sofortiger
+  Health-Frame, Broadcasts und REST-Kernverträge (Status/Shape/403/`revision`/`conflict`/
+  `If-Match`/Epoch-`ts`) über die öffentlichen Seams fixieren.
+- **Seam:** SEAM-CONVERSATION (WS-Frames auf `server.app`, nur `ai`/`synthesize_speech`
+  ersetzt) + SEAM-REST/SEAM-WS mit eigener Runtime + Temp-Config (Fixture unberührt).
+- **Test:** `tests/test_wire_legacy_golden.py` (12 Tests). Charakterisierend → erwartungs-
+  gemäß grün (kein vorgetäuschtes RED).
+- **GREEN:** `python -m unittest tests.test_wire_legacy_golden` → 12 OK. Volle Suite 746 OK.
+- **Sicherheitsinvarianten:** `/health` öffentlich + secret-frei; geschützte Routen 403
+  ohne Token; Fixture bytegleich; 0 Provideraufrufe.
+- **Geänderte Dateien:** `tests/test_wire_legacy_golden.py` (neu), dieses Dokument.
+- **Rollback:** Commit reverten (nur Tests/Doku).
+- **Commit:** `test(protocol): lock legacy wire contracts`.
+- **Offene Risiken:** `ts`-Exaktwert noch nicht eingefroren (kein Clock-Seam vor Slice 2) —
+  hier nur Typ/Epoch-Charakter gelockt.
