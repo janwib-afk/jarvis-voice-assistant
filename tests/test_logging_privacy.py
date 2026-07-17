@@ -90,6 +90,7 @@ class _PrivacyTestCase(unittest.TestCase):
 
     def tearDown(self):
         assistant_core.ai = self._saved_ai
+        obslog.uninstall_protection()
         obslog.reset()
 
     def combined(self, root_cap):
@@ -201,6 +202,7 @@ class UserInputLeakTests(unittest.TestCase):
         self.client = TestClient(server.app)
 
     def tearDown(self):
+        obslog.uninstall_protection()
         obslog.reset()
 
     def _wait_for(self, record, marker, timeout=3.0):
@@ -215,10 +217,10 @@ class UserInputLeakTests(unittest.TestCase):
         async def fake_process(session_id, text, ws, mutate_launcher=None):
             seen.append(text)
 
-        # _configure_logging wird im Lifespan aufgerufen — als No-op patchen, damit
-        # der Test-Sink nicht durch den produktiven stderr-Sink ersetzt wird.
+        # KEIN Patch privater Serverfunktionen mehr: der explizit gesetzte Test-Sink
+        # bleibt ueber den echten Produktionsstart erhalten (configure(sink=None)
+        # ueberschreibt einen expliziten Sink nicht) — siehe LifespanSinkTests.
         with _RootCapture() as cap, \
-                mock.patch.object(server, "_configure_logging", lambda: None), \
                 mock.patch.object(server.assistant_core, "process_message", fake_process):
             # Token autoritativ aus der App-Runtime (das globale SESSION_TOKEN kann
             # im Vollsuite-Lauf durch andere Tests veralten).
@@ -233,6 +235,36 @@ class UserInputLeakTests(unittest.TestCase):
         self.assertNotIn(S_USER, combined, "L4: roher Nutzer-Text im Log")
         # Sichere Metadaten bleiben: der Empfang wird strukturiert (mit Laenge) gemeldet.
         self.assertIn("message.received", combined)
+
+
+@unittest.skipIf(server is None, f"server import nicht moeglich: {_WS_IMPORT_ERROR!r}")
+class LifespanSinkTests(unittest.TestCase):
+    """Recovery 5E: der App-Lifespan (Produktionsstart) darf einen explizit
+    konfigurierten Test-Sink nicht ungefragt ersetzen — geprueft ueber den
+    oeffentlichen Start-Seam, ohne Patch privater Serverfunktionen."""
+
+    def tearDown(self):
+        obslog.uninstall_protection()
+        obslog.reset()
+
+    def test_lifespan_preserves_explicitly_configured_sink(self):
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="text", level="DEBUG")
+        # Start-/Lifespan-Seam: TestClient als Context-Manager faehrt aopen/_configure_logging.
+        with TestClient(server.app):
+            obslog.event("server.started")
+        self.assertTrue(
+            any("server.started" in line for line in sink.lines),
+            "5E: der Produktionsstart hat den expliziten Test-Sink ersetzt")
+
+    def test_explicit_sink_can_still_be_replaced_deliberately(self):
+        a = obslog.MemorySink()
+        b = obslog.MemorySink()
+        obslog.configure(sink=a, fmt="text", level="DEBUG")
+        obslog.configure(sink=b, fmt="text", level="DEBUG")  # bewusst ersetzen
+        obslog.event("server.started")
+        self.assertEqual(len(a.lines), 0)
+        self.assertEqual(len(b.lines), 1)
 
 
 if __name__ == "__main__":

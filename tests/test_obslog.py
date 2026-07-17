@@ -12,9 +12,11 @@ unbearbeiteter LogRecord.
 Alle Werte sind synthetische Sentinels. Keine echten Provider, keine echte Config,
 keine echten Logdateien.
 """
+import contextlib
 import io
 import json
 import logging
+import re
 import unittest
 from unittest import mock
 
@@ -307,7 +309,8 @@ class ProtectionNetTests(unittest.TestCase):
     def setUp(self):
         # Reihenfolge-unabhaengig: ein evtl. von einem Lifespan installiertes Netz
         # zuerst entfernen, sonst kehrt install_protection idempotent zurueck und der
-        # StringIO-Stream bliebe leer.
+        # StringIO-Stream bliebe leer. reset() setzt zugleich fmt='text' deterministisch.
+        obslog.reset()
         obslog.uninstall_protection()
         self.stream = io.StringIO()
         obslog.install_protection(stream=self.stream)
@@ -364,6 +367,166 @@ class ProtectionNetTests(unittest.TestCase):
         obslog.event("server.started")
         self.assertEqual(len(sink.lines), 1)
         self.assertNotIn("server.started", self.out)
+
+
+class ProtectionExistingHandlerTests(unittest.TestCase):
+    """Recovery 5A/5B/5C: das Schutznetz darf keinen bereits vorhandenen Handler
+    roh ausgeben lassen, auch nicht ueber nicht-propagierende Logger oder
+    handleError(). Getestet am formatierten Output echter Handler."""
+
+    def tearDown(self):
+        obslog.uninstall_protection()
+        for name in obslog._NOISY_THIRD_PARTY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        obslog.reset()
+
+    def test_pre_existing_root_handler_cannot_emit_raw_after_protection(self):
+        # 5A: ein VOR install_protection installierter Root-Handler mit normalem
+        # Formatter darf denselben Record danach nicht mehr roh ausgeben.
+        buf = io.StringIO()
+        pre = logging.StreamHandler(buf)
+        pre.setFormatter(logging.Formatter("%(name)s %(levelname)s %(message)s"))
+        root = logging.getLogger()
+        root.addHandler(pre)
+        old_level = root.level
+        root.setLevel(logging.DEBUG)
+        prot = io.StringIO()
+        try:
+            obslog.uninstall_protection()
+            obslog.install_protection(stream=prot)
+            logging.getLogger("uvicorn.access").warning(
+                '127.0.0.1 - "GET /ws?token=%s HTTP/1.1" 101', S_TOKEN)
+            combined = buf.getvalue() + prot.getvalue()
+        finally:
+            root.removeHandler(pre)
+            root.setLevel(old_level)
+        self.assertNotIn(S_TOKEN, combined, "5A: Alt-Handler gab den Token roh aus")
+
+    def test_non_propagating_logger_with_own_handler_is_protected(self):
+        # 5B: ein Drittanbieter-Logger mit propagate=False + eigenem Handler.
+        buf = io.StringIO()
+        lg = logging.getLogger("uvicorn.error")
+        own = logging.StreamHandler(buf)
+        own.setFormatter(logging.Formatter("%(name)s %(levelname)s %(message)s"))
+        lg.addHandler(own)
+        old_prop, old_level = lg.propagate, lg.level
+        lg.propagate = False
+        lg.setLevel(logging.DEBUG)
+        try:
+            obslog.uninstall_protection()
+            obslog.install_protection(stream=io.StringIO())
+            lg.warning("connect https://api.host.tld/v1?token=%s", S_TOKEN)
+            out = buf.getvalue()
+        finally:
+            lg.removeHandler(own)
+            lg.propagate = old_prop
+            lg.setLevel(old_level)
+        self.assertNotIn(S_TOKEN, out, "5B: nicht-propagierender Logger leckte den Token")
+
+    def test_handleerror_never_emits_raw_record(self):
+        # 5C: raiseExceptions=True + werfender Stream -> handleError darf weder
+        # Rohrecord/-argument noch rohe Exception/Traceback ausgeben.
+        saved_raise = logging.raiseExceptions
+        logging.raiseExceptions = True
+
+        class _BoomStream:
+            def write(self, s):
+                raise OSError("Stream kaputt")
+
+            def flush(self):
+                pass
+
+        real_err = io.StringIO()
+        try:
+            obslog.uninstall_protection()
+            obslog.install_protection(stream=_BoomStream())
+            with contextlib.redirect_stderr(real_err):
+                try:
+                    raise RuntimeError(f"boom {S_SECRET}")
+                except RuntimeError:
+                    logging.getLogger("uvicorn.error").warning(
+                        "request failed for token=%s", S_TOKEN, exc_info=True)
+                # Geschaeftsablauf laeuft weiter:
+                reached = True
+            out = real_err.getvalue()
+        finally:
+            logging.raiseExceptions = saved_raise
+        self.assertTrue(reached, "5C: Logging-Fehler brach den Ablauf ab")
+        self.assertNotIn(S_TOKEN, out)
+        self.assertNotIn(S_SECRET, out)
+        self.assertNotIn("RuntimeError", out)
+        self.assertNotIn("Traceback", out)
+
+
+class ProtectionJsonlTests(unittest.TestCase):
+    """Recovery 5D: bei JSONL muss auch der Drittanbieter-Record JSONL sein —
+    der Stream bleibt durchgaengig gueltiges JSONL."""
+
+    def tearDown(self):
+        obslog.uninstall_protection()
+        for name in obslog._NOISY_THIRD_PARTY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        obslog.reset()
+
+    def test_own_and_third_party_lines_are_all_valid_jsonl(self):
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="jsonl", level="DEBUG")
+        prot = io.StringIO()
+        obslog.uninstall_protection()
+        obslog.install_protection(stream=prot)
+        obslog.event("action.finished", action="SEARCH", result_len=3)
+        logging.getLogger("httpx").warning(
+            "HTTP Request: GET https://api.host.tld/v1?token=%s", S_TOKEN)
+        lines = [l for l in (sink.lines + prot.getvalue().splitlines()) if l.strip()]
+        self.assertGreaterEqual(len(lines), 2)
+        for line in lines:
+            json.loads(line)  # jede nichtleere Zeile ist gueltiges JSON
+        blob = "\n".join(lines)
+        self.assertNotIn(S_TOKEN, blob)
+
+
+class EventSchemaTests(_SinkTestCase):
+    """Recovery 5F: formatiertes Event traegt Timestamp, Level, Logger, Eventname
+    und sichere Felder — in Text und JSONL. Keine Korrelations-/Protokoll-IDs."""
+
+    _TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+
+    def test_text_event_has_timestamp_level_logger_and_name(self):
+        self.configure("text")
+        obslog.event("action.finished", action="SEARCH", result_len=3)
+        line = self.sink.lines[0]
+        self.assertRegex(line, self._TS)
+        self.assertIn("action", line)          # Logger-Namespace
+        self.assertIn("INFO", line)            # Level
+        self.assertIn("action.finished", line)  # Eventname
+        self.assertIn("result_len=3", line)     # sicheres Feld
+
+    def test_jsonl_event_has_ts_level_logger_and_event(self):
+        self.configure("jsonl")
+        obslog.event("config.migrated", from_version=0, to_version=1)
+        rec = json.loads(self.sink.lines[0])
+        self.assertRegex(rec["ts"], self._TS)
+        self.assertEqual(rec["level"], "INFO")
+        self.assertEqual(rec["logger"], "config")
+        self.assertEqual(rec["event"], "config.migrated")
+        self.assertEqual(rec["from_version"], 0)
+        self.assertEqual(rec["to_version"], 1)
+
+
+class ExceptionMetadataTests(_SinkTestCase):
+    """Recovery D6: Exceptions -> Typ + sicherer Codeort (hoechstens Basename);
+    keine Message, keine lokalen Variablen, kein roher Traceback."""
+
+    def test_exception_event_shows_type_and_basename_location_only(self):
+        self.configure("text")
+        obslog.event("action.failed", action="SEARCH", error_type="RuntimeError",
+                     component="browser",
+                     location=r"C:\Users\GeheimNutzer\jarvis\browser_tools.py")
+        line = self.sink.lines[0]
+        self.assertIn("RuntimeError", line)        # Exception-Typ
+        self.assertIn("browser_tools.py", line)    # sicherer Codeort = nur Basename
+        self.assertNotIn("GeheimNutzer", line)     # kein Verzeichnis/Nutzerpfad
+        self.assertNotIn("C:", line)
 
 
 if __name__ == "__main__":

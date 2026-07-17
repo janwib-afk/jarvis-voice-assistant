@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import sys
+import time
 from urllib.parse import urlsplit
 
 # ── Feldtransformationen ─────────────────────────────────────────────────────
@@ -69,6 +70,22 @@ def _as_host(v):
     return f"{parts.scheme}://{host}"
 
 
+def _as_loc(v):
+    """Sicherer Codeort (D6): hoechstens der Basename, nie Verzeichnis/Nutzerpfad.
+
+    Ein voller Pfad wie ``C:\\Users\\Jan\\browser_tools.py`` wird auf
+    ``browser_tools.py`` reduziert; eine optionale ``:Zeile`` bleibt erhalten.
+    """
+    if not isinstance(v, str) or not v:
+        return _DROP
+    base = os.path.basename(v.replace("\\", "/"))
+    if not base or len(base) > 64:
+        return _DROP
+    if not all(c.isalnum() or c in "._-:" for c in base):
+        return _DROP
+    return base
+
+
 # ── Eventkatalog (geschlossen) ───────────────────────────────────────────────
 # name -> (level, {feld: transform}). Nur diese Felder erscheinen je Event.
 
@@ -84,7 +101,7 @@ _CATALOG: dict[str, tuple[int, dict]] = {
     "settings.refresh_failed": (logging.WARNING, {"error_type": _as_id}),
     "settings.conflict":   (logging.INFO,    {}),
     "config.migrated":     (logging.INFO,    {"from_version": _as_int, "to_version": _as_int}),
-    "config.restore_failed": (logging.ERROR, {"error_type": _as_id}),
+    "config.restore_failed": (logging.ERROR, {"error_type": _as_id, "location": _as_loc}),
     "config.startup_failed": (logging.ERROR, {"error_type": _as_id}),
     "config.startup_degraded": (logging.WARNING, {"count": _as_int}),
     # Kontextdaten-Refresh
@@ -96,7 +113,8 @@ _CATALOG: dict[str, tuple[int, dict]] = {
     "action.finished":     (logging.INFO,    {"action": _as_id, "result_len": _as_int}),
     "action.cancelled":    (logging.INFO,    {"action": _as_id}),
     "action.failed":       (logging.WARNING, {"action": _as_id, "error_type": _as_id,
-                                              "component": _as_id, "where": _as_id}),
+                                              "component": _as_id, "where": _as_id,
+                                              "location": _as_loc}),
     "action.rejected":     (logging.INFO,    {"reason": _as_id}),
     # LLM / TTS
     "llm.request_failed":  (logging.WARNING, {"error_type": _as_id}),
@@ -161,6 +179,7 @@ class _StderrSink:
 # ── Modulzustand (prozessweit, kein Runtime-State) ───────────────────────────
 
 _sink = None            # None => noch nicht konfiguriert: Events werden verworfen
+_sink_explicit = False  # True => Sink wurde explizit gesetzt (Test) — nie ungefragt ersetzen
 _fmt = "text"
 _min_level = logging.INFO
 
@@ -168,11 +187,20 @@ _min_level = logging.INFO
 def configure(sink=None, fmt: str = "text", level=None) -> None:
     """Einmalig am Startpfad aufrufen. Idempotent; ungueltiges fmt -> 'text'.
 
-    Ohne ``sink`` wird der produktive stderr-Sink gesetzt. Tests uebergeben einen
-    MemorySink. KEINE Datei, KEIN Root-Handler.
+    Ein explizit uebergebener ``sink`` (Tests) wird gesetzt und als *explizit*
+    markiert. Ein spaeterer Produktionsstart ruft ``configure(sink=None)`` — das
+    setzt den stderr-Sink NUR, wenn noch keiner existiert, und ersetzt einen bereits
+    (explizit oder produktiv) gesetzten Sink NICHT (verhindert das stille
+    Ueberschreiben eines Test-Sinks im Lifespan). KEINE Datei, KEIN Root-Handler.
     """
-    global _sink, _fmt, _min_level
-    _sink = sink if sink is not None else _StderrSink()
+    global _sink, _sink_explicit, _fmt, _min_level
+    if sink is not None:
+        _sink = sink
+        _sink_explicit = True
+    elif _sink is None:
+        _sink = _StderrSink()
+        _sink_explicit = False
+    # sonst: vorhandenen Sink behalten (idempotent; kein Ueberschreiben)
     _fmt = fmt if fmt in ("text", "jsonl") else "text"
     if level is not None:
         resolved = getattr(logging, str(level).upper(), None) if isinstance(level, str) else level
@@ -181,8 +209,9 @@ def configure(sink=None, fmt: str = "text", level=None) -> None:
 
 def reset() -> None:
     """Testhilfe: Konfiguration zuruecksetzen (kein Sink)."""
-    global _sink, _fmt, _min_level
+    global _sink, _sink_explicit, _fmt, _min_level
     _sink = None
+    _sink_explicit = False
     _fmt = "text"
     _min_level = logging.INFO
 
@@ -211,15 +240,22 @@ def _redact(name: str, fields: dict) -> tuple[dict, int]:
     return safe, dropped
 
 
+def _timestamp() -> str:
+    """UTC-ISO-8601 auf Sekunden (kein Korrelations-/Protokoll-ID-Zusatz)."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def _render(name: str, level: int, safe: dict, dropped: int) -> str:
     if dropped:
         safe = {**safe, "dropped_fields": dropped}
+    lvl = _LEVEL_NAMES.get(level, "INFO")
+    ts = _timestamp()
+    logger = name.split(".", 1)[0]  # Namespace als Logger (z.B. 'action', 'config')
     if _fmt == "jsonl":
-        record = {"event": name, "level": _LEVEL_NAMES.get(level, "INFO"), **safe}
+        record = {"ts": ts, "logger": logger, "level": lvl, "event": name, **safe}
         return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
     parts = " ".join(f"{k}={v}" for k, v in safe.items())
-    lvl = _LEVEL_NAMES.get(level, "INFO")
-    return f"[{lvl}] {name}" + (f" {parts}" if parts else "")
+    return f"{ts} {logger} [{lvl}] {name}" + (f" {parts}" if parts else "")
 
 
 def _fallback_line() -> str:
@@ -308,30 +344,101 @@ def _sanitize_text(text: str) -> str:
     return text
 
 
-class _ProtectionFormatter(logging.Formatter):
-    """Rendert nur ``name level <sanitierte Nachricht>`` — nie Traceback/exc_text
-    (die werden gar nicht erst angehaengt), nie rohe Args."""
+class _SanitizingFilter(logging.Filter):
+    """Neutralisiert einen Record IN-PLACE, damit ihn KEIN Handler mehr roh ausgeben
+    kann (auch ein bereits vorhandener, nicht-propagierender oder ueber handleError):
+    Nachricht sanitiert, Args geleert, Traceback/exc_text/Stack entfernt. Gibt immer
+    True zurueck (verwirft nichts — nur Redaction)."""
 
-    def format(self, record: logging.LogRecord) -> str:
+    _obslog_tag = _PROTECTION_TAG
+
+    def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = record.getMessage()
         except Exception:
             msg = "<unrenderable>"
-        return f"{record.name} {record.levelname} {_sanitize_text(msg)}"
+        record.msg = _sanitize_text(msg)
+        record.args = ()
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
+class _ProtectionFormatter(logging.Formatter):
+    """Rendert Drittanbieter-Records fail-closed: Timestamp, Logger, Level und
+    sanitierte Nachricht — nie Traceback/exc_text/rohe Args. Wirft NIE (Fallback).
+    In JSONL als eine gueltige JSON-Zeile (durchgaengiges JSONL, D4)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            try:
+                msg = record.getMessage()
+            except Exception:
+                msg = "<unrenderable>"
+            safe = _sanitize_text(msg)
+            ts = _timestamp()
+            if _fmt == "jsonl":
+                return json.dumps(
+                    {"ts": ts, "logger": record.name, "level": record.levelname,
+                     "event": "thirdparty.log", "message": safe},
+                    ensure_ascii=False, separators=(",", ":"))
+            return f"{ts} {record.name} [{record.levelname}] {safe}"
+        except Exception:
+            return _fallback_line()
+
+
+class _ProtectionHandler(logging.StreamHandler):
+    """Wie StreamHandler, aber ``handleError`` gibt NIE den Rohrecord, rohe Args oder
+    einen Traceback aus — auch nicht bei ``logging.raiseExceptions=True``. Hoechstens
+    eine statische, datenfreie Fallback-Zeile auf den echten stderr."""
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        try:
+            sys.stderr.write(_fallback_line() + "\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+
+def _iter_all_loggers():
+    root = logging.getLogger()
+    yield root
+    for obj in list(root.manager.loggerDict.values()):
+        if isinstance(obj, logging.Logger):
+            yield obj
+
+
+def _neutralize_existing_handlers(filt: logging.Filter) -> None:
+    """Den sanitierenden Filter an ALLE bereits vorhandenen Handler haengen (Root +
+    jeder benannte Logger, auch ``propagate=False``), damit sie denselben Record nicht
+    mehr roh ausgeben. Ein zusaetzlicher sicherer Handler allein genuegt nicht."""
+    for logger in _iter_all_loggers():
+        for h in list(logger.handlers):
+            if getattr(h, "_obslog_tag", None) == _PROTECTION_TAG:
+                continue
+            if not any(getattr(f, "_obslog_tag", None) == _PROTECTION_TAG
+                       for f in h.filters):
+                h.addFilter(filt)
 
 
 def install_protection(stream=None) -> None:
-    """Zentrales Schutznetz am Root-Handler installieren (idempotent).
+    """Zentrales Schutznetz installieren (idempotent).
 
-    ``stream`` erlaubt Tests, den formatierten Output abzugreifen; Default stderr.
+    (1) Bereits vorhandene Handler werden mit dem sanitierenden Filter neutralisiert;
+    (2) ein eigener fail-closed Handler wird an den Root gehaengt. ``stream`` erlaubt
+    Tests, den formatierten Output abzugreifen; Default stderr.
     """
     root = logging.getLogger()
     for h in root.handlers:
         if getattr(h, "_obslog_tag", None) == _PROTECTION_TAG:
             return  # bereits installiert
-    handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
+    filt = _SanitizingFilter()
+    _neutralize_existing_handlers(filt)
+    handler = _ProtectionHandler(stream if stream is not None else sys.stderr)
     handler._obslog_tag = _PROTECTION_TAG
     handler.setLevel(logging.DEBUG)
+    handler.addFilter(filt)
     handler.setFormatter(_ProtectionFormatter())
     root.addHandler(handler)
     # Root mindestens auf WARNING lassen (Default), damit WARNING+ das Netz erreicht.
@@ -343,8 +450,13 @@ def install_protection(stream=None) -> None:
 
 
 def uninstall_protection() -> None:
-    """Testhilfe: das Schutznetz wieder entfernen."""
-    root = logging.getLogger()
-    for h in list(root.handlers):
-        if getattr(h, "_obslog_tag", None) == _PROTECTION_TAG:
-            root.removeHandler(h)
+    """Testhilfe: Schutz-Handler entfernen UND die sanitierenden Filter von allen
+    (weiterhin vorhandenen) Handlern loesen."""
+    for logger in _iter_all_loggers():
+        for h in list(logger.handlers):
+            if getattr(h, "_obslog_tag", None) == _PROTECTION_TAG:
+                logger.removeHandler(h)
+            else:
+                for f in list(h.filters):
+                    if getattr(f, "_obslog_tag", None) == _PROTECTION_TAG:
+                        h.removeFilter(f)
