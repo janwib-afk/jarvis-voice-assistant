@@ -186,3 +186,69 @@ vorhanden**. Nicht mit dem Ist-Stand vermischen.
   (Phase 6). Heute laufen Nachrichten nur als flüchtige asyncio-Tasks.
 - **Outbox / Saga** — geplante Crash-Sicherheit für externe Wirkungen (Phase 6).
 - **Scheduler / Briefing / Workspace-Szene** — geplant (Phase 8).
+
+## Wire-Contracts (RFC-0005 akzeptiert — Umsetzung ab Prompt 15)
+
+Diese Begriffe sind mit [RFC-0005](docs/architecture/RFC-0005-typed-versioned-wire-contracts.md)
+**akzeptiert**, aber **im aktuellen Code noch nicht implementiert** (die Produktion nutzt
+weiterhin die untypisierten Legacy-Verträge). Nicht mit dem Ist-Stand vermischen.
+
+### Wire Frame
+- **Bedeutung:** Das Transportformat einer einzelnen über REST/WS gesendeten Nachricht
+  (die serialisierte Form auf der Leitung).
+- **Abgrenzung:** **Nicht** die `Message` (Gesprächsbeitrag `{role, content}`) und nicht die
+  `Action`.
+
+### Protocol Envelope
+- **Bedeutung:** Die V1-Hülle eines Wire Frames: `{protocol_version, type, event_id,
+  correlation_id, session_id, timestamp, sensitivity, payload}` — Metadaten getrennt vom
+  Nutzinhalt (`payload`).
+- **Abgrenzung:** Legacy-Frames haben **keine** Envelope; sie bleiben byte-/shape-exakt.
+
+### Client Command
+- **Bedeutung:** Eine typisierte eingehende Nachricht Client→Server (z.B. `SayText`, `Stop`).
+- **Abgrenzung:** Nicht die `Action` (die vom LLM ausgelöst wird), nicht die `Message`.
+
+### Server Event
+- **Bedeutung:** Eine typisierte ausgehende Nachricht Server→Client (z.B. `Health`,
+  `SpokenResponse`, `ActionLifecycle`, `Error`, `StopAck`, `MusicChanged`).
+- **Abgrenzung:** **Kein** persistiertes Event-Sourcing-Ereignis. Verschieden vom
+  **Operational Log Event** (`obslog`, RFC-0004) — Wire vs. Log sind getrennte Grenzen.
+
+### Protocol Version
+- **Bedeutung:** Integer-Major der Wire-Contracts (`1`). Additive Erweiterungen bleiben `1`;
+  Breaking Changes erzeugen eine neue Major.
+- **Abgrenzung:** Nicht die `schema_version` der Configuration (RFC-0003).
+
+### Event ID
+- **Bedeutung:** Server-erzeugte opake ID **eines einzelnen semantischen** Server Events.
+  Ein Broadcast ist ein Event → dieselbe Event ID an alle Empfänger.
+- **Abgrenzung:** **Keine** Replay-, Deduplizierungs- oder Exactly-once-Garantie.
+
+### Correlation ID
+- **Bedeutung:** Verbindet einen Client Command bzw. REST-Request mit **allen** daraus
+  entstehenden Server Events. Eine validierte Client-Correlation-ID wird gespiegelt; sonst
+  server-erzeugt.
+- **Abgrenzung:** Kein Auth-Bezug; spontane Events erhalten eine frische Server-Correlation-ID.
+
+### Conversation Session ID
+- **Bedeutung:** Server-erzeugte **opake Zufalls-ID** pro akzeptierter WS-Verbindung; innerhalb
+  der Verbindung stabil, nach Reconnect neu (Reconnect-Resume ist Nicht-Ziel).
+- **Abgrenzung:** **Nicht** der Auth-/Session-Token; nicht das interne `str(id(ws))`. REST
+  erfindet keine Session ID (`null`).
+
+### Sensitivity
+- **Bedeutung:** Serverseitige Datenklasse eines Feldes/Events (`public`/`local`/`personal`/
+  `sensitive`/`secret`) auf dem Wire. `secret` ist verboten; der Encoder redigiert fail-closed.
+- **Abgrenzung:** Der Client darf eine Klasse **nie** herabstufen; die Klasse ist nicht
+  kosmetisch, sondern steuert echte Redaction.
+
+### Protocol Context
+- **Bedeutung:** Das pro Verbindung (WS) bzw. pro Request (REST) ausgehandelte Ergebnis
+  (`legacy` | `v1`, `session_id`, gewählter Codec).
+- **Abgrenzung:** Kein Modul-Global; im Besitz der Composition Root / des WS-Endpunkts (RFC-0002).
+
+### Legacy Adapter
+- **Bedeutung:** Der `LegacyCodec`, der die heutigen untypisierten Formen byte-/shape-exakt
+  reproduziert; Gegenstück zum `V1Codec` am selben Codec-Seam.
+- **Abgrenzung:** Erzeugt **keine** neuen Metadaten/Zeitstempel auf Legacy-Frames.
