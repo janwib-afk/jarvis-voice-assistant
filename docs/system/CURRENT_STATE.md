@@ -4,6 +4,22 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-17 (Phase 4G, RFC-0005 AKZEPTIERT — nur Architektur):** Für
+> typisierte und versionierte REST-/WS-Verträge wurde
+> [RFC-0005](../architecture/RFC-0005-typed-versioned-wire-contracts.md)
+> `Accepted for incremental implementation` (Variante C: transportneutrales tiefes
+> `wire_protocol`-Modul mit typisierten Client Commands / Server Events und getrennten
+> LegacyCodec/V1Codec; nested V1-Envelope mit `protocol_version`/`event_id`/
+> `correlation_id`/`session_id`/`timestamp`/`sensitivity`/`payload`; WS-Subprotocol
+> `jarvis.v1` + REST-Header-Aushandlung; serverseitige Sensitivität mit hartem Fail-closed,
+> `secret` nie auf dem Wire). **Die Produktion nutzt weiterhin die untypisierten
+> Legacy-Verträge** — RFC-0005 ist ein reiner Architektur-Pass, es wurde **kein Protokoll
+> implementiert**; die Umsetzung beginnt erst mit **Prompt 15**. Reiner Doku-Pass: kein
+> Produktionscode, keine Tests, keine Workflows, keine Dependencies geändert. Gefundene
+> Doku-Abweichungen (vestigialer `status`-Frame im Frontend; fehlende Settings-Zusätze
+> `revision`/`conflict`/`degraded` in `REST_CONTRACTS.md`) sind im RFC festgehalten und
+> werden erst mit der Umsetzung korrigiert.
+
 > **Status 2026-07-17 (Phase 4F, RFC-0004 IMPLEMENTIERT):** Strukturierte Betriebslogs
 > und zentrale Redaction sind umgesetzt
 > ([RFC-0004](../architecture/RFC-0004-structured-operational-logging-redaction.md),
