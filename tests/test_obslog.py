@@ -12,7 +12,9 @@ unbearbeiteter LogRecord.
 Alle Werte sind synthetische Sentinels. Keine echten Provider, keine echte Config,
 keine echten Logdateien.
 """
+import io
 import json
+import logging
 import unittest
 
 import obslog
@@ -214,6 +216,75 @@ class StartupWiringTests(unittest.TestCase):
         obslog.configure(sink=b); obslog.event("server.started")
         self.assertEqual(len(a.lines), 1)
         self.assertEqual(len(b.lines), 1)
+
+
+class ProtectionNetTests(unittest.TestCase):
+    """Slice 5: zentrales Schutznetz fuer Legacy-/Drittanbieter-Records (RFC-0004 §17).
+
+    Getestet wird der FORMATIERTE Output des Schutz-Handlers (injizierter Stream) —
+    nie ein privater Regex-/Formatter-Helfer.
+    """
+
+    def setUp(self):
+        # Reihenfolge-unabhaengig: ein evtl. von einem Lifespan installiertes Netz
+        # zuerst entfernen, sonst kehrt install_protection idempotent zurueck und der
+        # StringIO-Stream bliebe leer.
+        obslog.uninstall_protection()
+        self.stream = io.StringIO()
+        obslog.install_protection(stream=self.stream)
+
+    def tearDown(self):
+        obslog.uninstall_protection()
+        for name in obslog._NOISY_THIRD_PARTY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        obslog.reset()
+
+    @property
+    def out(self):
+        return self.stream.getvalue()
+
+    def test_third_party_full_url_reduced_to_host(self):
+        logging.getLogger("httpx").warning(
+            "HTTP Request: GET https://api.anthropic.com/v1/messages?q=%s", S_QUERY)
+        self.assertIn("https://api.anthropic.com", self.out)
+        self.assertNotIn(S_QUERY, self.out)
+        self.assertNotIn("/v1/messages", self.out)
+
+    def test_uvicorn_access_token_in_bare_path_is_redacted(self):
+        # uvicorn.access loggt die Request-Zeile mit dem Session-Token in der Query.
+        logging.getLogger("uvicorn.access").warning(
+            '127.0.0.1 - "GET /ws?token=%s HTTP/1.1" 101', S_TOKEN)
+        self.assertNotIn(S_TOKEN, self.out)
+        self.assertIn("uvicorn.access", self.out)
+
+    def test_secret_pattern_is_masked(self):
+        logging.getLogger("anthropic").error(
+            "auth failed with key sk-ant-%s", "SECRETPART123456")
+        self.assertNotIn("sk-ant-SECRETPART123456", self.out)
+        self.assertIn("redacted", self.out.lower())
+
+    def test_traceback_and_exception_text_not_emitted(self):
+        try:
+            raise RuntimeError(f"boom {S_SECRET}")
+        except RuntimeError:
+            logging.getLogger("uvicorn.error").error("request failed", exc_info=True)
+        self.assertNotIn("Traceback", self.out)
+        self.assertNotIn(S_SECRET, self.out)
+        self.assertNotIn("RuntimeError", self.out)  # exc_info wird nicht angehaengt
+
+    def test_install_is_idempotent_single_handler(self):
+        obslog.install_protection(stream=self.stream)  # zweiter Aufruf
+        root = logging.getLogger()
+        tagged = [h for h in root.handlers
+                  if getattr(h, "_obslog_tag", None) == obslog._PROTECTION_TAG]
+        self.assertEqual(len(tagged), 1)
+
+    def test_own_events_bypass_the_protection_stream(self):
+        sink = obslog.MemorySink()
+        obslog.configure(sink=sink, fmt="text", level="INFO")
+        obslog.event("server.started")
+        self.assertEqual(len(sink.lines), 1)
+        self.assertNotIn("server.started", self.out)
 
 
 if __name__ == "__main__":

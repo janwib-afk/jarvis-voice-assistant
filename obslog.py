@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from urllib.parse import urlsplit
 
@@ -264,3 +265,86 @@ def format_from_env(environ=None) -> str:
     environ = os.environ if environ is None else environ
     value = (environ.get("JARVIS_LOG_FORMAT") or "text").strip().lower()
     return value if value in ("text", "jsonl") else "text"
+
+
+# ── Legacy-/Drittanbieter-Schutznetz (RFC-0004 §17, Slice 5) ─────────────────
+# Ein zentraler, sanitierender Root-Handler fuer Records, die NICHT ueber
+# obslog.event() laufen (uvicorn/uvicorn.access/httpx/anthropic/playwright und
+# jeder noch nicht migrierte jarvis.*-Aufruf). Er ist ein NETZ, keine Garantie:
+# die harte Garantie liefern die Allowlist-Events. Kein FileHandler, keine
+# neue Dependency (D10). Wird am Startpfad installiert, NICHT beim Import (D9).
+
+_PROTECTION_TAG = "obslog.protection"
+# Drittanbieter-Logger, deren INFO-Zeilen (Request-/Access-Zeilen mit URLs bzw.
+# dem Session-Token) konservativ auf WARNING gehoben werden (§25).
+_NOISY_THIRD_PARTY = ("uvicorn.access", "httpx", "httpcore", "anthropic", "playwright")
+
+_URL_RE = re.compile(r"https?://\S+")
+# Sensible Query-Parameter in bloßen Pfaden (z.B. uvicorn.access: GET /ws?token=…).
+_QUERY_SECRET_RE = re.compile(
+    r"([?&](?:token|key|api[_-]?key|password|passwd|secret|access_token|auth)=)[^\s&\"'<>]+",
+    re.IGNORECASE)
+# Secret-/Token-Muster (Anthropic-Keys, Bearer-Header, JWTs).
+_SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9\-_]{6,}|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)")
+
+
+def _url_to_host(match) -> str:
+    url = match.group(0)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<url>"
+    if parts.scheme in ("http", "https") and parts.hostname:
+        return f"{parts.scheme}://{parts.hostname}"
+    return "<url>"
+
+
+def _sanitize_text(text: str) -> str:
+    """URLs auf Schema+Host kuerzen, sensible Query-Werte und Secret-Muster maskieren."""
+    text = _URL_RE.sub(_url_to_host, text)
+    text = _QUERY_SECRET_RE.sub(r"\1<redacted>", text)
+    text = _SECRET_RE.sub("<redacted>", text)
+    return text
+
+
+class _ProtectionFormatter(logging.Formatter):
+    """Rendert nur ``name level <sanitierte Nachricht>`` — nie Traceback/exc_text
+    (die werden gar nicht erst angehaengt), nie rohe Args."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            msg = "<unrenderable>"
+        return f"{record.name} {record.levelname} {_sanitize_text(msg)}"
+
+
+def install_protection(stream=None) -> None:
+    """Zentrales Schutznetz am Root-Handler installieren (idempotent).
+
+    ``stream`` erlaubt Tests, den formatierten Output abzugreifen; Default stderr.
+    """
+    root = logging.getLogger()
+    for h in root.handlers:
+        if getattr(h, "_obslog_tag", None) == _PROTECTION_TAG:
+            return  # bereits installiert
+    handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
+    handler._obslog_tag = _PROTECTION_TAG
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(_ProtectionFormatter())
+    root.addHandler(handler)
+    # Root mindestens auf WARNING lassen (Default), damit WARNING+ das Netz erreicht.
+    if root.level == logging.NOTSET:
+        root.setLevel(logging.WARNING)
+    # Laute INFO-Logger konservativ daempfen (Request-/Access-Zeilen).
+    for name in _NOISY_THIRD_PARTY:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def uninstall_protection() -> None:
+    """Testhilfe: das Schutznetz wieder entfernen."""
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        if getattr(h, "_obslog_tag", None) == _PROTECTION_TAG:
+            root.removeHandler(h)

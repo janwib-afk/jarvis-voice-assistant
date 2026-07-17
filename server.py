@@ -50,6 +50,8 @@ def _configure_logging() -> None:
         fmt=obslog.format_from_env(),
         level=os.environ.get("JARVIS_LOG_LEVEL", "INFO"),
     )
+    # Schutznetz fuer Legacy-/Drittanbieter-Records (uvicorn/httpx/anthropic/…).
+    obslog.install_protection()
 
 import browser_tools
 import health
