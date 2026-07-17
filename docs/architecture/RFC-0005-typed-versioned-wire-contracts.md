@@ -436,3 +436,86 @@ persönlichen Configs, keine echten Desktop-Apps.
 | **D12** | Logging-Grenze | **nur Wire-`correlation_id` jetzt**; obslog-/Audit-Korrelation = Phase 11 (keine stille RFC-0004-Erweiterung) |
 
 Alle D1–D12 wurden vom Nutzer in drei Grilling-Runden bestätigt (jeweils = Empfehlung).
+
+---
+
+## Amendment 1 — Prompt-15 Implementation Contracts
+
+- **Status:** Accepted (2026-07-18, nach Nutzerfreigabe in zwei Grilling-Runden)
+- **Zweck:** Die von RFC-0005 bewusst offen gelassenen Implementierungskonstanten
+  verbindlich festlegen, **bevor** in Prompt 15 (Phase 4H) Produktionscode entsteht. Ändert
+  keine der akzeptierten Entscheidungen D1–D12, sondern präzisiert sie.
+
+### A1.A — REST-V1-Aushandlung und Correlation
+- V1 wird über **`Accept: application/vnd.jarvis.v1+json`** angefordert. Der Request-Body
+  bleibt `application/json`. **Fehlt** der V1-Accept-Header → **exakt Legacy**. Die
+  V1-Response verwendet den Vendor-Media-Type.
+- **Correlation** läuft für **alle** Methoden über **`X-Jarvis-Correlation-ID`**. Eine
+  gültige Client-ID wird **gespiegelt**; fehlt sie oder ist ungültig, erzeugt der Server
+  eine neue. **Response-Envelope und Response-Header** tragen **dieselbe** Correlation-ID.
+- Eine nicht unterstützte V1-Repräsentation ergibt **`406 Not Acceptable`**.
+
+### A1.B — Getrennte Client-Command-Envelope
+Client Commands verwenden **nicht** die volle Server-Event-Envelope, sondern:
+```json
+{ "protocol_version": 1, "type": "say_text" | "stop",
+  "correlation_id": "<optional UUID>", "payload": { } }
+```
+- `say_text` benötigt `payload.text`; `stop` verwendet ein leeres Payload-Objekt.
+- Clients dürfen `event_id`, `session_id`, `timestamp`, `sensitivity` **niemals** setzen;
+  Einschleus-Versuche werden **kontrolliert abgelehnt** (ProtocolError, keine stille
+  Übernahme).
+- Unbekannte **additive, nicht reservierte** Felder werden für Forward-Compatibility
+  **ignoriert**; Pflichtfelder, Typen und bekannte Enums bleiben **strikt**.
+- IDs sind kanonische UUIDs; `event_id`/`session_id` werden serverseitig als **UUIDv4**
+  erzeugt.
+
+### A1.C — Fault-, Close- und Größenvertrag
+- **WS-JSON-Frame** ≤ **64 KiB** eingehend; **`say_text`-Text** ≤ **16 KiB** nach
+  Normalisierung; **V1-REST-Body** ≤ **1 MiB**.
+- **WS:** malformed JSON → sicherer `ProtocolError`, dann Close **1007**; zu großer Frame →
+  Close **1009**; ausgehandelte V1-Verbindung mit falscher Major → `ProtocolError`, dann
+  Close **1002**; falscher Root / fehlende Felder / unbekannter Command → `ProtocolError`,
+  Verbindung bleibt für **korrigierbare** Fehler **offen**.
+- **Handshake:** enthält die Angebotsliste **nur** nicht unterstützte `jarvis.vN` →
+  **Ablehnung vor `accept`** (dort ist noch **kein** Error-Frame möglich); enthält sie
+  `jarvis.v1` → V1 wird gewählt **und bestätigt**.
+- **REST:** malformed/invalid → **400**; zu groß → **413**; unbekannte Repräsentation →
+  **406**. Das Größenlimit wird möglichst **vor** vollständigem JSON-Decoding geprüft.
+
+### A1.D — Secret-/Redaction-Verhalten
+- Ein Event der Klasse **`secret` ist nicht encodierbar**. Der Encoder gibt **niemals**
+  `str()`/`repr()` des abgelehnten Werts aus, sondern erzeugt einen **sicheren generischen
+  Fehler ohne Originalwert**.
+- Event-spezifische V1-Projektionen **entfernen** bekannte geheime bzw. nicht benötigte
+  Felder. `action.detail` wird bei sensiblen Actions **minimiert** bzw. durch einen sicheren
+  Marker ersetzt. **V1-Health** ist eine **redigierte öffentliche Projektion** eines intern
+  `local`-klassifizierten Reports.
+- **Legacy-Shapes bleiben für normale Werte identisch.** Taucht ein **bekannter
+  Runtime-Secret**-Wert in einem Legacy-Feld auf, hat „Secret niemals auf dem Wire" Vorrang
+  vor Wertgleichheit: **Feldname und Shape bleiben, der Wert wird redigiert**.
+- **Keine** Behauptung magischer Erkennung beliebiger Geheimnisse in freiem LLM-Text. Die
+  Garantie umfasst **bekannte Runtime-Secrets**, **geschlossene typisierte Felder** und
+  **event-spezifische Projektionen**.
+
+### A1.E — Legacy-Präzisierung
+- „byte-/shape-exakt" bedeutet **identische Feldnamen, Feldreihenfolge, Typen, Vorhandensein
+  und Werte** für **nicht-sensitive** Inputs.
+- Dynamische **Zeit/IDs** werden in Golden-Tests über **injizierte Clock-/ID-Seams**
+  eingefroren.
+- **JSON-Whitespace** ist **kein** Produktvertrag.
+- Das öffentliche **Legacy-Health-Restrisiko** (Vault-Pfad in `services.vault.detail`/
+  `warnings`) verschwindet **nicht** allein durch Migration des First-Party-Frontends; es
+  bleibt bis zu einer **späteren Änderung oder Entfernung** der Legacy-Repräsentation.
+
+### A1.F — Öffentliche Test-Seams (bestätigt)
+- **SEAM-WIRE:** öffentliche `wire_protocol`-Schnittstelle und **vollständig serialisierter**
+  Output.
+- **SEAM-WS:** echter FastAPI-TestClient-Handshake und echter Dialog.
+- **SEAM-REST:** echte Route mit Status, Header und Body.
+- **SEAM-CONVERSATION:** echter WS-Dialog, nur echte **externe Providergrenzen** ersetzt.
+- **SEAM-MIXED-WIRE:** parallele Legacy-/V1-Verbindungen und echter Broadcast.
+- **SEAM-BROWSER-UI:** echtes Python-Playwright-Verhalten.
+- **Nicht** getestet werden private Validatoren, Regexe, interne Registries oder `__dict__`.
+
+Alle A1.A–A1.F wurden vom Nutzer in zwei Grilling-Runden bestätigt (jeweils = Empfehlung).

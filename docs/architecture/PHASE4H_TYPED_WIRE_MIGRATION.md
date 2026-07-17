@@ -1,0 +1,64 @@
+# Phase 4H — Typed and Versioned Wire Contracts (Umsetzung von RFC-0005)
+
+> Stand 2026-07-18. Umsetzung von
+> [RFC-0005](RFC-0005-typed-versioned-wire-contracts.md) inkl. **Amendment 1**
+> (`Accepted for incremental implementation`). Basis: `origin/master`
+> `48fbab76cbb1dfa6ebf5d659fc8372784f20eba6` (Squash-Merge PR #7).
+>
+> **TDD, vertikale Slices, je einzeln rückrollbar.** Legacy bleibt byte-/shape-exakt;
+> V1 ist opt-in (`Sec-WebSocket-Protocol: jarvis.v1` bzw. `Accept:
+> application/vnd.jarvis.v1+json`). Keine State-Machines, kein Capability-/Policy-Kernel,
+> keine neue Dependency, kein Pydantic im Wire-Pfad.
+
+## Post-Merge-Gate (Prompt 15 Startbedingung)
+
+- `origin/master` = `48fbab76cbb1dfa6ebf5d659fc8372784f20eba6` (verifiziert).
+- Hosted-Run **29611728248**? nein — Prompt-15-Gate: **workflow_dispatch-Run 29618703226**
+  auf `sha=48fbab7`, event `workflow_dispatch`, **Fast + Browser + Gesamt success**.
+- Branch `phase-4h-typed-versioned-wire-contracts` direkt von `origin/master`.
+
+## Amendment-1-Entscheidungen (A1.A–A1.F)
+
+Siehe RFC-0005 §„Amendment 1". Kurz: A) `Accept: application/vnd.jarvis.v1+json` +
+`X-Jarvis-Correlation-ID` + `406`; B) schlanke Command-Envelope
+`{protocol_version,type,correlation_id?,payload}`, Server-Felder abgelehnt, additive
+ignoriert, UUIDv4; C) 64 KiB WS-Frame / 16 KiB `say_text` / 1 MiB REST-Body, Close
+1007/1009/1002, REST 400/413/406; D) `secret` nicht encodierbar, keine `str()/repr()`,
+event-spezifische Projektionen, Legacy-Wert redigiert bei bekanntem Runtime-Secret; E)
+byte-/shape-exakt = Name/Reihenfolge/Typ/Präsenz/Wert für nicht-sensitive Inputs, Zeit/IDs
+über Seams; F) Seams SEAM-WIRE/WS/REST/CONVERSATION/MIXED-WIRE/BROWSER-UI bestätigt.
+
+## Frische Baseline (Slice 0, 2026-07-18, auf 48fbab7)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `compileall` (Wire-Module folgen) | EXIT 0 |
+| `python -m unittest discover -s tests` | **734** Tests, 0 Failures/Errors/Skips, OK |
+| `python scripts/smoke-test.py` | EXIT 0 (734 Tests, Fixture bytegleich) |
+| `python tests/native/windows_native_smoke.py` | 9/9, EXIT 0 |
+| `python tests/browser/e2e_functional.py --smoke` | ALLE FLOWS GRÜN, EXIT 0 |
+| Hosted Browser-Gate (Run 29618703226) | success |
+
+Baseline vollständig grün → Migration darf beginnen.
+
+## Öffentliche Modul-Zielgrenze (`wire_protocol`)
+
+`WireProtocol` (negotiate_ws/rest, decode_command, encode_event, present_rest),
+`ProtocolContext`, `DecodedCommand`, `ConversationChannel` (+ Send-Lock, EventSink-Fabrik),
+`EventSink`, `ConnectionRegistry` (runtime-owned, per-Empfänger-Encode, gemeinsame
+Broadcast-Event-ID/Timestamp, eigene Session-ID je Empfänger). Interne Codec-/Validator-/
+Redaction-Helfer bleiben privat. `assistant_core`/`server` kennen keine Codec-Interna und
+bauen keine Wire-Dicts mehr.
+
+---
+
+## Slice-Log
+
+### Slice 0 — Amendment + frische Baseline
+- **Ziel:** Implementierungskonstanten (Amendment 1) verbindlich machen; Baseline neu messen.
+- **Änderung:** `RFC-0005` (Amendment 1), dieses Progressdokument. Kein Produktionscode.
+- **Ergebnis:** Baseline grün (s.o.).
+- **Rollback:** Commit reverten (reine Doku).
+- **Commit:** `docs(architecture): clarify wire protocol implementation contracts`.
+
+<!-- Slices 1–10 werden hier je nach Abschluss ergänzt. -->
