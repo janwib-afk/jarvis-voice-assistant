@@ -178,6 +178,24 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
 - **CI:** Contract-Runner im Browser-Gate ergänzt (keine neuen Trigger/Secrets).
 - **Rollback-SHA:** `6e37582`
 
+### Slice 8a — Client Session und Playback über den Reducer
+- **Ziel:** die beiden **materiellen** Amendment-1-Befunde schliessen; alte Globals
+  **entfernen**, nicht duplizieren.
+- **M2 Greeting-Latch:** `hasGreeted` existiert nicht mehr. Der Reducer hält den Latch auf
+  der Client-Session-Ebene; die Begrüssung wird nur gesendet, wenn er den Effekt
+  `SendGreeting` liefert. `greeting_once` belegt über **drei** echte WS-Verbindungen, dass
+  es bei **einer** bleibt (Kostenschutz).
+- **M1 Playback `locked`:** `audioUnlocked` existiert nicht mehr. Freischaltung ist ein
+  Übergang `locked → idle` (`UserGesture`); `AutoplayBlocked` fällt nach `locked` zurück;
+  Gepuffertes wird nach der Geste abgespielt.
+- **M3 Epoch:** `ws.onclose` erhöht die Epoch → geplante Reconnect-/Listen-Timer werden stale.
+- **Bewusst offen (Slice 9):** `uiState.jarvisState`, `isMuted`, `isPlaying`, `isListening`,
+  `reconnectAttempts`, DOM-Ableitung für `action-running`. Diese Bereiche sind **unverändert**
+  in Betrieb — keine doppelte Wahrheit, nur ein noch nicht abgelöster Bereich.
+- **Verifiziert:** 14/14 Browser-Flows · Visual grün **ohne** Baseline-Update (max 0.0115 %) ·
+  A11y 22/22 · Reduced-Motion 16/16 · Voice-Contract 46/46 · Python-Suite 858.
+- **Rollback-SHA:** `899b5ef`
+
 ---
 
 ## Stand der Umsetzung
@@ -191,7 +209,7 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
 | 5 Queue/Worker/Stop/Disconnect migrieren | ✅ grün | `8a950cd` (mit 6) |
 | 6 `assistant_core` entkoppeln | ✅ grün | `8a950cd` (mit 5) |
 | 7 Purer Voice-Reducer | ✅ grün | `6e37582` |
-| 8 Voice-Integration | offen | — |
+| 8 Voice-Integration | ⏳ teilweise (8a grün) | `899b5ef` |
 | 9 Presentation ableiten | offen | — |
 | 10 Race-/Stale-/Cleanup-Matrix | offen | — |
 | 11 Doku + CI | offen | — |
@@ -200,10 +218,15 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
 `end_session` sind entfernt; der WS-Endpunkt ist ein dünner Adapter; die Verhaltensgleichheit
 ist durch die Slice-1-Charakterisierung **und** alle 14 echten Browser-Flows belegt.
 
-**Frontend: Kern vorhanden, Integration offen (Slices 8–9).** `frontend/voice.js` ist fertig
-und mit 46 Contract-Fällen abgesichert, aber `main.js` nutzt ihn **noch nicht** — die alten
-Globals (`uiState.jarvisState`, `isMuted`, `isPlaying`, `isListening`, `audioUnlocked`,
-`hasGreeted`, `reconnectAttempts`, DOM-Ableitung für `action-running`) sind unverändert in
-Betrieb. Das Frontend verhält sich daher exakt wie vor der Phase.
+**Frontend: Client Session migriert, Regionen offen.** `frontend/voice.js` ist fertig (46
+Contract-Fälle). In `main.js` sind `hasGreeted` und `audioUnlocked` **entfernt** und laufen
+über den Reducer (Slice 8a). **Noch nicht migriert:** `uiState.jarvisState`, `isMuted`,
+`isPlaying`, `isListening`, `reconnectAttempts` und die DOM-Ableitung für `action-running`
+(Slice 9).
+
+**Wichtig für Slice 9:** `orb.className` erhält heute nur `idle|listening|thinking|speaking|
+muted|error` — die CSS hängt daran. Die Presentation-Werte `disconnected`, `stopping` und
+`action-running` brauchen daher eine ausdrückliche Abbildung auf diese Klassen, sonst
+entsteht eine visuelle Regression. Das ist der kritische Punkt der Restmigration.
 
 Die Branch ist an jedem Slice gefahrlos rückrollbar; es gibt keinen halb migrierten Zustand.
