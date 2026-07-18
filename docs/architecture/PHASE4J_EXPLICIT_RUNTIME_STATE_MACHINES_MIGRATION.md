@@ -196,6 +196,19 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
   A11y 22/22 · Reduced-Motion 16/16 · Voice-Contract 46/46 · Python-Suite 858.
 - **Rollback-SHA:** `899b5ef`
 
+### Slice 9a — DOM ist keine Zustandsquelle mehr
+- **Ziel:** Invariante **I9** einlösen — die letzte Stelle entfernen, an der das DOM als
+  Zustand gelesen wurde.
+- **Vorher:** `const actionRunning = !!document.getElementById('status-action')?.textContent`
+  — der Textinhalt eines DOM-Knotens entschied, ob eine Aktion läuft (einer der sechs
+  Kernbefunde des Prompt-16-Audits).
+- **Jetzt:** Der Action-Lebenszyklus führt die **Interaction-Region** des Reducers
+  (`ActionStart`/`ActionDone`); `actionIsRunning()` liest sie ab. Das DOM ist nur noch
+  Ausgabe — die CSS-Klasse wird aus dem Zustand **gesetzt**, nicht gelesen.
+- **Verifiziert:** 14/14 Browser-Flows · Visual grün **ohne** Baseline-Update · A11y 22/22 ·
+  Reduced-Motion 16/16 · Python-Suite 858.
+- **Rollback-SHA:** `f2ec57b`
+
 ---
 
 ## Stand der Umsetzung
@@ -210,7 +223,7 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
 | 6 `assistant_core` entkoppeln | ✅ grün | `8a950cd` (mit 5) |
 | 7 Purer Voice-Reducer | ✅ grün | `6e37582` |
 | 8 Voice-Integration | ⏳ teilweise (8a grün) | `899b5ef` |
-| 9 Presentation ableiten | offen | — |
+| 9 Presentation ableiten | ⏳ teilweise (9a grün) | `f2ec57b` |
 | 10 Race-/Stale-/Cleanup-Matrix | offen | — |
 | 11 Doku + CI | offen | — |
 
@@ -224,9 +237,34 @@ Contract-Fälle). In `main.js` sind `hasGreeted` und `audioUnlocked` **entfernt*
 `isPlaying`, `isListening`, `reconnectAttempts` und die DOM-Ableitung für `action-running`
 (Slice 9).
 
-**Wichtig für Slice 9:** `orb.className` erhält heute nur `idle|listening|thinking|speaking|
+**Erledigt in Slice 9a:** die DOM-Ableitung für `action-running` ist weg (I9 eingelöst).
+
+**Restlicher Slice 9 — konkreter Plan.** Noch nicht migriert: `uiState.jarvisState`,
+`isMuted`, `isPlaying`, `isListening`, `reconnectAttempts` und die vollständige
+Presentation-Ableitung.
+
+*Kritischer Punkt:* `orb.className` erhält heute nur `idle|listening|thinking|speaking|
 muted|error` — die CSS hängt daran. Die Presentation-Werte `disconnected`, `stopping` und
-`action-running` brauchen daher eine ausdrückliche Abbildung auf diese Klassen, sonst
-entsteht eine visuelle Regression. Das ist der kritische Punkt der Restmigration.
+`action-running` brauchen deshalb eine ausdrückliche Abbildung, sonst entsteht eine
+visuelle Regression:
+
+| Presentation | `orb.className` |
+|---|---|
+| `disconnected` | `idle` |
+| `error` | `error` |
+| `speaking` | `speaking` |
+| `stopping` | `idle` |
+| `action-running` | `thinking` |
+| `thinking` | `thinking` |
+| `listening` | `listening` |
+| `muted` | `muted` |
+| `idle` | `idle` |
+
+*Reihenfolge:* (1) Audio-Pfad — `queueAudio`/`playNext`/`stopPlaybackLocal` dispatchen
+`AudioReceived`/`AudioEnded`/`StopRequested`, `isPlaying` entfällt; (2) Capture —
+`startListening`/`recognition.*` dispatchen, `isMuted`/`isListening` entfallen (Achtung:
+`StartListening` ist unter Mute ein No-Op, die alte Zeile setzte explizit `idle`);
+(3) `setOrbState(x)` → `renderVoice()` mit obiger Abbildung, die 22 Aufrufe werden
+Dispatches; (4) `reconnectAttempts` wird private Adapter-Ressource des Backoffs.
 
 Die Branch ist an jedem Slice gefahrlos rückrollbar; es gibt keinen halb migrierten Zustand.
