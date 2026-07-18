@@ -55,9 +55,9 @@ def main():
         ok_states = True
         for st, names in expect.items():
             if st == "muted":
-                page.evaluate("isMuted = true; setOrbState('idle')")
+                page.evaluate("(function(want){ if ((window.__voice.state.capture === 'muted') !== want) dispatchVoice({type:'MuteToggled', epoch: window.__voice.state.epoch}); updateMuteButton(); })(true); setOrbState('idle')")
             else:
-                page.evaluate("isMuted = false; setOrbState('%s')" % st)
+                page.evaluate("(function(want){ if ((window.__voice.state.capture === 'muted') !== want) dispatchVoice({type:'MuteToggled', epoch: window.__voice.state.epoch}); updateMuteButton(); })(false); setOrbState('%s')" % st)
             page.wait_for_timeout(320)
             got = set(orb_names(page))
             if got != names:
@@ -65,7 +65,7 @@ def main():
                 print(f"    {st}: {sorted(got)}")
         check("Orb: exakt die vorgesehenen Animationen je Zustand", ok_states)
         # Mute-Flag aus der Matrix zuruecksetzen — Folgechecks laufen entstummt.
-        page.evaluate("isMuted = false; updateMuteButton(); setOrbState('idle')")
+        page.evaluate("(function(want){ if ((window.__voice.state.capture === 'muted') !== want) dispatchVoice({type:'MuteToggled', epoch: window.__voice.state.epoch}); updateMuteButton(); })(false); setOrbState('idle')")
         page.wait_for_timeout(150)
 
         # error: 2 Pulse, endet statisch (nur Glow-Layer statisch an).
