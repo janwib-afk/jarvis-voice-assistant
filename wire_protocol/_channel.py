@@ -78,11 +78,16 @@ class ConnectionRegistry:
     def count(self) -> int:
         return len(self._channels)
 
-    async def broadcast(self, event) -> None:
-        event_id = self._protocol.new_event_id()   # EINE semantische Event-ID
-        timestamp = self._protocol.now_iso()        # EIN Timestamp
+    async def broadcast(self, event, *, correlation_id=None) -> None:
+        # EIN semantisches Event: gemeinsame Event-ID, Correlation-ID und Timestamp für
+        # alle Empfänger; jeder Empfänger bekommt aber seine EIGENE Session-ID (aus
+        # seinem ProtocolContext). `correlation_id` erlaubt Slice 7, die REST-Request-
+        # Correlation an den Broadcast zu binden; sonst frisch serverseitig.
+        event_id = self._protocol.new_event_id()
+        corr = correlation_id if correlation_id is not None else self._protocol.new_correlation_id()
+        timestamp = self._protocol.now_iso()
         for ch in list(self._channels):
             try:
-                await ch.emit(event, event_id=event_id, timestamp=timestamp)
+                await ch.emit(event, correlation_id=corr, event_id=event_id, timestamp=timestamp)
             except Exception:
                 self.unregister(ch)                 # tote Verbindung entfernen

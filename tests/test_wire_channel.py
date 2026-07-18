@@ -96,7 +96,7 @@ class ConnectionRegistryTests(unittest.TestCase):
     def test_v1_broadcast_shares_event_id_but_own_session(self):
         # Zwei V1-Empfänger: gleiche event_id, aber je eigene session_id.
         reg = wp.ConnectionRegistry(
-            protocol=_proto(ids=["shared-evt"]),
+            protocol=_proto(ids=["shared-evt", "shared-corr"]),
             session_idgen=wp.SequenceIdGen(["sa", "sb"]))
         a, b = _Capture(), _Capture()
         reg.register(a.send, ["jarvis.v1"])
@@ -105,6 +105,8 @@ class ConnectionRegistryTests(unittest.TestCase):
         ea, eb = a.sent[0], b.sent[0]
         self.assertEqual(ea["event_id"], "shared-evt")
         self.assertEqual(eb["event_id"], "shared-evt")   # gemeinsame semantische Event-ID
+        self.assertEqual(ea["correlation_id"], "shared-corr")
+        self.assertEqual(eb["correlation_id"], "shared-corr")  # gemeinsame Correlation
         self.assertEqual(ea["session_id"], "sa")
         self.assertEqual(eb["session_id"], "sb")          # eigene Session-ID je Empfänger
 

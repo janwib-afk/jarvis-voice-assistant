@@ -154,3 +154,23 @@ bauen keine Wire-Dicts mehr.
 - **Offene Punkte:** 64-KiB-Frame-Limit + malformed-JSON-Close (1007/1009 am Frame-Level)
   und die vollständige Fault-Matrix → Slice 9; Mixed-Broadcasts (V1+Legacy gleichzeitig,
   gemeinsame Broadcast-Event-ID) → Slice 5.
+
+### Slice 5 — Mixed Clients und Broadcasts
+- **Ziel:** Legacy- und V1-Verbindungen laufen gleichzeitig; ein REST-getriggerter
+  Broadcast erreicht alle Clients versionsgerecht; ein semantischer Broadcast teilt
+  Event-ID + Correlation, je Empfänger aber die eigene Session-ID; tote Verbindung wird
+  entfernt, andere erhalten das Event weiter.
+- **Seam:** SEAM-MIXED-WIRE (echte parallele TestClient-WS, eigene Runtime + Temp-Config).
+- **Änderung:** `wire_protocol._channel` `broadcast(event, *, correlation_id=None)` —
+  gemeinsame Event-ID + Correlation + Timestamp für alle Empfänger; `correlation_id`
+  bindet in Slice 7 die REST-Request-Correlation.
+- **Tests:** Legacy-Client (byte-/shape-exaktes `app_event`) + V1-Client (Envelope)
+  gleichzeitig; zwei V1-Clients → gleiche `event_id`/`correlation_id`, verschiedene
+  `session_id`; geschlossene Verbindung entfernt, andere empfangen weiter. Volle Suite
+  **799** grün; Fixture bytegleich.
+- **Sicherheitsinvarianten:** kein konkurrierender Sendefehler (Send-Lock je Kanal);
+  Legacy-Empfänger sehen nie V1-Metadaten.
+- **Rollback:** Commit reverten.
+- **Commit:** `feat(protocol): support mixed-version broadcasts`.
+- **Offene Punkte:** REST-Response ↔ Broadcast gemeinsame Correlation erst mit REST-V1
+  (Slice 7); Frame-Size/malformed → Slice 9.
