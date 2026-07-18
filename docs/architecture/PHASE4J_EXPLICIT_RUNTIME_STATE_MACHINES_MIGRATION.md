@@ -209,6 +209,40 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
   Reduced-Motion 16/16 · Python-Suite 858.
 - **Rollback-SHA:** `f2ec57b`
 
+### Slice 9b — Connection-Region abgeleitet
+- **Ziel:** `uiState.connected` als zweite Wahrheit entfernen.
+- **Inhalt:** `isConnected()` liest die Connection-Region; das Flag ist **entfernt**.
+- **Dabei gefundener Regressionsfehler:** `renderStatusCenter()` lief **vor** dem
+  `WsOpen`-Dispatch — die Statuszeile hätte beim Verbinden noch „Getrennt" angezeigt.
+  Behoben: Zustandsübergang zuerst, Ausgabe danach.
+- **Verifiziert:** 14/14 Flows · Visual grün ohne Baseline-Update · A11y 22/22 · RM 16/16 ·
+  Suite 858.
+- **Rollback-SHA:** `a94383f`
+
+---
+
+## BLOCKER für die Audio-Migration — Testlücke
+
+**Der Audio-Pfad ist vollständig testfrei.** Der E2E-Stub liefert
+`_fake_synth → b""`; das Frontend ruft `queueAudio` nur bei
+`data.audio && data.audio.length > 0`. Folglich werden **`queueAudio`, `playNext`,
+`isPlaying`, der Autoplay-Block und `audio.onended` in keinem Browsertest ausgeführt.**
+
+Eine Migration von `isPlaying` in die Playback-Region wäre daher **prinzipiell nicht
+verifizierbar** — genau das, was die Verifikationsdisziplin verbietet. Die Playback-Region
+selbst ist im reinen Reducer abgedeckt (Contract-Fälle zu `locked`/`playing`/
+`AutoplayBlocked`), die **Integration** aber nicht.
+
+**Erforderliche Reihenfolge:**
+1. **Zuerst Abdeckung schaffen:** den E2E-Stub um ein Szenario erweitern, das echtes
+   (winziges) Base64-Audio liefert — der stille MP3-Datenstring aus `unlockAudio` genügt.
+   Dazu ein Flow, der Wiedergabe, `locked`→`idle` per Nutzergeste, Autoplay-Block und
+   `audio.onended` real durchläuft.
+2. **Dann migrieren:** `queueAudio`/`playNext`/`stopPlaybackLocal` dispatchen
+   `AudioReceived`/`AudioEnded`/`StopRequested`; `isPlaying` entfällt. Achtung: der lokale
+   Payload-Puffer und die Reducer-Queue müssen symmetrisch geführt werden (push beim
+   Empfang, shift bei `AudioEnded`) — heute shiftet `playNext` **vor** dem Abspielen.
+
 ---
 
 ## Stand der Umsetzung
@@ -223,7 +257,7 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
 | 6 `assistant_core` entkoppeln | ✅ grün | `8a950cd` (mit 5) |
 | 7 Purer Voice-Reducer | ✅ grün | `6e37582` |
 | 8 Voice-Integration | ⏳ teilweise (8a grün) | `899b5ef` |
-| 9 Presentation ableiten | ⏳ teilweise (9a grün) | `f2ec57b` |
+| 9 Presentation ableiten | ⏳ teilweise (9a, 9b grün) | `f2ec57b`, `a94383f` |
 | 10 Race-/Stale-/Cleanup-Matrix | offen | — |
 | 11 Doku + CI | offen | — |
 
