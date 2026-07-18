@@ -28,10 +28,16 @@ from ._core import (  # noqa: F401
     EmitStopped,
     StartTurn,
 )
+from ._session import (  # noqa: F401
+    STOPPED_TEXT,
+    ConversationManager,
+    ConversationSession,
+)
 
 __all__ = [
     "SessionState", "Suspended", "Turn", "initial_session_state", "step",
     "ConfirmationOpened", "Disconnected", "ExecutionEnded", "SayTextReceived",
     "StopReceived", "TurnFailed", "TurnFinished",
     "CancelActive", "CloseSession", "EmitStopAck", "EmitStopped", "StartTurn",
+    "ConversationManager", "ConversationSession", "STOPPED_TEXT",
 ]

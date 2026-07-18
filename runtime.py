@@ -24,6 +24,7 @@ import httpx
 
 import config_loader
 import configuration as configuration_mod
+import conversation
 import wire_protocol
 
 _DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -67,6 +68,9 @@ class Runtime:
         # kein Modul-Global. Import-sicher (kein I/O). Legacy bleibt Default.
         self.wire_protocol = wire_protocol.WireProtocol()
         self.connections = wire_protocol.ConnectionRegistry(self.wire_protocol)
+        # Conversation-Zustand (RFC-0006 D4): genau EIN runtime-eigener Manager,
+        # der alle Sessions besitzt. Konstruktion ist I/O-frei (Import-Sicherheit).
+        self.conversation_manager = conversation.ConversationManager()
         # intern
         self._wired = False
         self._refresh_task: "asyncio.Task | None" = None
@@ -161,6 +165,10 @@ class Runtime:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self._refresh_task = None
+        # Aktive Conversation Sessions VOR den abhaengigen Ressourcen schliessen
+        # (RFC-0006 Paragraph 8): kein Turn laeuft noch, wenn Browser/Clients gehen.
+        with contextlib.suppress(Exception):
+            await self.conversation_manager.aclose()
         import browser_tools
         with contextlib.suppress(Exception):
             await browser_tools.close()
