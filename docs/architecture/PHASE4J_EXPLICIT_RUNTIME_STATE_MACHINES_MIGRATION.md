@@ -91,4 +91,65 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
   `tests/browser/e2e_server.py`, `tests/browser/e2e_harness.py`,
   `tests/browser/e2e_functional.py`, dieses Dokument (neu).
 - **Rollback:** Commit reverten (nur Tests/Doku, kein Produktionscode).
-- **Commit:** `test(state): characterize conversation and voice races`
+- **Commit / Rollback-SHA:** `fe9a5fe` — `test(state): characterize conversation and voice races`
+
+### Slice 2 — Purer Conversation-Kern
+- **Ziel:** `step(state, event) -> (state, effects)` als deterministischer, I/O-freier Kern.
+- **Seam:** SEAM-CONVERSATION-STATE (rein, ohne Tasks/Locks/Codec).
+- **RED:** `ModuleNotFoundError: No module named 'conversation'` → **GREEN:** 23/23.
+- **Inhalt:** `conversation/_core.py` — Session `open/closing/closed`; Turn `queued/
+  processing/awaiting-confirmation/executing-action/cancelling`; `completed`/`failed`/
+  `cancelled` sind **Ergebnisse**; `ready` abgeleitet; Queue-Länge ist Daten.
+  `view()` liefert nur semantischen Zustand.
+- **Charakterisiertes Verhalten abgebildet:** Stop im Leerlauf = nur Ack; Stop bei
+  laufendem Turn = `CancelActive, EmitStopAck, EmitStopped`; wiederholter Stop idempotent;
+  Stop leert Queue + verwirft Bestätigung; neuer Command während `cancelling` wird
+  eingereiht und startet erst nach `ExecutionEnded` (Präzisierung 5, I1); Bestätigung
+  überlebt den auslösenden Turn (Präzisierung 6); `closing`/`closed` ignorieren Commands
+  (I4); ungültige Übergänge sind totale No-Ops (§19).
+- **Kein Produktions-Wiring** — `server.py`/`assistant_core.py` unverändert.
+- **Rollback:** Commit reverten (rein additiv, keine Wirkung auf Produktion).
+- **Commit / Rollback-SHA:** `1295ce3` — `feat(state): add pure conversation transition core`
+- **Suite:** 826 → **849** grün.
+
+### Slice 3 — Runtime-owned Manager und Sessions
+- **Ziel:** Manager erzeugt/besitzt Sessions (D4); Session besitzt aktiven Turn, Queue und
+  Cancellation-Lifecycle als **private** Implementierung.
+- **Seam:** SEAM-CONVERSATION-STATE (Fake-Kanal + Fake-Runner als Grenzen; Manager,
+  Session und Kern laufen real).
+- **RED:** `AttributeError: module 'conversation' has no attribute 'ConversationManager'`
+  (9 Fehler) → **GREEN:** 9/9.
+- **Inhalt:** `conversation/_session.py`; `Runtime` besitzt genau **einen** Manager
+  (I/O-frei konstruiert); `Runtime.aclose()` schliesst aktive Sessions **vor** den
+  abhängigen Ressourcen (Browser/Clients).
+- **Verifiziert:** mehrere Sessions unabhängig; Shutdown bricht alle laufenden Turns ab
+  (0 offene Tasks nach `aclose`); geschlossene Session ignoriert Commands;
+  Import-Sicherheit `ROOT_HANDLERS_DELTA 0`.
+- **Kein Produktions-Wiring** — der WS-Endpunkt nutzt weiterhin seinen eigenen Worker;
+  die Sessions werden erst in Slice 5 angehängt.
+- **Rollback:** Commit reverten (additiv; `runtime.py` verliert nur Manager-Besitz).
+- **Commit / Rollback-SHA:** `37a0fc7` — `feat(state): add runtime-owned conversation sessions`
+- **Suite:** 849 → **858** grün.
+
+---
+
+## Stand der Umsetzung
+
+| Slice | Status | Rollback-SHA |
+|---|---|---|
+| 1 Charakterisierung | ✅ grün | `fe9a5fe` |
+| 2 Purer Conversation-Kern | ✅ grün | `1295ce3` |
+| 3 Runtime-owned Manager/Sessions | ✅ grün | `37a0fc7` |
+| 4 Verlauf + Confirmation migrieren | offen | — |
+| 5 Queue/Worker/Stop/Disconnect migrieren | offen | — |
+| 6 `assistant_core` entkoppeln | offen | — |
+| 7 Purer Voice-Reducer | offen | — |
+| 8 Voice-Integration | offen | — |
+| 9 Presentation ableiten | offen | — |
+| 10 Race-/Stale-/Cleanup-Matrix | offen | — |
+| 11 Doku + CI | offen | — |
+
+**Slices 1–3 sind rein additiv:** es wurde noch **kein** beobachtbares Produktionsverhalten
+geändert. `server.py` und `assistant_core.py` sind unverändert; der neue Manager ist
+verdrahtet, aber noch nicht in Benutzung. Die Branch ist an diesem Punkt jederzeit
+gefahrlos rückrollbar.
