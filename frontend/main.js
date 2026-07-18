@@ -22,7 +22,6 @@ const SVG_MIC_MUTED = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 
 let ws;
 let audioQueue = [];
-let isPlaying = false;
 let isMuted = false;
 let reconnectAttempts = 0;
 
@@ -45,6 +44,8 @@ function dispatchVoice(event) {
 }
 function voiceEpoch() { return V.state.epoch; }
 function audioIsLocked() { return V.state.playback === 'locked'; }
+/* Laeuft gerade Audio? Kommt aus der Playback-Region. */
+function audioIsPlaying() { return V.state.playback === 'playing'; }
 /* Laeuft gerade eine Aktion? Kommt aus der Interaction-Region — NIE aus dem DOM (I9). */
 function actionIsRunning() { return V.state.interaction === 'action-running'; }
 /* Verbindungslage kommt aus der Connection-Region (kein eigenes Flag mehr). */
@@ -419,7 +420,7 @@ function connect() {
             JarvisWire.sayText(ws, 'Jarvis activate');
         } else {
             status.textContent = 'Wieder verbunden.';
-            if (!isPlaying) resumeListening(0);
+            if (!audioIsPlaying()) resumeListening(0);
         }
     };
     ws.onmessage = (event) => {
@@ -458,7 +459,7 @@ function connect() {
             if (window.loadMusic) window.loadMusic();
         } else if (data.type === 'error') {
             showErrorBanner(data);
-            if (!isPlaying) {
+            if (!audioIsPlaying()) {
                 setOrbState('idle');
                 resumeListening(500);
             }
@@ -488,18 +489,35 @@ function connect() {
 
 function queueAudio(base64Audio) {
     audioQueue.push(base64Audio);
-    if (!isPlaying) playNext();
+    // Der Reducer entscheidet: bei 'locked' wird gepuffert und eine Nutzergeste
+    // angefordert, sonst wird abgespielt (Amendment 1 / M1).
+    const eff = dispatchVoice({ type: 'AudioReceived', audio: base64Audio,
+                                epoch: voiceEpoch() });
+    if (eff.indexOf('ShowBanner') !== -1) {
+        showErrorBanner({ component: 'audio', text: 'Audio blockiert — Klick benötigt.',
+                          hint: 'Einmal irgendwo in das Fenster klicken.' });
+    }
+    if (eff.indexOf('PlayAudio') !== -1) playNext();
 }
 
-function playNext() {
-    if (audioQueue.length === 0) {
-        isPlaying = false;
+/* Wiedergabe beendet/abgebrochen: der Reducer sagt, ob es weitergeht. Der lokale
+ * Puffer wird SYMMETRISCH zur Reducer-Queue geleert (hier, nicht beim Start). */
+function onAudioFinished(epochAtStart) {
+    audioQueue.shift();
+    const eff = dispatchVoice({ type: 'AudioEnded', epoch: epochAtStart });
+    if (eff.length === 0) return;                 // stale -> nichts tun
+    if (eff.indexOf('PlayAudio') !== -1) { playNext(); return; }
+    if (eff.indexOf('MaybeResumeListening') !== -1) {
         setOrbState('idle');
         setStatusWord();
         resumeListening(500);
-        return;
     }
-    isPlaying = true;
+}
+
+function playNext() {
+    // Reiner Effekt-Ausfuehrer: den Zustand fuehrt der Reducer. Der Kopf des
+    // Puffers wird nur GELESEN und erst in onAudioFinished entfernt (Symmetrie).
+    if (audioQueue.length === 0) return;
     setOrbState('speaking');
     setStatusWord();
     if (isListening) {
@@ -507,15 +525,16 @@ function playNext() {
         isListening = false;
     }
 
-    const b64 = audioQueue.shift();
+    const epochAtStart = voiceEpoch();
+    const b64 = audioQueue[0];
     const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
     const blob = new Blob([bytes], { type: 'audio/mpeg' });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     currentAudio = audio;
     currentAudioUrl = url;
-    audio.onended = () => { URL.revokeObjectURL(url); currentAudio = null; playNext(); };
-    audio.onerror = () => { URL.revokeObjectURL(url); currentAudio = null; playNext(); };
+    audio.onended = () => { URL.revokeObjectURL(url); currentAudio = null; onAudioFinished(epochAtStart); };
+    audio.onerror = () => { URL.revokeObjectURL(url); currentAudio = null; onAudioFinished(epochAtStart); };
     audio.play().catch(err => {
         dispatchVoice({ type: 'AutoplayBlocked', epoch: voiceEpoch() });
         console.warn('[jarvis] Autoplay blocked, waiting for click...');
@@ -538,7 +557,7 @@ function playNext() {
 function stopPlaybackLocal() {
     // Nur wenn wirklich etwas lief "Gestoppt." anzeigen — sonst wirkt ein Stopp
     // im Leerlauf (oder der zweite Aufruf via stop-Frame) verwirrend.
-    const wasActive = isPlaying || audioQueue.length > 0;
+    const wasActive = audioIsPlaying() || audioQueue.length > 0;
     audioQueue = [];
     if (currentAudio) {
         currentAudio.onended = null;
@@ -548,7 +567,7 @@ function stopPlaybackLocal() {
         currentAudio = null;
         currentAudioUrl = null;
     }
-    isPlaying = false;
+    dispatchVoice({ type: 'StopRequested', epoch: voiceEpoch() });
     setOrbState('idle');
     if (wasActive) status.textContent = 'Gestoppt.';
     resumeListening(300);
@@ -593,7 +612,7 @@ if (SpeechRecognition) {
             if (STOP_RE.test(text)) { requestStop(); return; }
             const muteOff = /\b(mikro(fon)? (an|ein)|entstummen|stummschaltung (aufheben|aus))\b/i;
             const muteOn  = /\b(stumm|mikro(fon)? aus|stummschalten)\b/i;
-            if (muteOff.test(text)) { isMuted = false; updateMuteButton(); if (!isPlaying && micMode === 'auto') startListening(); return; }
+            if (muteOff.test(text)) { isMuted = false; updateMuteButton(); if (!audioIsPlaying() && micMode === 'auto') startListening(); return; }
             if (muteOn.test(text))  { isMuted = true;  updateMuteButton(); setOrbState('idle'); status.textContent = 'Mikrofon stumm'; return; }
             if (isMuted) return;
             sendUtterance(text);
@@ -602,7 +621,7 @@ if (SpeechRecognition) {
 
     recognition.onend = () => {
         isListening = false;
-        if (!isPlaying && micMode === 'auto') setTimeout(startListening, 300);
+        if (!audioIsPlaying() && micMode === 'auto') setTimeout(startListening, 300);
     };
 
     recognition.onerror = (event) => {
@@ -612,7 +631,7 @@ if (SpeechRecognition) {
             status.textContent = 'Kein Mikrofon-Zugriff. Erlaube das Mikrofon in der Adressleiste und lade die Seite neu.';
             showErrorBanner({ component: 'mic', text: 'Kein Mikrofon-Zugriff.', hint: 'Mikrofon in der Adressleiste erlauben und Seite neu laden.' });
         } else if (event.error === 'no-speech' || event.error === 'aborted') {
-            if (!isPlaying && micMode === 'auto') setTimeout(startListening, 300);
+            if (!audioIsPlaying() && micMode === 'auto') setTimeout(startListening, 300);
         } else {
             if (micMode === 'auto') setTimeout(startListening, 1000);
         }
@@ -620,7 +639,7 @@ if (SpeechRecognition) {
 }
 
 function startListening() {
-    if (isPlaying || !recognition) return;
+    if (audioIsPlaying() || !recognition) return;
     try { recognition.start(); } catch (e) { /* laeuft ggf. schon */ }
     isListening = true;
     // Bei Stummschaltung laeuft die Erkennung weiter (Sprach-Entstummen),
@@ -632,7 +651,7 @@ function startListening() {
 // Zuhoeren fortsetzen — nur im Auto-Modus (ptt/off starten nicht von selbst).
 function resumeListening(delay) {
     if (micMode !== 'auto') {
-        if (!isPlaying) setOrbState('idle');
+        if (!audioIsPlaying()) setOrbState('idle');
         return;
     }
     setTimeout(startListening, delay);
@@ -642,7 +661,7 @@ function resumeListening(delay) {
 function applyMicMode() {
     micMode = localStorage.getItem('jarvis.micMode') || 'auto';
     if (micMode === 'auto') {
-        if (!isPlaying && !isListening) startListening();
+        if (!audioIsPlaying() && !isListening) startListening();
     } else {
         if (isListening && recognition) { recognition.stop(); isListening = false; }
         if (uiState.jarvisState === 'listening') setOrbState('idle');
@@ -669,7 +688,7 @@ document.addEventListener('keyup', (e) => {
 });
 
 orb.addEventListener('click', () => {
-    if (isPlaying) return;
+    if (audioIsPlaying()) return;
     if (isListening) {
         recognition.stop();
         isListening = false;
@@ -738,7 +757,7 @@ function toggleMute() {
         status.textContent = 'Mikrofon stumm';
     } else {
         setStatusWord();
-        if (!isPlaying && micMode === 'auto') startListening();
+        if (!audioIsPlaying() && micMode === 'auto') startListening();
     }
 }
 
