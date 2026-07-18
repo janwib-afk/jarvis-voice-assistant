@@ -42,6 +42,8 @@ function dispatchVoice(event) {
 }
 function voiceEpoch() { return V.state.epoch; }
 function audioIsLocked() { return V.state.playback === 'locked'; }
+/* Laeuft gerade eine Aktion? Kommt aus der Interaction-Region — NIE aus dem DOM (I9). */
+function actionIsRunning() { return V.state.interaction === 'action-running'; }
 let currentAudio = null;   // laufendes Audio-Element — fuer den Stopp-Pfad
 let currentAudioUrl = null;
 
@@ -685,7 +687,7 @@ function setOrbState(state) {
     // Stop ist waehrend Sprache/laufender Aktion die visuell primaere Aktion.
     const stopBtn = document.getElementById('stop-btn');
     if (stopBtn) {
-        const actionRunning = !!document.getElementById('status-action')?.textContent;
+        const actionRunning = actionIsRunning();
         stopBtn.classList.toggle('primary-now', effective === 'speaking' || actionRunning);
     }
 }
@@ -872,9 +874,15 @@ function addActionEntry(data) {
     // waehrend einer laufenden Aktion zur visuell primaeren Kontrolle.
     const actionEl = document.getElementById('status-action');
     const escEl = document.getElementById('status-esc');
+    // Der Action-Lebenszyklus fuehrt die Interaction-Region (RFC-0006): der Reducer
+    // ist die Wahrheit, das DOM nur noch Ausgabe (Invariante I9).
+    dispatchVoice({
+        type: data.phase === 'start' ? 'ActionStart' : 'ActionDone',
+        epoch: voiceEpoch(),
+    });
     // Laufende Taetigkeit am Instrument: umlaufender Skalen-Glanz (Phase 5).
     const orbBox = document.getElementById('orb-container');
-    if (orbBox) orbBox.classList.toggle('action-running', data.phase === 'start');
+    if (orbBox) orbBox.classList.toggle('action-running', actionIsRunning());
     if (actionEl) {
         if (data.phase === 'start') {
             actionEl.textContent = '· ' + (data.label || data.action || 'Aktion')
