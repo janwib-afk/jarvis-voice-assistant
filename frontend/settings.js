@@ -106,7 +106,7 @@
         const radio = form.querySelector(`input[name="micMode"][value="${mic}"]`);
         if (radio) radio.checked = true;
         try {
-            const resp = await fetch('/settings', { headers: authHeaders() });
+            const resp = await JarvisWire.fetchV1('/settings', { headers: authHeaders() });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
             loaded = data.settings || {};
@@ -185,7 +185,7 @@
         try {
             const headers = authHeaders();
             if (loadedRevision) headers['If-Match'] = loadedRevision;
-            const resp = await fetch('/settings', {
+            const resp = await JarvisWire.fetchV1('/settings', {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(updates),

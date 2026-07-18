@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests import wire_testing as wt
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 
 import memory
@@ -119,7 +120,7 @@ class ResearchFlowIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_full_research_flow(self):
         ws = _StubWS()
-        await assistant_core.process_message(self.SID, "Recherchiere Elektroautos", ws)
+        await assistant_core.process_message(self.SID, "Recherchiere Elektroautos", wt.legacy_sink(ws.send_json))
 
         # Genau zwei LLM-Calls: die Hauptantwort + die Zusammenfassung (kein Dedup,
         # da der Recherche-Autosave dedup=False nutzt).

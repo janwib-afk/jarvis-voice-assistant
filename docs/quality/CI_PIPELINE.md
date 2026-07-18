@@ -8,7 +8,7 @@
 
 | Gate | Job / Schritt | Lokales Äquivalent |
 |---|---|---|
-| 1 Syntax/Import | `fast` › Gate 1 | `python -m compileall -q server.py runtime.py configuration.py obslog.py assistant_core.py actions.py config_loader.py app_launcher.py memory.py browser_tools.py monitors.py tts.py health.py screen_capture.py clipboard_tools.py` |
+| 1 Syntax/Import | `fast` › Gate 1 | `python -m compileall -q server.py runtime.py configuration.py obslog.py wire_protocol assistant_core.py actions.py config_loader.py app_launcher.py memory.py browser_tools.py monitors.py tts.py health.py screen_capture.py clipboard_tools.py` |
 | 2 Unit | `fast` › Smoke + unittest | `python -m unittest discover -s tests` |
 | 3 Contract | `fast` › unittest (test_actions/test_config/test_ws/test_conversation_ws …) | `python -m unittest discover -s tests` |
 | 4 REST-/WS-Integration | `fast` › unittest (test_ws/test_settings_api/test_launcher_api/test_conversation_ws) | `python -m unittest discover -s tests` |
@@ -29,7 +29,7 @@ Artifacts (`JARVIS_E2E_ARTIFACTS` → Upload bei Fehler) · keine stillen Skips
 
 ```powershell
 $env:PYTHONUTF8 = "1"
-python -m compileall -q server.py runtime.py configuration.py obslog.py assistant_core.py actions.py config_loader.py app_launcher.py memory.py browser_tools.py monitors.py tts.py health.py screen_capture.py clipboard_tools.py
+python -m compileall -q server.py runtime.py configuration.py obslog.py wire_protocol assistant_core.py actions.py config_loader.py app_launcher.py memory.py browser_tools.py monitors.py tts.py health.py screen_capture.py clipboard_tools.py
 python scripts/smoke-test.py
 python -m unittest discover -s tests
 python tests/native/windows_native_smoke.py

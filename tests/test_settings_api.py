@@ -281,11 +281,11 @@ class SettingsBroadcastTests(_SettingsSeamTestCase):
     def test_save_broadcasts_health_to_ws_clients(self):
         sent = []
 
-        class _FakeWS:
-            async def send_json(self, payload):
-                sent.append(payload)
+        async def record(payload):
+            sent.append(payload)
 
-        self.runtime.ws_clients.add(_FakeWS())
+        # Legacy-Empfänger in der Runtime-Registry (RFC-0005): Broadcast pro Empfänger.
+        self.runtime.connections.register(record, [])
         resp = self.client.post("/settings", headers=self.headers, json={"city": "Berlin"})
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(any(p.get("type") == "health" for p in sent),

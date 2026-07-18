@@ -21,6 +21,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
+import wire_protocol as wp
+from tests import wire_testing as wt
 
 try:
     import server
@@ -208,7 +210,7 @@ class StopFlowTests(unittest.TestCase):
                 await asyncio.sleep(30)  # wird per Stopp abgebrochen
             else:
                 record.append(("done", text))
-                await ws.send_json({"type": "response", "text": "fertig", "audio": ""})
+                await ws.emit(wp.SpokenResponse(text="fertig", audio=""))
 
         with mock.patch.object(server.assistant_core, "process_message", proc):
             with self._connect() as sock:
@@ -285,7 +287,8 @@ class StopFlowTests(unittest.TestCase):
 class FrameShapeTests(unittest.TestCase):
     def test_send_error_shape(self):
         stub = _StubWS()
-        asyncio.run(assistant_core.send_error(stub, "tts", "Sprachausgabe fehlgeschlagen.", "Status 401"))
+        asyncio.run(assistant_core.send_error(wt.legacy_sink(stub.send_json),
+                                              "tts", "Sprachausgabe fehlgeschlagen.", "Status 401"))
         self.assertEqual(stub.sent, [{
             "type": "error",
             "component": "tts",
@@ -295,7 +298,8 @@ class FrameShapeTests(unittest.TestCase):
 
     def test_send_action_event_shape(self):
         stub = _StubWS()
-        asyncio.run(assistant_core.send_action_event(stub, "start", "SEARCH", "wetter hamburg"))
+        asyncio.run(assistant_core.send_action_event(wt.legacy_sink(stub.send_json),
+                                                     "start", "SEARCH", "wetter hamburg"))
         (frame,) = stub.sent
         self.assertEqual(frame["type"], "action")
         self.assertEqual(frame["phase"], "start")

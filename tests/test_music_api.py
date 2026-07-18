@@ -206,14 +206,11 @@ class MusicApiTests(unittest.TestCase):
         async def record(payload):
             events.append(payload)
 
-        original = server.broadcast_json
-        server.broadcast_json = record
-        try:
-            resp = self.client.post("/music/selection", headers=self.headers,
-                                    json={"file": "A-Track.mp3"})
-            self.assertEqual(resp.status_code, 200)
-        finally:
-            server.broadcast_json = original
+        # Legacy-Empfänger in der Runtime-Registry registrieren (broadcast_json entfällt).
+        self.runtime.connections.register(record, [])
+        resp = self.client.post("/music/selection", headers=self.headers,
+                                json={"file": "A-Track.mp3"})
+        self.assertEqual(resp.status_code, 200)
         music_events = [e for e in events if e.get("type") == "music_changed"]
         self.assertEqual(len(music_events), 1)
         self.assertEqual(music_events[0]["selected"], "A-Track.mp3")

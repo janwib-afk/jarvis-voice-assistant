@@ -61,7 +61,7 @@
 
     async function loadMusic() {
         try {
-            const resp = await fetch('/music/files', { headers: authHeaders() });
+            const resp = await JarvisWire.fetchV1('/music/files', { headers: authHeaders() });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             render(await resp.json());
         } catch (e) {
@@ -71,7 +71,7 @@
 
     async function selectMusic(name) {
         try {
-            const resp = await fetch('/music/selection', {
+            const resp = await JarvisWire.fetchV1('/music/selection', {
                 method: 'POST',
                 headers: authHeaders(),
                 body: JSON.stringify({ file: name }),

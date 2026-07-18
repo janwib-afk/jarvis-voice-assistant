@@ -14,14 +14,15 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import secrets
-import time
 
 import anthropic
 import httpx
 from fastapi import APIRouter, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import actions
 import app_launcher
@@ -32,6 +33,7 @@ import configuration
 import memory
 import obslog
 import runtime as runtime_mod
+import wire_protocol as wp
 
 # Logging: strukturierte Operational Events mit zentraler Redaction (RFC-0004).
 # Der Import konfiguriert NICHTS (Import-Sicherheit, D9) — die Verdrahtung passiert
@@ -67,8 +69,8 @@ runtime = runtime_mod.Runtime.for_production()
 # ihrer Configuration (RFC-0003 Slice 5: A6-Cleanup) — es gibt keine zweite,
 # veraenderbare Wahrheit mehr.
 SESSION_TOKEN = runtime.session_token
-# Verbundene WS-Clients — fuer Push-Updates (z.B. frische Warnings nach Settings-Save).
-ws_clients: set[WebSocket] = runtime.ws_clients
+# Verbundene WS-Clients werden jetzt in der Runtime-ConnectionRegistry gehalten
+# (RFC-0005 §12) — kein Modul-Global mehr; Broadcasts laufen über rt.connections.
 
 # Routen werden auf einem APIRouter registriert, damit create_app(runtime) sie
 # auf einer frischen, isolierten App montieren kann.
@@ -98,13 +100,26 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.close(code=1008)
         return
 
-    await ws.accept()
-    session_id = str(id(ws))
-    rt.ws_clients.add(ws)
+    # 3. Versionsaushandlung (RFC-0005 D4): angebotene Subprotokolle bestimmen den
+    #    Protocol Context. Nur nicht unterstütztes jarvis.vN -> Ablehnung VOR accept
+    #    (dort ist kein Error-Frame möglich, A1.C). Fehlt jarvis.v1 -> exakt Legacy.
+    offered = ws.scope.get("subprotocols", [])
+    neg = wp.negotiate_ws(offered)
+    if neg.rejected:
+        obslog.event("ws.rejected", reason="unsupported_version")
+        await ws.close(code=1002)
+        return
+
+    await ws.accept(subprotocol=neg.accepted_subprotocol)
+    # Verbindung in der Runtime-Registry anmelden: opake Session-ID statt str(id(ws));
+    # Sendepfad via ConversationChannel (Send-Lock).
+    channel, _accepted = rt.connections.register(ws.send_json, offered)
+    session_id = channel.session_id
     obslog.event("ws.connected")
 
-    # Startup-Warnungen ans Status-Center melden.
-    await ws.send_json({"type": "health", "warnings": rt.startup_warnings})
+    # Sofortiger Health-Frame (spontan -> frische Server-Correlation-ID).
+    await channel.emit(wp.Health(warnings=tuple(rt.startup_warnings)),
+                       correlation_id=rt.wire_protocol.new_correlation_id())
 
     # Nachrichten laufen als Task neben der Receive-Loop — so kommt ein "Stopp"
     # auch WÄHREND einer langen Aktion (z.B. 3-Minuten-Recherche) durch.
@@ -117,14 +132,17 @@ async def websocket_endpoint(ws: WebSocket):
     # Ohne dieses Flag koennte ein Stopp, der zeitgleich mit einem Disconnect
     # eintrifft, den Worker seinen eigenen CancelledError schlucken lassen
     # (task.cancelled() waere True) — der Worker wuerde leaken.
-    queue: asyncio.Queue[str] = asyncio.Queue()
+    # Queue-Einträge tragen Command UND Correlation zusammen (RFC-0005 §4): ein
+    # dekodierter SayText (Text + serverseitige/gespiegelte correlation_id).
+    queue: asyncio.Queue = asyncio.Queue()
     state: dict = {"task": None, "stopping": False}
 
     async def worker():
         while True:
-            text = await queue.get()
+            cmd = await queue.get()
+            sink = channel.event_sink(cmd.correlation_id)  # Correlation pro Command gebunden
             task = asyncio.create_task(assistant_core.process_message(
-                session_id, text, ws, mutate_launcher=_launcher_hook(rt)))
+                session_id, cmd.text, sink, mutate_launcher=_launcher_hook(rt)))
             state["task"] = task
             try:
                 await task
@@ -141,7 +159,7 @@ async def websocket_endpoint(ws: WebSocket):
                 # Unerwartete Fehler beenden nie die Verbindung.
                 obslog.event("message.failed", error_type=type(e).__name__, where="worker")
                 try:
-                    await assistant_core.send_error(ws, "llm", "Interner Fehler bei der Verarbeitung.")
+                    await assistant_core.send_error(sink, "llm", "Interner Fehler bei der Verarbeitung.")
                 except Exception:
                     pass
             finally:
@@ -149,14 +167,44 @@ async def websocket_endpoint(ws: WebSocket):
 
     worker_task = asyncio.create_task(worker())
 
+    async def _v1_fault(code, message, close_code):
+        if channel.ctx.is_v1:
+            await channel.emit(
+                wp.ErrorEvent(component="protocol", message=message, code=code),
+                correlation_id=rt.wire_protocol.new_correlation_id())
+        await ws.close(code=close_code)
+
     try:
         while True:
-            data = await ws.receive_json()
-            user_text = data.get("text", "").strip()
+            raw = await ws.receive_text()
+            # Frame-Größenvertrag (A1.C): 64 KiB eingehend, VOR dem JSON-Decoding.
+            if len(raw.encode("utf-8")) > _MAX_WS_FRAME_BYTES:
+                await _v1_fault("too_large", "Frame zu groß.", 1009)
+                break
+            try:
+                data = json.loads(raw)
+            except Exception:
+                await _v1_fault("malformed_json", "Ungültiges JSON.", 1007)
+                break
+            cmd = rt.wire_protocol.decode_command(data, channel.ctx)
 
-            # Stopp: laufende Verarbeitung/Aktion abbrechen, Queue leeren,
-            # Frontend stoppt die Audio-Wiedergabe (Frame type=stop).
-            if data.get("type") == "stop" or actions.is_stop_command(user_text):
+            # V1-Validierungsfehler: strukturierter Fehler; bei close_code die
+            # Verbindung schließen, sonst offen bleiben (korrigierbarer Fehler).
+            if isinstance(cmd, wp.ProtocolError):
+                await channel.emit(
+                    wp.ErrorEvent(component="protocol", message=cmd.message, hint=cmd.hint,
+                                  code=cmd.code, retryable=cmd.retryable),
+                    correlation_id=rt.wire_protocol.new_correlation_id())
+                if cmd.close_code is not None:
+                    await ws.close(code=cmd.close_code)
+                    break
+                continue
+
+            # Stopp: explizites Stop-Command ODER ein Stop-Wort als SayText.
+            is_stop = isinstance(cmd, wp.Stop) or (
+                isinstance(cmd, wp.SayText) and actions.is_stop_command(cmd.text))
+            if is_stop:
+                stop_corr = cmd.correlation_id
                 task = state["task"]
                 was_busy = task is not None and not task.done()
                 if was_busy:
@@ -165,16 +213,17 @@ async def websocket_endpoint(ws: WebSocket):
                     queue.get_nowait()
                 assistant_core.pending_confirm.pop(session_id, None)
                 obslog.event("message.stopped", was_busy=was_busy)
-                await ws.send_json({"type": "stop"})
+                await channel.emit(wp.StopAck(), correlation_id=stop_corr)
                 if was_busy:
-                    await ws.send_json({"type": "response", "text": "Okay, gestoppt.", "audio": ""})
+                    await channel.emit(wp.SpokenResponse(text="Okay, gestoppt.", audio=""),
+                                       correlation_id=stop_corr)
                 continue
 
-            if not user_text:
-                continue
+            if not isinstance(cmd, wp.SayText):
+                continue  # None (Legacy ignoriert) — kein Fehlerframe
 
-            obslog.event("message.received", text_len=len(user_text))
-            await queue.put(user_text)
+            obslog.event("message.received", text_len=len(cmd.text))
+            await queue.put(cmd)
 
     except WebSocketDisconnect:
         pass
@@ -186,7 +235,7 @@ async def websocket_endpoint(ws: WebSocket):
         worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await worker_task
-        rt.ws_clients.discard(ws)
+        rt.connections.unregister(channel)
         assistant_core.end_session(session_id)
 
 
@@ -207,6 +256,112 @@ async def health_endpoint(request: Request):
     )
 
 
+# ── REST-V1-Presentation (RFC-0005 §10, Slice 7) ─────────────────────────────
+# Gemeinsamer REST-Seam als Response-Middleware: Legacy passiert byte-exakt (kein
+# V1-Accept -> keine Umhüllung); V1 (Accept: application/vnd.jarvis.v1+json) wird in
+# die V1-Envelope gehüllt + Correlation-Header gespiegelt; unbekannte Vendor-Version
+# -> 406. HTTP-Status bleibt maßgeblich. session_id ist bei REST immer null.
+
+_VENDOR_V1 = "application/vnd.jarvis.v1+json"
+_MAX_WS_FRAME_BYTES = 64 * 1024      # A1.C: eingehender WS-JSON-Frame
+_MAX_REST_BODY_BYTES = 1024 * 1024   # A1.C: V1-REST-Body
+_CORR_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _rest_family(path: str):
+    """Route-Familie -> (result_type, sensitivity) oder None (nicht abgedeckt)."""
+    if path == "/health":
+        return ("health", "public")
+    if path == "/settings":
+        return ("settings", "personal")
+    if path == "/music/files":
+        return ("music_files", "local")
+    if path == "/music/selection":
+        return ("music_selection", "local")
+    if path == "/dashboard/state":
+        return ("dashboard", "personal")
+    if path == "/commands/app/open":
+        return ("app_open", "local")
+    if path.startswith("/launcher/"):
+        return ("launcher", "local")
+    return None
+
+
+def _rest_correlation(request: Request):
+    """Correlation pro Request: gültige Client-ID spiegeln, sonst serverseitig; auf
+    request.state cachen, damit Broadcast-Route und Response-Envelope dieselbe nutzen."""
+    existing = getattr(request.state, "correlation_id", None)
+    if existing:
+        return existing
+    rt = request.app.state.runtime
+    h = request.headers.get("x-jarvis-correlation-id")
+    corr = h if (h and _CORR_RE.match(h)) else rt.wire_protocol.new_correlation_id()
+    request.state.correlation_id = corr
+    return corr
+
+
+def _redact_health_v1(payload):
+    """Öffentliche V1-Health-Projektion (D9): keine lokalen Pfade."""
+    if not isinstance(payload, dict):
+        return payload
+    p = json.loads(json.dumps(payload))
+    warnings = p.get("warnings", [])
+    p["warnings_count"] = len(warnings) if isinstance(warnings, list) else 0
+    p["warnings"] = []  # Warnungstexte können den Vault-Pfad enthalten
+    services = p.get("services")
+    if isinstance(services, dict) and isinstance(services.get("vault"), dict):
+        vault = services["vault"]
+        vault["detail"] = ("Vault erreichbar" if vault.get("ok")
+                           else "Vault nicht erreichbar oder nicht konfiguriert")
+    return p
+
+
+class RestV1Middleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        rt = request.app.state.runtime
+        family = _rest_family(request.url.path)
+        neg = wp.negotiate_rest(request.headers.get("accept", ""))
+        corr = _rest_correlation(request)
+        if family and neg.not_acceptable:
+            env = rt.wire_protocol.rest_error(
+                "not_acceptable", "Nicht unterstützte Protokoll-Repräsentation.",
+                correlation_id=corr)
+            return JSONResponse(env, status_code=406,
+                                headers={"X-Jarvis-Correlation-ID": corr,
+                                         "Content-Type": _VENDOR_V1})
+        # Größenvertrag (A1.C): V1-Body > 1 MiB -> 413, VOR dem Route-Decoding.
+        if family and neg.context.is_v1:
+            try:
+                clen = int(request.headers.get("content-length") or 0)
+            except ValueError:
+                clen = 0
+            if clen > _MAX_REST_BODY_BYTES:
+                env = rt.wire_protocol.rest_error(
+                    "too_large", "Anfrage zu groß.", correlation_id=corr)
+                return JSONResponse(env, status_code=413,
+                                    headers={"X-Jarvis-Correlation-ID": corr,
+                                             "Content-Type": _VENDOR_V1})
+        response = await call_next(request)
+        if not family or not neg.context.is_v1:
+            return response  # Legacy exakt (keine Umhüllung)
+        raw = b""
+        async for chunk in response.body_iterator:
+            raw += chunk
+        try:
+            payload = json.loads(raw) if raw else None
+        except Exception:
+            payload = None
+        result_type, sensitivity = family
+        if result_type == "health":
+            payload = _redact_health_v1(payload)
+        env = rt.wire_protocol.rest_envelope(result_type, sensitivity, payload,
+                                             correlation_id=corr)
+        return JSONResponse(env, status_code=response.status_code,
+                            headers={"X-Jarvis-Correlation-ID": corr,
+                                     "Content-Type": _VENDOR_V1})
+
+
 # ── Settings-API ─────────────────────────────────────────────────────────────
 # Editierbar ist nur die Whitelist aus config_loader.UI_EDITABLE_KEYS.
 # API-Keys verlassen den Server nie und werden nie angenommen.
@@ -224,18 +379,10 @@ def _configuration(request: Request):
     return request.app.state.runtime.configuration
 
 
-async def broadcast_json(payload: dict):
-    """Ein Event an alle verbundenen WS-Clients pushen (tote Clients aufraeumen)."""
-    for client in list(ws_clients):
-        try:
-            await client.send_json(payload)
-        except Exception:
-            ws_clients.discard(client)
-
-
 async def broadcast_health(rt):
-    """Frische Warnings der App-Runtime an alle verbundenen Clients pushen."""
-    await broadcast_json({"type": "health", "warnings": rt.startup_warnings})
+    """Frische Warnings der App-Runtime an alle Clients — semantisches Health-Event,
+    versionsabhängig pro Empfänger encodiert (RFC-0005 §20)."""
+    await rt.connections.broadcast(wp.Health(warnings=tuple(rt.startup_warnings)))
 
 
 def _live_apply(rt, merged: dict) -> bool:
@@ -426,7 +573,8 @@ async def music_selection(request: Request):
     await _post_commit(rt, needs_refresh)
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
-    await broadcast_json({"type": "music_changed", "selected": file, "ts": time.time()})
+    await rt.connections.broadcast(wp.MusicChanged(selected=file),
+                                   correlation_id=_rest_correlation(request))
     obslog.event("settings.saved", changed=1)
     return {"ok": True, "selected": file}
 
@@ -472,14 +620,10 @@ async def command_app_open(request: Request):
         return JSONResponse({"ok": False, "errors": ["Feld 'app' fehlt."]}, status_code=400)
 
     result = await asyncio.to_thread(app_launcher.launch, app_query)
-    await broadcast_json({
-        "type": "app_event",
-        "ok": result["ok"],
-        "app": result["app"],
-        "name": result["name"],
-        "message": result["message"],
-        "ts": time.time(),
-    })
+    await request.app.state.runtime.connections.broadcast(
+        wp.AppEvent(ok=result["ok"], app=result["app"], name=result["name"],
+                    message=result["message"]),
+        correlation_id=_rest_correlation(request))
     status_code = 200 if result["ok"] else (404 if result["app"] is None else 500)
     return JSONResponse(result, status_code=status_code)
 
@@ -489,7 +633,7 @@ async def command_app_open(request: Request):
 # (config.launcher); launch-session.ps1 startet das aktive Profil.
 # Gleiche Token-Sicherung wie /settings; ``command`` verlaesst den Server nie.
 
-async def persist_launcher_intent(rt, intent, kind: str) -> list[str]:
+async def persist_launcher_intent(rt, intent, kind: str, correlation_id=None) -> list[str]:
     """Kern-Persistenz fuer Endpunkte UND Sprach-Aktionen (RFC-0003 Slice 4).
 
     Nimmt eine SEMANTISCHE Aenderungsabsicht (kein vorberechneter Voll-Block) und
@@ -510,12 +654,9 @@ async def persist_launcher_intent(rt, intent, kind: str) -> list[str]:
     except config_loader.ConfigError as e:
         return [str(e)]
     await _post_commit(rt, needs_refresh)
-    await broadcast_json({
-        "type": "launcher_changed",
-        "kind": kind,
-        "active_profile": app_launcher.ACTIVE_PROFILE,
-        "ts": time.time(),
-    })
+    await rt.connections.broadcast(
+        wp.LauncherChanged(kind=kind, active_profile=app_launcher.ACTIVE_PROFILE),
+        correlation_id=correlation_id)
     return []
 
 
@@ -531,9 +672,9 @@ def _launcher_hook(rt):
     return _mutate
 
 
-async def _persist_launcher(rt, intent, kind: str):
+async def _persist_launcher(rt, intent, kind: str, correlation_id=None):
     """Endpunkt-Wrapper: Fehler des Persist-Kerns als JSONResponse (500)."""
-    errors = await persist_launcher_intent(rt, intent, kind)
+    errors = await persist_launcher_intent(rt, intent, kind, correlation_id)
     if errors:
         return None, JSONResponse({"ok": False, "errors": errors}, status_code=500)
     return True, None
@@ -577,7 +718,7 @@ async def launcher_toggle_autostart(app_id: str, request: Request):
     if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
     _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart")
+        request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("autostart.changed", app=app_id, enabled=value)
@@ -616,7 +757,7 @@ async def launcher_set_placement(app_id: str, request: Request):
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
     _merged, err = await _persist_launcher(
         request.app.state.runtime,
-        configuration.SetPlacement(app_id, body["monitor"], body["zone"]), "placement")
+        configuration.SetPlacement(app_id, body["monitor"], body["zone"]), "placement", _rest_correlation(request))
     if err is not None:
         return err
     # Zu diesem Zeitpunkt sind monitor/zone Allowlist-Konstanten, keine Nutzerdaten.
@@ -671,7 +812,7 @@ async def launcher_create_profile(request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="created", active=app_launcher.ACTIVE_PROFILE)
@@ -685,7 +826,7 @@ async def launcher_activate_profile(profile_id: str, request: Request):
     if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
     _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile")
+        request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="activated", active=app_launcher.ACTIVE_PROFILE)
@@ -708,7 +849,7 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="duplicated", active=app_launcher.ACTIVE_PROFILE)
@@ -728,7 +869,7 @@ async def launcher_rename_profile(profile_id: str, request: Request):
     if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
     _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile")
+        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="renamed", active=app_launcher.ACTIVE_PROFILE)
@@ -745,7 +886,7 @@ async def launcher_delete_profile(profile_id: str, request: Request):
     guards = intent.validate(request.app.state.runtime.configuration.snapshot().as_dict())
     if guards:
         return JSONResponse({"ok": False, "errors": guards}, status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="deleted", active=app_launcher.ACTIVE_PROFILE)
@@ -776,9 +917,8 @@ async def _server_lifespan(app):
     _configure_logging()   # uvicorn-Weg: erst hier, nicht beim Import (D9)
     rt = app.state.runtime
     await rt.aopen()
-    global SESSION_TOKEN, ws_clients
+    global SESSION_TOKEN
     SESSION_TOKEN = rt.session_token
-    ws_clients = rt.ws_clients
     if rt.startup_warnings:
         # Warnungstexte enthalten lokale Pfade -> nur die Anzahl loggen (D3).
         obslog.event("config.startup_degraded", count=len(rt.startup_warnings))
@@ -793,6 +933,7 @@ def create_app(rt: runtime_mod.Runtime) -> FastAPI:
     Config/Clients öffnen erst im Lifespan (rt.aopen)."""
     app = FastAPI(lifespan=_server_lifespan)
     app.state.runtime = rt
+    app.add_middleware(RestV1Middleware)   # REST-V1-Presentation (Legacy passiert exakt)
     app.include_router(router)
     app.mount("/static", StaticFiles(
         directory=os.path.join(os.path.dirname(__file__), "frontend")), name="static")

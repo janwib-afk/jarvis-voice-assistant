@@ -106,7 +106,7 @@ def check_config():
 
 def check_imports():
     for name in (
-        "obslog", "actions", "config_loader", "browser_tools", "screen_capture",
+        "obslog", "wire_protocol", "actions", "config_loader", "browser_tools", "screen_capture",
         "tts", "memory", "clipboard_tools", "app_launcher", "monitors",
         "health", "assistant_core", "server",
     ):

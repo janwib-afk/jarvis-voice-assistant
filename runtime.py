@@ -24,6 +24,7 @@ import httpx
 
 import config_loader
 import configuration as configuration_mod
+import wire_protocol
 
 _DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -62,6 +63,10 @@ class Runtime:
         self.ws_clients: set = set()
         self.conversations: dict = {}
         self.pending_confirm: dict = {}
+        # Wire-Protokoll + Verbindungsregistry (RFC-0005 §12): runtime-besessen,
+        # kein Modul-Global. Import-sicher (kein I/O). Legacy bleibt Default.
+        self.wire_protocol = wire_protocol.WireProtocol()
+        self.connections = wire_protocol.ConnectionRegistry(self.wire_protocol)
         # intern
         self._wired = False
         self._refresh_task: "asyncio.Task | None" = None

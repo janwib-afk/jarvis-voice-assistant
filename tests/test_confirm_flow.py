@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests import wire_testing as wt  # Legacy-Sink-Adapter
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 
 try:
@@ -75,12 +76,12 @@ class ConfirmFlowTests(unittest.TestCase):
         assistant_core.end_session(self.SID)
 
     def test_yes_executes_pending_action(self):
-        asyncio.run(assistant_core.process_message(self.SID, "Ja bitte", self.ws))
+        asyncio.run(assistant_core.process_message(self.SID, "Ja bitte", wt.legacy_sink(self.ws.send_json)))
         self.assertEqual(self.executed, [self.pending])
         self.assertNotIn(self.SID, assistant_core.pending_confirm)
 
     def test_no_discards_pending_action(self):
-        asyncio.run(assistant_core.process_message(self.SID, "Nein, lieber nicht", self.ws))
+        asyncio.run(assistant_core.process_message(self.SID, "Nein, lieber nicht", wt.legacy_sink(self.ws.send_json)))
         self.assertEqual(self.executed, [])
         self.assertNotIn(self.SID, assistant_core.pending_confirm)
         self.assertTrue(any("lasse es bleiben" in t for t in self.spoken))
@@ -88,7 +89,7 @@ class ConfirmFlowTests(unittest.TestCase):
     def test_unrelated_text_discards_pending_and_processes_normally(self):
         # Weder Ja noch Nein: Aktion verfaellt, die Nachricht geht den normalen
         # Weg (hier: der gestubbte LLM-Call schlaegt fehl => error-Frame).
-        asyncio.run(assistant_core.process_message(self.SID, "Wie ist das Wetter morgen in Hamburg?", self.ws))
+        asyncio.run(assistant_core.process_message(self.SID, "Wie ist das Wetter morgen in Hamburg?", wt.legacy_sink(self.ws.send_json)))
         self.assertEqual(self.executed, [])
         self.assertNotIn(self.SID, assistant_core.pending_confirm)
         self.assertTrue(any(f.get("type") == "error" for f in self.ws.sent))
