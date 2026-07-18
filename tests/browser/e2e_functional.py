@@ -47,6 +47,22 @@ def flow_connect(pw):
         col.assert_clean("connect")
 
 
+def flow_protocol_v1(pw):
+    """Wire-V1: der WS-Handshake handelt tatsaechlich `jarvis.v1` aus (echtes
+    Browserverhalten, kein Source-String-Test). Das Frontend zeigt `ws.protocol`
+    in `window.__jarvisProtocol`; ein Gespraech laeuft weiter (V1-Envelopes werden
+    zu UI-Events decodiert)."""
+    with JarvisServer("protov1") as srv, browser_context(pw, srv.base_url) as (page, col):
+        open_jarvis(page, srv.base_url)
+        expect(page.get_by_text("Server verbunden")).to_be_visible()
+        page.wait_for_function("window.__jarvisProtocol !== undefined")
+        assert page.evaluate("window.__jarvisProtocol") == "jarvis.v1", \
+            "WS-Handshake hat jarvis.v1 nicht ausgehandelt"
+        # Ausgehandeltes Subprotokoll direkt am echten Socket bestaetigen.
+        assert page.evaluate("window.__lastWs && window.__lastWs.protocol") == "jarvis.v1"
+        col.assert_clean("protocol_v1")
+
+
 def flow_text_input(pw):
     """2. Texteingabe: senden -> thinking -> Antwort -> Transcript -> Eingabe nutzbar."""
     with JarvisServer("text") as srv, browser_context(pw, srv.base_url) as (page, col):
@@ -292,6 +308,7 @@ def flow_transcript(pw):
 
 FLOWS = {
     "connect": flow_connect,
+    "protocol_v1": flow_protocol_v1,
     "text_input": flow_text_input,
     "stop_action": flow_stop_action,
     "mute": flow_mute,

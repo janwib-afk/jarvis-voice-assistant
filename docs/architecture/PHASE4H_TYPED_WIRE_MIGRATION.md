@@ -174,3 +174,22 @@ bauen keine Wire-Dicts mehr.
 - **Commit:** `feat(protocol): support mixed-version broadcasts`.
 - **Offene Punkte:** REST-Response ↔ Broadcast gemeinsame Correlation erst mit REST-V1
   (Slice 7); Frame-Size/malformed → Slice 9.
+
+### Slice 6 — First-Party-WebSocket-Frontend auf V1
+- **Ziel:** zentraler Frontend-Wire-Adapter `frontend/wire.js` bietet `jarvis.v1` an,
+  erzeugt V1-Commands, decodiert V1-Envelopes zu UI-Events der Legacy-Form; `main.js`
+  migriert; keine visuelle/funktionale UI-Änderung.
+- **Seam:** SEAM-BROWSER-UI (echtes Playwright-Verhalten, kein Source-String-Test).
+- **Änderung:** `frontend/wire.js` (createSocket mit Subprotocol, sayText/stop als
+  V1-Command bzw. Legacy-Fallback, decodeFrame V1-Envelope→Legacy-Form inkl.
+  error.message→text, unbekannt/kaputt→null); `main.js` (connect/onmessage/send über
+  JarvisWire, `window.__jarvisProtocol`); `index.html` (wire.js vor main.js). Der
+  vestigiale `status`-Handler bleibt als dokumentierter, produzentenloser Legacy-Fallback.
+- **Test:** neuer Playwright-Flow `protocol_v1` prüft `window.__jarvisProtocol==='jarvis.v1'`
+  UND `window.__lastWs.protocol==='jarvis.v1'` (echte Aushandlung gegen den e2e_server, der
+  den realen server.app nutzt). Alle Functional-Flows grün; Visual 0.0000% Diff; A11y 22/22;
+  Reduced-Motion 16/16. Python-Suite 799 grün.
+- **Sicherheitsinvarianten:** keine Wire-Interna im UI verstreut; Auth/Origin/Token
+  unverändert.
+- **Rollback:** Commit reverten (Legacy-Handshake ohne Subprotocol bleibt funktionsfähig).
+- **Commit:** `feat(frontend): migrate websocket client to protocol v1`.

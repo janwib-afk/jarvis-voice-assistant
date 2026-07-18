@@ -331,7 +331,7 @@ function sendUtterance(text) {
     }
     addTranscript('user', text);
     setOrbState('thinking');
-    ws.send(JSON.stringify({ text }));
+    JarvisWire.sayText(ws, text);
     return true;
 }
 
@@ -373,9 +373,11 @@ function connect() {
     // Session-Token wird vom Server in die Seite injiziert (window.JARVIS_TOKEN).
     const token = encodeURIComponent(window.JARVIS_TOKEN || '');
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${wsProtocol}//${location.host}/ws?token=${token}`);
+    ws = JarvisWire.createSocket(`${wsProtocol}//${location.host}/ws?token=${token}`);
     ws.onopen = () => {
-        console.log('[jarvis] WebSocket connected');
+        // Ausgehandelte Protokollversion fuer Diagnose/E2E sichtbar machen.
+        window.__jarvisProtocol = ws.protocol || '';
+        console.log('[jarvis] WebSocket connected', ws.protocol || '(legacy)');
         uiState.connected = true;
         uiState.lastError = '';
         reconnectAttempts = 0;
@@ -387,14 +389,16 @@ function connect() {
             hasGreeted = true;
             setOrbState('thinking');
             awakenInstrument(); // Delight: einmaliger Erwachen-Glow
-            ws.send(JSON.stringify({ text: 'Jarvis activate' }));
+            JarvisWire.sayText(ws, 'Jarvis activate');
         } else {
             status.textContent = 'Wieder verbunden.';
             if (!isPlaying) resumeListening(0);
         }
     };
     ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        // Wire-Adapter: V1-Envelope -> UI-Event der Legacy-Form; kaputt/unbekannt -> null.
+        const data = JarvisWire.decodeFrame(event.data);
+        if (!data) return;
         if (data.type === 'response') {
             addTranscript('jarvis', data.text);
             if (data.audio && data.audio.length > 0) {
@@ -526,7 +530,7 @@ function requestStop() {
     stopPlaybackLocal();
     // Server bricht eine laufende Aktion (z.B. Recherche) ab und leert die Queue.
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'stop' }));
+        JarvisWire.stop(ws);
     }
 }
 
