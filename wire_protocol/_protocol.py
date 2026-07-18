@@ -34,5 +34,27 @@ class WireProtocol:
         """Serverseitige Correlation-ID für spontane Events (D6)."""
         return self._idgen.new_id()
 
+    # ── REST-Presentation (RFC-0005 §10, A1.A) ───────────────────────────────
+    def rest_envelope(self, result_type: str, sensitivity: str, payload,
+                      *, correlation_id: str, event_id=None, timestamp=None) -> dict:
+        """V1-REST-Envelope. session_id ist bei REST immer null (D6)."""
+        return {
+            "protocol_version": 1,
+            "type": result_type,
+            "event_id": event_id if event_id is not None else self._idgen.new_id(),
+            "correlation_id": correlation_id,
+            "session_id": None,
+            "timestamp": timestamp if timestamp is not None else self._clock.now_iso(),
+            "sensitivity": sensitivity,
+            "payload": payload,
+        }
+
+    def rest_error(self, code: str, message: str, *, correlation_id: str,
+                   hint: str = "", retryable: bool = False) -> dict:
+        return self.rest_envelope(
+            "error", "local",
+            {"code": code, "message": message, "hint": hint, "retryable": retryable},
+            correlation_id=correlation_id)
+
     def now_iso(self) -> str:
         return self._clock.now_iso()

@@ -29,7 +29,9 @@ class _Proj:
 _PROJECTIONS = {
     Health: _Proj(
         "health", lambda e: {"warnings": list(e.warnings)}, False,
-        Sensitivity.LOCAL, lambda e: {"warnings": list(e.warnings)}),
+        # V1-Health ist eine redigierte OEFFENTLICHE Projektion (D9): Warnungstexte
+        # koennen lokale Pfade enthalten -> nur die Anzahl auf dem Wire.
+        Sensitivity.PUBLIC, lambda e: {"warnings_count": len(e.warnings)}),
     SpokenResponse: _Proj(
         "response", lambda e: {"text": e.text, "audio": e.audio}, False,
         Sensitivity.PERSONAL, lambda e: {"text": e.text, "audio": e.audio}),

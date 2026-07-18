@@ -37,8 +37,8 @@ class HealthTracerTests(unittest.TestCase):
             "correlation_id": "corr-1",
             "session_id": "sess-1",
             "timestamp": "2026-07-18T00:00:00.000Z",
-            "sensitivity": "local",
-            "payload": {"warnings": ["w1"]},
+            "sensitivity": "public",
+            "payload": {"warnings_count": 1},
         })
 
 

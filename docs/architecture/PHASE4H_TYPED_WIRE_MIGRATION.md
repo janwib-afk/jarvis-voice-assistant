@@ -193,3 +193,26 @@ bauen keine Wire-Dicts mehr.
   unverändert.
 - **Rollback:** Commit reverten (Legacy-Handshake ohne Subprotocol bleibt funktionsfähig).
 - **Commit:** `feat(frontend): migrate websocket client to protocol v1`.
+
+### Slice 7 — REST V1 nach Routenfamilien (gemeinsamer Seam)
+- **Ziel:** V1-REST-Presentation für alle Routenfamilien (Health, Settings, Music,
+  Dashboard+App-Open, Launcher/Profiles) über EINEN gemeinsamen REST-Seam. Legacy ohne
+  V1-Accept bleibt exakt; HTTP-Status maßgeblich; REST-`session_id` immer null.
+- **Seam:** SEAM-REST (echte Route mit Status/Header/Body).
+- **Änderung:** `server.py` `RestV1Middleware` (BaseHTTPMiddleware): Aushandlung via
+  `Accept: application/vnd.jarvis.v1+json`; Legacy → Passthrough (byte-exakt); V1 →
+  `wire_protocol.rest_envelope` + `X-Jarvis-Correlation-ID`-Echo; unbekannte Vendor-Version
+  → `406`; `_redact_health_v1` (öffentliche Health-Projektion ohne lokale Pfade). Die
+  REST-getriggerten Broadcasts (app_open/music/launcher) binden die Request-Correlation
+  (`_rest_correlation`); `wire_protocol.rest_envelope`/`rest_error`. V1-Health-Event
+  (WS+REST) redigiert Warnungen → Anzahl (`warnings_count`), `sensitivity=public`.
+- **Tests:** Health legacy unverändert; V1-Health-Envelope redigiert (kein Pfad),
+  Correlation in Body+Header gespiegelt, 406 bei v2; Settings/Launcher V1-Envelope +
+  Legacy exakt; Auth (403) bleibt vor der Versionsverarbeitung; app_open-Broadcast teilt
+  die Request-Correlation mit der REST-Response. Volle Suite **808** grün; Fixture bytegleich.
+- **Sicherheitsinvarianten:** kein Secret in Body/Header/Fehler; V1-Health ist echte sichere
+  Projektion (nicht kosmetisch); Legacy-Health-Restrisiko bleibt benannt.
+- **Rollback:** Commit reverten (Middleware entfällt → nur Legacy).
+- **Commit:** `feat(protocol): present rest routes over protocol v1`.
+- **Offene Punkte:** Frame-Size/malformed-Vertrag (WS) + volle Fault-Matrix → Slice 9;
+  Frontend-REST auf V1 → Slice 8.

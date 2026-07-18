@@ -89,11 +89,12 @@ class V1WebSocketTests(unittest.TestCase):
             env = sock.receive_json()
         self.assertEqual(env["protocol_version"], 1)
         self.assertEqual(env["type"], "health")
-        self.assertEqual(env["sensitivity"], "local")
+        self.assertEqual(env["sensitivity"], "public")  # redigierte oeffentliche Projektion
         self.assertIn("event_id", env)
         self.assertIn("session_id", env)
         self.assertIn("timestamp", env)
-        self.assertIn("warnings", env["payload"])
+        self.assertIn("warnings_count", env["payload"])  # keine rohen (pfadhaltigen) Warnungen
+        self.assertNotIn("warnings", env["payload"])
 
     def test_no_subprotocol_is_legacy_health(self):
         with self._legacy() as sock:

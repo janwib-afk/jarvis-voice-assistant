@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import secrets
 
 import anthropic
@@ -21,6 +22,7 @@ import httpx
 from fastapi import APIRouter, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import actions
 import app_launcher
@@ -238,6 +240,98 @@ async def health_endpoint(request: Request):
     )
 
 
+# ── REST-V1-Presentation (RFC-0005 §10, Slice 7) ─────────────────────────────
+# Gemeinsamer REST-Seam als Response-Middleware: Legacy passiert byte-exakt (kein
+# V1-Accept -> keine Umhüllung); V1 (Accept: application/vnd.jarvis.v1+json) wird in
+# die V1-Envelope gehüllt + Correlation-Header gespiegelt; unbekannte Vendor-Version
+# -> 406. HTTP-Status bleibt maßgeblich. session_id ist bei REST immer null.
+
+_VENDOR_V1 = "application/vnd.jarvis.v1+json"
+_CORR_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _rest_family(path: str):
+    """Route-Familie -> (result_type, sensitivity) oder None (nicht abgedeckt)."""
+    if path == "/health":
+        return ("health", "public")
+    if path == "/settings":
+        return ("settings", "personal")
+    if path == "/music/files":
+        return ("music_files", "local")
+    if path == "/music/selection":
+        return ("music_selection", "local")
+    if path == "/dashboard/state":
+        return ("dashboard", "personal")
+    if path == "/commands/app/open":
+        return ("app_open", "local")
+    if path.startswith("/launcher/"):
+        return ("launcher", "local")
+    return None
+
+
+def _rest_correlation(request: Request):
+    """Correlation pro Request: gültige Client-ID spiegeln, sonst serverseitig; auf
+    request.state cachen, damit Broadcast-Route und Response-Envelope dieselbe nutzen."""
+    existing = getattr(request.state, "correlation_id", None)
+    if existing:
+        return existing
+    rt = request.app.state.runtime
+    h = request.headers.get("x-jarvis-correlation-id")
+    corr = h if (h and _CORR_RE.match(h)) else rt.wire_protocol.new_correlation_id()
+    request.state.correlation_id = corr
+    return corr
+
+
+def _redact_health_v1(payload):
+    """Öffentliche V1-Health-Projektion (D9): keine lokalen Pfade."""
+    if not isinstance(payload, dict):
+        return payload
+    p = json.loads(json.dumps(payload))
+    warnings = p.get("warnings", [])
+    p["warnings_count"] = len(warnings) if isinstance(warnings, list) else 0
+    p["warnings"] = []  # Warnungstexte können den Vault-Pfad enthalten
+    services = p.get("services")
+    if isinstance(services, dict) and isinstance(services.get("vault"), dict):
+        vault = services["vault"]
+        vault["detail"] = ("Vault erreichbar" if vault.get("ok")
+                           else "Vault nicht erreichbar oder nicht konfiguriert")
+    return p
+
+
+class RestV1Middleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        rt = request.app.state.runtime
+        family = _rest_family(request.url.path)
+        neg = wp.negotiate_rest(request.headers.get("accept", ""))
+        corr = _rest_correlation(request)
+        if family and neg.not_acceptable:
+            env = rt.wire_protocol.rest_error(
+                "not_acceptable", "Nicht unterstützte Protokoll-Repräsentation.",
+                correlation_id=corr)
+            return JSONResponse(env, status_code=406,
+                                headers={"X-Jarvis-Correlation-ID": corr,
+                                         "Content-Type": _VENDOR_V1})
+        response = await call_next(request)
+        if not family or not neg.context.is_v1:
+            return response  # Legacy exakt (keine Umhüllung)
+        raw = b""
+        async for chunk in response.body_iterator:
+            raw += chunk
+        try:
+            payload = json.loads(raw) if raw else None
+        except Exception:
+            payload = None
+        result_type, sensitivity = family
+        if result_type == "health":
+            payload = _redact_health_v1(payload)
+        env = rt.wire_protocol.rest_envelope(result_type, sensitivity, payload,
+                                             correlation_id=corr)
+        return JSONResponse(env, status_code=response.status_code,
+                            headers={"X-Jarvis-Correlation-ID": corr,
+                                     "Content-Type": _VENDOR_V1})
+
+
 # ── Settings-API ─────────────────────────────────────────────────────────────
 # Editierbar ist nur die Whitelist aus config_loader.UI_EDITABLE_KEYS.
 # API-Keys verlassen den Server nie und werden nie angenommen.
@@ -449,7 +543,8 @@ async def music_selection(request: Request):
     await _post_commit(rt, needs_refresh)
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
-    await rt.connections.broadcast(wp.MusicChanged(selected=file))
+    await rt.connections.broadcast(wp.MusicChanged(selected=file),
+                                   correlation_id=_rest_correlation(request))
     obslog.event("settings.saved", changed=1)
     return {"ok": True, "selected": file}
 
@@ -495,8 +590,10 @@ async def command_app_open(request: Request):
         return JSONResponse({"ok": False, "errors": ["Feld 'app' fehlt."]}, status_code=400)
 
     result = await asyncio.to_thread(app_launcher.launch, app_query)
-    await request.app.state.runtime.connections.broadcast(wp.AppEvent(
-        ok=result["ok"], app=result["app"], name=result["name"], message=result["message"]))
+    await request.app.state.runtime.connections.broadcast(
+        wp.AppEvent(ok=result["ok"], app=result["app"], name=result["name"],
+                    message=result["message"]),
+        correlation_id=_rest_correlation(request))
     status_code = 200 if result["ok"] else (404 if result["app"] is None else 500)
     return JSONResponse(result, status_code=status_code)
 
@@ -506,7 +603,7 @@ async def command_app_open(request: Request):
 # (config.launcher); launch-session.ps1 startet das aktive Profil.
 # Gleiche Token-Sicherung wie /settings; ``command`` verlaesst den Server nie.
 
-async def persist_launcher_intent(rt, intent, kind: str) -> list[str]:
+async def persist_launcher_intent(rt, intent, kind: str, correlation_id=None) -> list[str]:
     """Kern-Persistenz fuer Endpunkte UND Sprach-Aktionen (RFC-0003 Slice 4).
 
     Nimmt eine SEMANTISCHE Aenderungsabsicht (kein vorberechneter Voll-Block) und
@@ -527,8 +624,9 @@ async def persist_launcher_intent(rt, intent, kind: str) -> list[str]:
     except config_loader.ConfigError as e:
         return [str(e)]
     await _post_commit(rt, needs_refresh)
-    await rt.connections.broadcast(wp.LauncherChanged(
-        kind=kind, active_profile=app_launcher.ACTIVE_PROFILE))
+    await rt.connections.broadcast(
+        wp.LauncherChanged(kind=kind, active_profile=app_launcher.ACTIVE_PROFILE),
+        correlation_id=correlation_id)
     return []
 
 
@@ -544,9 +642,9 @@ def _launcher_hook(rt):
     return _mutate
 
 
-async def _persist_launcher(rt, intent, kind: str):
+async def _persist_launcher(rt, intent, kind: str, correlation_id=None):
     """Endpunkt-Wrapper: Fehler des Persist-Kerns als JSONResponse (500)."""
-    errors = await persist_launcher_intent(rt, intent, kind)
+    errors = await persist_launcher_intent(rt, intent, kind, correlation_id)
     if errors:
         return None, JSONResponse({"ok": False, "errors": errors}, status_code=500)
     return True, None
@@ -590,7 +688,7 @@ async def launcher_toggle_autostart(app_id: str, request: Request):
     if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
     _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart")
+        request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("autostart.changed", app=app_id, enabled=value)
@@ -629,7 +727,7 @@ async def launcher_set_placement(app_id: str, request: Request):
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
     _merged, err = await _persist_launcher(
         request.app.state.runtime,
-        configuration.SetPlacement(app_id, body["monitor"], body["zone"]), "placement")
+        configuration.SetPlacement(app_id, body["monitor"], body["zone"]), "placement", _rest_correlation(request))
     if err is not None:
         return err
     # Zu diesem Zeitpunkt sind monitor/zone Allowlist-Konstanten, keine Nutzerdaten.
@@ -684,7 +782,7 @@ async def launcher_create_profile(request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="created", active=app_launcher.ACTIVE_PROFILE)
@@ -698,7 +796,7 @@ async def launcher_activate_profile(profile_id: str, request: Request):
     if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
     _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile")
+        request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="activated", active=app_launcher.ACTIVE_PROFILE)
@@ -721,7 +819,7 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="duplicated", active=app_launcher.ACTIVE_PROFILE)
@@ -741,7 +839,7 @@ async def launcher_rename_profile(profile_id: str, request: Request):
     if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
     _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile")
+        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="renamed", active=app_launcher.ACTIVE_PROFILE)
@@ -758,7 +856,7 @@ async def launcher_delete_profile(profile_id: str, request: Request):
     guards = intent.validate(request.app.state.runtime.configuration.snapshot().as_dict())
     if guards:
         return JSONResponse({"ok": False, "errors": guards}, status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile")
+    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
     if err is not None:
         return err
     obslog.event("profile.changed", kind="deleted", active=app_launcher.ACTIVE_PROFILE)
@@ -805,6 +903,7 @@ def create_app(rt: runtime_mod.Runtime) -> FastAPI:
     Config/Clients öffnen erst im Lifespan (rt.aopen)."""
     app = FastAPI(lifespan=_server_lifespan)
     app.state.runtime = rt
+    app.add_middleware(RestV1Middleware)   # REST-V1-Presentation (Legacy passiert exakt)
     app.include_router(router)
     app.mount("/static", StaticFiles(
         directory=os.path.join(os.path.dirname(__file__), "frontend")), name="static")
