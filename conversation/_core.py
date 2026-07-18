@@ -65,6 +65,11 @@ class Disconnected:
 class StartTurn:
     text: str
     correlation_id: str
+    # Die beim Turn-Start KONSUMIERTE offene Bestaetigung (oder None). Sie wandert
+    # mit dem Effekt nach aussen, damit ``suspended`` genau EINE Wahrheit bleibt:
+    # der Kern loescht sie beim Start, der Aufrufer bekommt sie hier. Entspricht
+    # dem heutigen ``pending_confirm.pop()`` zu Beginn von ``process_message``.
+    pending: Any = None
 
 
 @dataclass(frozen=True)
@@ -143,8 +148,9 @@ def _start_next(state: SessionState) -> tuple[SessionState, tuple]:
         return replace(state, active=None), _NOOP
     nxt, rest = state.queue[0], state.queue[1:]
     turn = Turn(state="processing", text=nxt.text, correlation_id=nxt.correlation_id)
-    return (replace(state, active=turn, queue=rest),
-            (StartTurn(text=nxt.text, correlation_id=nxt.correlation_id),))
+    pending = state.suspended.action if state.suspended is not None else None
+    return (replace(state, active=turn, queue=rest, suspended=None),
+            (StartTurn(text=nxt.text, correlation_id=nxt.correlation_id, pending=pending),))
 
 
 def step(state: SessionState, event: Any) -> tuple[SessionState, tuple]:
@@ -160,8 +166,10 @@ def step(state: SessionState, event: Any) -> tuple[SessionState, tuple]:
         if state.active is not None:
             return replace(state, queue=state.queue + (event,)), _NOOP
         turn = Turn(state="processing", text=event.text, correlation_id=event.correlation_id)
-        return (replace(state, active=turn),
-                (StartTurn(text=event.text, correlation_id=event.correlation_id),))
+        pending = state.suspended.action if state.suspended is not None else None
+        return (replace(state, active=turn, suspended=None),
+                (StartTurn(text=event.text, correlation_id=event.correlation_id,
+                           pending=pending),))
 
     if isinstance(event, StopReceived):
         effects: tuple = ()

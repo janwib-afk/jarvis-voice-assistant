@@ -28,3 +28,16 @@ class CollectingSink:
         ch = wp.ConversationChannel(self._send, wp.ProtocolContext.legacy(),
                                     "test-sess", wp.WireProtocol())
         return ch.event_sink(correlation_id)
+
+
+def turn_context(history=None, pending=None, on_confirm=None, correlation_id="test-corr"):
+    """Oeffentlicher Seam-Helfer (RFC-0006 Phase 4J): baut einen TurnContext, wie ihn
+    die Session an ``assistant_core`` uebergibt. Ersetzt die frueheren direkten
+    Manipulationen der Modul-Globals ``conversations``/``pending_confirm``."""
+    import conversation
+    return conversation.TurnContext(
+        history=history if history is not None else [],
+        pending=pending,
+        request_confirmation=on_confirm or (lambda action: None),
+        correlation_id=correlation_id,
+    )

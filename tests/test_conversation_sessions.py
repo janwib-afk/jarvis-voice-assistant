@@ -55,9 +55,11 @@ class _Runner:
     def __init__(self):
         self.started = []
         self.cancelled = []
+        self.contexts = []
         self.release = asyncio.Event()
 
-    async def __call__(self, text, correlation_id, sink):
+    async def __call__(self, ctx, text, correlation_id, sink):
+        self.contexts.append(ctx)
         self.started.append(text)
         try:
             await self.release.wait()

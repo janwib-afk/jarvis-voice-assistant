@@ -29,9 +29,12 @@ from ._core import (  # noqa: F401
     StartTurn,
 )
 from ._session import (  # noqa: F401
+    LLM_HISTORY,
+    MAX_HISTORY,
     STOPPED_TEXT,
     ConversationManager,
     ConversationSession,
+    TurnContext,
 )
 
 __all__ = [
@@ -39,5 +42,6 @@ __all__ = [
     "ConfirmationOpened", "Disconnected", "ExecutionEnded", "SayTextReceived",
     "StopReceived", "TurnFailed", "TurnFinished",
     "CancelActive", "CloseSession", "EmitStopAck", "EmitStopped", "StartTurn",
-    "ConversationManager", "ConversationSession", "STOPPED_TEXT",
+    "ConversationManager", "ConversationSession", "TurnContext",
+    "STOPPED_TEXT", "MAX_HISTORY", "LLM_HISTORY",
 ]

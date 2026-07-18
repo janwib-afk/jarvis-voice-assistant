@@ -21,12 +21,46 @@ import obslog
 import wire_protocol as wp
 
 from ._core import (
-    CancelActive, CloseSession, EmitStopAck, EmitStopped, ExecutionEnded,
-    SayTextReceived, StopReceived, TurnFailed, TurnFinished,
+    CancelActive, CloseSession, ConfirmationOpened, EmitStopAck, EmitStopped,
+    ExecutionEnded, SayTextReceived, StopReceived, TurnFailed, TurnFinished,
     initial_session_state, step,
 )
 
 STOPPED_TEXT = "Okay, gestoppt."
+# Verlaufsgrenzen unveraendert aus assistant_core uebernommen (Verhaltenskompatibilitaet).
+MAX_HISTORY = 60
+LLM_HISTORY = 16
+
+
+class TurnContext:
+    """Expliziter Session-/Turn-Kontext statt Modul-Globals (RFC-0006 §8).
+
+    Traegt den session-eigenen Verlauf und die beim Turn-Start KONSUMIERTE offene
+    Bestaetigung. ``request_confirmation`` meldet eine neue Rueckfrage an den
+    Session-Zustand zurueck — der Kern bleibt die einzige Wahrheit.
+    """
+
+    def __init__(self, history: list, pending, request_confirmation, correlation_id: str):
+        self._history = history
+        self.pending = pending
+        self._request_confirmation = request_confirmation
+        self.correlation_id = correlation_id
+
+    def remember(self, role: str, content: str) -> None:
+        """Verlauf anhaengen und hart kappen (kein unbegrenztes Wachstum)."""
+        self._history.append({"role": role, "content": content})
+        del self._history[:-MAX_HISTORY]
+
+    def recent(self, limit: int = LLM_HISTORY) -> list:
+        """Die juengsten Nachrichten fuer den LLM-Kontext."""
+        return self._history[-limit:]
+
+    def history_snapshot(self) -> tuple:
+        """Unveraenderlicher Verlaufs-Snapshot fuer den ActionContext."""
+        return tuple(dict(msg) for msg in self._history)
+
+    def request_confirmation(self, action) -> None:
+        self._request_confirmation(action)
 
 
 class ConversationSession:
@@ -37,6 +71,9 @@ class ConversationSession:
         self._channel = channel
         self._run_turn = run_turn
         self._state = initial_session_state()
+        # Session-eigener Verlauf (Daten, kein Zustandsautomat) — ersetzt das
+        # fruehere Modul-Global ``assistant_core.conversations``.
+        self._history: list = []
         # Private Implementierung — nie Teil der oeffentlichen Oberflaeche.
         self._task: asyncio.Task | None = None
 
@@ -91,12 +128,24 @@ class ConversationSession:
     def _start(self, effect) -> None:
         """Turn-Verarbeitung als Task starten; das Ergebnis meldet sich selbst zurueck."""
         sink = self._channel.event_sink(effect.correlation_id)
+        ctx = TurnContext(
+            history=self._history,
+            pending=effect.pending,
+            request_confirmation=self._request_confirmation,
+            correlation_id=effect.correlation_id,
+        )
         self._task = asyncio.create_task(
-            self._run_and_report(effect.text, effect.correlation_id, sink))
+            self._run_and_report(ctx, effect.text, effect.correlation_id, sink))
 
-    async def _run_and_report(self, text, correlation_id, sink) -> None:
+    def _request_confirmation(self, action) -> None:
+        """Eine riskante Aktion wartet auf muendliche Bestaetigung (D6)."""
+        self._state, _ = step(self._state, ConfirmationOpened(
+            action=action, origin_correlation_id=self._state.active.correlation_id
+            if self._state.active is not None else ""))
+
+    async def _run_and_report(self, ctx, text, correlation_id, sink) -> None:
         try:
-            await self._run_turn(text, correlation_id, sink)
+            await self._run_turn(ctx, text, correlation_id, sink)
         except asyncio.CancelledError:
             # Abbruch vollstaendig ausgelaufen -> der Kern darf weiterschalten.
             self._task = None
@@ -118,6 +167,7 @@ class ConversationSession:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self._task = None
+        self._history.clear()
         self._manager._forget(self)
 
     async def aclose(self) -> None:
