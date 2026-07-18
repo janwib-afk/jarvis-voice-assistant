@@ -63,6 +63,8 @@ jobs:
           pip install -r requirements.txt
       - name: Install Chromium
         run: python -m playwright install chromium
+      - name: Voice state contract (pure reducer)
+        run: python tests/browser/e2e_voice_contract.py
       - name: Gate 5 - Browser smoke (functional subset)
         run: python tests/browser/e2e_functional.py --smoke
       - name: Accessibility + keyboard
