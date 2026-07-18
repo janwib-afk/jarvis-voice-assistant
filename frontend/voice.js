@@ -255,11 +255,40 @@
     }
   }
 
+  /* Reconnect-Backoff (Slice 9f).
+   *
+   * Der Versuchszaehler ist eine PRIVATE ADAPTER-RESSOURCE des Reconnects, kein
+   * Zustand einer der fuenf Regionen und keine Presentation-Wahrheit: die
+   * Connection-Region kennt nur `reconnecting`, nicht wie oft es schon scheiterte.
+   * Er liegt deshalb hinter dieser Schnittstelle statt als freie Variable herum,
+   * damit es genau einen Besitzer gibt.
+   *
+   * Kein Reducer, aber ebenso ohne I/O: `fail()` BESCHREIBT nur die Verzoegerung
+   * und die Warnschwelle — Timer und Banner fuehrt der Adapter aus.
+   */
+  function createBackoff() {
+    var attempts = 0;
+    return {
+      fail: function () {
+        attempts += 1;
+        return Object.freeze({
+          attempt: attempts,
+          delayMs: Math.min(3000 * Math.pow(2, attempts - 1), 30000),
+          // Genau EINMAL warnen, nicht bei jedem Versuch: ein Serverneustart
+          // darf kein Bannergewitter ausloesen.
+          warn: attempts === 3
+        });
+      },
+      reset: function () { attempts = 0; }
+    };
+  }
+
   var api = {
     initialVoiceState: initialVoiceState,
     reduce: reduce,
     presentation: presentation,
-    isStale: isStale
+    isStale: isStale,
+    createBackoff: createBackoff
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -22,7 +22,10 @@ const SVG_MIC_MUTED = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 
 let ws;
 let audioQueue = [];
-let reconnectAttempts = 0;
+// Reconnect-Backoff: private Adapter-Ressource mit genau einem Besitzer (Slice 9f).
+// Der Versuchszaehler ist bewusst KEIN Global mehr — er ist weder Domaenen- noch
+// Presentation-Wahrheit, sondern gehoert allein dem Wiederverbinden.
+const reconnectBackoff = JarvisVoice.createBackoff();
 
 // ── Voice-Zustand (RFC-0006 + Amendment 1, Phase 4J) ────────────────────────
 // Einzige Wahrheit fuer Client Session (greeted/epoch) und Playback-Freischaltung.
@@ -405,7 +408,7 @@ function connect() {
         window.__jarvisProtocol = ws.protocol || '';
         console.log('[jarvis] WebSocket connected', ws.protocol || '(legacy)');
         uiState.lastError = '';
-        reconnectAttempts = 0;
+        reconnectBackoff.reset();
         dismissErrorBanners('ws');
         // Zustandsuebergang VOR dem Rendern: die Connection-Region ist die Quelle
         // der Statusanzeige, sonst zeigte sie beim Verbinden noch 'Getrennt'.
@@ -479,9 +482,9 @@ function connect() {
     ws.onclose = () => {
         dispatchVoice({ type: 'WsClosed', epoch: voiceEpoch() });
         reportError('Verbindung verloren');
-        reconnectAttempts++;
+        const retry = reconnectBackoff.fail();
         // Kein Banner pro Reconnect-Versuch (Server-Neustart!) — erst wenn es haengt.
-        if (reconnectAttempts === 3) {
+        if (retry.warn) {
             showErrorBanner({
                 component: 'ws',
                 text: 'Verbindung zum Jarvis-Server verloren.',
@@ -489,9 +492,8 @@ function connect() {
             });
         }
         // Exponentielles Backoff (3s → 30s Cap) statt Dauerfeuer alle 3s.
-        const delay = Math.min(3000 * 2 ** (reconnectAttempts - 1), 30000);
-        status.textContent = `Server nicht erreichbar — neuer Versuch in ${Math.round(delay / 1000)}s`;
-        setTimeout(connect, delay);
+        status.textContent = `Server nicht erreichbar — neuer Versuch in ${Math.round(retry.delayMs / 1000)}s`;
+        setTimeout(connect, retry.delayMs);
     };
 }
 

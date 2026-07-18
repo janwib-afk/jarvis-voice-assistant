@@ -155,6 +155,34 @@ CASES = [
      "var r=R(s,{type:'StartListening'});"
      "return r.effects.length===0 && r.state.capture==='muted';})()"),
 
+    # ── Reconnect-Backoff (Slice 9f) ───────────────────────────────────────
+    # CHARAKTERISIERUNG des bestehenden Verhaltens aus frontend/main.js vor der
+    # Migration: attempts++ je onclose, delay = min(3000 * 2**(attempts-1), 30000),
+    # Warnbanner bei GENAU dem dritten Versuch, Reset bei onopen. Der Zaehler ist
+    # eine private Adapter-Ressource des Backoffs (RFC-0006: keine Domaenen- und
+    # keine Presentation-Wahrheit) und liegt hier hinter einer 2-Methoden-Schnittstelle.
+    ("backoff: 1. Fehlversuch = 3000 ms", "B().fail().delayMs === 3000"),
+    ("backoff: Verzoegerungsfolge verdoppelt bis 30000 ms Cap",
+     "(function(){var b=B(); var got=[]; for(var i=0;i<6;i++) got.push(b.fail().delayMs);"
+     "return got.join(',') === '3000,6000,12000,24000,30000,30000';})()"),
+    ("backoff: attempt zaehlt fortlaufend hoch",
+     "(function(){var b=B(); var got=[]; for(var i=0;i<4;i++) got.push(b.fail().attempt);"
+     "return got.join(',') === '1,2,3,4';})()"),
+    ("backoff: Warnschwelle exakt beim dritten Versuch",
+     "(function(){var b=B(); var got=[]; for(var i=0;i<5;i++) got.push(b.fail().warn);"
+     "return got.join(',') === 'false,false,true,false,false';})()"),
+    ("backoff: reset setzt Verzoegerung und Zaehler zurueck",
+     "(function(){var b=B(); b.fail(); b.fail(); b.reset(); var r=b.fail();"
+     "return r.delayMs===3000 && r.attempt===1 && r.warn===false;})()"),
+    ("backoff: nach reset warnt die dritte Folge erneut",
+     "(function(){var b=B(); b.fail(); b.fail(); b.fail(); b.reset();"
+     "b.fail(); b.fail(); return b.fail().warn === true;})()"),
+    ("backoff: reset ohne Fehlversuch ist folgenlos",
+     "(function(){var b=B(); b.reset(); return b.fail().delayMs === 3000;})()"),
+    ("backoff: Instanzen sind unabhaengig (kein geteilter Zaehler)",
+     "(function(){var a=B(), b=B(); a.fail(); a.fail(); return b.fail().delayMs === 3000;})()"),
+    ("backoff: Ergebnis ist eingefroren", "Object.isFrozen(B().fail()) === true"),
+
     # ── Invalid transitions / Reinheit ─────────────────────────────────────
     ("unbekanntes Ereignis = totaler No-Op",
      "(function(){var s=M({connection:'connected'});"
@@ -188,6 +216,7 @@ def main():
             window.R = (s, e) => JarvisVoice.reduce(s, e);
             window.P = (s) => JarvisVoice.presentation(s);
             window.I = (s, e) => JarvisVoice.isStale(s, e);
+            window.B = () => JarvisVoice.createBackoff();
             window.M = (patch) => Object.freeze(Object.assign(
                 {}, JarvisVoice.initialVoiceState(), patch));
         }""")
@@ -228,6 +257,10 @@ def main():
                     V.presentation(s);
                     V.isStale(s, 0);
                 }
+                // Der Backoff gehoert an denselben Seam und darf ebenso wenig
+                // Timer oder DOM benutzen — er BESCHREIBT nur die Verzoegerung.
+                const b = V.createBackoff();
+                b.fail(); b.fail(); b.reset(); b.fail();
                 return true;
             };
         }""")
