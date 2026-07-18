@@ -243,6 +243,33 @@ selbst ist im reinen Reducer abgedeckt (Contract-Fälle zu `locked`/`playing`/
    Payload-Puffer und die Reducer-Queue müssen symmetrisch geführt werden (push beim
    Empfang, shift bei `AudioEnded`) — heute shiftet `playNext` **vor** dem Abspielen.
 
+### Slice 9c/9d — Playback- und Capture-Region migriert
+- **9c Playback** (`ba688fc`): `isPlaying` **entfernt**. `queueAudio` dispatcht
+  `AudioReceived`; der Reducer entscheidet abspielen vs. puffern. `playNext` ist reiner
+  Effekt-Ausführer; neues `onAudioFinished()` dispatcht `AudioEnded` und trägt die beim
+  **Start** gemerkte Epoch → Audio-Ende nach Stop ist stale (Szenario 12).
+  **Queue-Symmetrie** hergestellt: `playNext` liest den Kopf nur (peek), entfernt wird er
+  in `onAudioFinished` — vorher wäre der lokale Puffer gegen die Reducer-Queue gedriftet.
+- **9d Capture** (`9bd8d22`): `isMuted` **entfernt**; `toggleMute`, Sprach-Mute/-Entstummen
+  und `micMode='off'` dispatchen `MuteToggled`.
+  **Wichtige Unterscheidung:** `isListening` war **keine** zweite semantische Wahrheit,
+  sondern verfolgt die **Engine** — die unter Mute bewusst weiterläuft, um Stop/Entstummen
+  zu erkennen (Präzisierung 1). Es ist eine legitime Adapter-Ressource und heisst jetzt
+  `recognitionRunning`. Hätte man es in die Capture-Region gepresst, wäre
+  `recognition.stop()` unter Mute übersprungen und das Sprach-Entstummen kaputt gewesen.
+- **Verifiziert (beide):** 15/15 Flows · Visual grün **ohne** Baseline-Update · A11y 22/22 ·
+  Reduced-Motion 16/16 · Voice-Contract 46/46 · Suite 858.
+
+### Audio-Abdeckung (`85ddfe8`) — Blocker aufgelöst
+Der Stub liefert per `audio=True` ein echtes stilles MP3 (471 B); Flow `audio_playback`
+lässt `queueAudio`/`playNext`/`play()` real laufen.
+**Ehrliche Grenze, systematisch ermittelt:** Playwrights Chromium ist ein Open-Source-Build
+**ohne MP3-Codec** — `play()` scheitert mit `NotSupportedError`. Erfolgreiche Wiedergabe ist
+hier nicht darstellbar; verifiziert wird der zustandsrelevante Fehlschlagpfad (bleibt
+`locked`, setzt `recoverable-error`, zieht die Presentation **nicht** auf `error`).
+Vollständige Verifikation erfolgreicher Wiedergabe bräuchte einen Build mit Codec oder ein
+WAV-Szenario — **offen**.
+
 ---
 
 ## Stand der Umsetzung
@@ -257,7 +284,7 @@ selbst ist im reinen Reducer abgedeckt (Contract-Fälle zu `locked`/`playing`/
 | 6 `assistant_core` entkoppeln | ✅ grün | `8a950cd` (mit 5) |
 | 7 Purer Voice-Reducer | ✅ grün | `6e37582` |
 | 8 Voice-Integration | ⏳ teilweise (8a grün) | `899b5ef` |
-| 9 Presentation ableiten | ⏳ teilweise (9a, 9b grün) | `f2ec57b`, `a94383f` |
+| 9 Presentation ableiten | ⏳ teilweise (9a–9d grün) | `f2ec57b`, `a94383f`, `ba688fc`, `9bd8d22` |
 | 10 Race-/Stale-/Cleanup-Matrix | offen | — |
 | 11 Doku + CI | offen | — |
 
@@ -294,11 +321,27 @@ visuelle Regression:
 | `muted` | `muted` |
 | `idle` | `idle` |
 
-*Reihenfolge:* (1) Audio-Pfad — `queueAudio`/`playNext`/`stopPlaybackLocal` dispatchen
-`AudioReceived`/`AudioEnded`/`StopRequested`, `isPlaying` entfällt; (2) Capture —
-`startListening`/`recognition.*` dispatchen, `isMuted`/`isListening` entfallen (Achtung:
-`StartListening` ist unter Mute ein No-Op, die alte Zeile setzte explizit `idle`);
-(3) `setOrbState(x)` → `renderVoice()` mit obiger Abbildung, die 22 Aufrufe werden
-Dispatches; (4) `reconnectAttempts` wird private Adapter-Ressource des Backoffs.
+*Reihenfolge:* (1) Audio-Pfad ✅ erledigt (9c); (2) Capture ✅ erledigt (9d);
+(3) **offen:** `setOrbState(x)` → `renderVoice()` mit obiger Abbildung — die **22**
+Aufrufstellen müssen die passenden Ereignisse dispatchen; (4) **offen:**
+`reconnectAttempts` wird private Adapter-Ressource des Backoffs.
+
+> **Warum (3) der riskanteste Schritt ist:** `orb.className` trägt die CSS. Solange nicht
+> jede der 22 Stellen das semantisch richtige Ereignis dispatcht, erzeugt eine Ableitung
+> falsche Klassen und damit eine visuelle Regression. Dieser Schritt gehört in eine
+> Sitzung mit Budget für Umsetzung **und** volle Verifikation.
+
+## Erreichter Umfang (Stand dieser Lieferung)
+
+**Entfernte semantische Doppelwahrheiten:** `assistant_core.conversations`,
+`assistant_core.pending_confirm`, `end_session`, Runtime-Aliase, `hasGreeted`,
+`audioUnlocked`, `uiState.connected`, `isPlaying`, `isMuted`, DOM-Ableitung für
+`action-running`.
+
+**Als Adapter-Ressource geklärt (kein Zustand):** `recognitionRunning`, `currentAudio`,
+`currentAudioUrl`, `audioQueue` (Payload-Puffer), Timer-Handles.
+
+**Noch in Betrieb (unverändert, keine Doppelwahrheit):** `uiState.jarvisState` als
+Render-Ausgabe, `reconnectAttempts` als Backoff-Zähler.
 
 Die Branch ist an jedem Slice gefahrlos rückrollbar; es gibt keinen halb migrierten Zustand.
