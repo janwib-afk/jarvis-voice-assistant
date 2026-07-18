@@ -202,6 +202,52 @@ class DecodeV1CommandTests(unittest.TestCase):
         self.assertEqual(err.code, "bad_root")
 
 
+class FaultMatrixUnitTests(unittest.TestCase):
+    """Slice 9 (SEAM-WIRE): Timestamp-Format, Event-ID-Eindeutigkeit,
+    action.detail-Minimierung, keine Rohwerte in Fehlermeldungen."""
+
+    def test_timestamp_is_rfc3339_utc_millis(self):
+        proto = wp.WireProtocol()  # echte SystemClock
+        env = proto.encode_event(wp.StopAck(), wp.ProtocolContext.v1("s"), correlation_id="c")
+        self.assertRegex(env["timestamp"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$")
+
+    def test_event_ids_are_unique(self):
+        proto = wp.WireProtocol()  # echte UuidGen
+        ctx = wp.ProtocolContext.v1("s")
+        a = proto.encode_event(wp.StopAck(), ctx, correlation_id="c")
+        b = proto.encode_event(wp.StopAck(), ctx, correlation_id="c")
+        self.assertNotEqual(a["event_id"], b["event_id"])
+
+    def test_action_detail_minimized_for_sensitive_action_in_v1(self):
+        env = _proto().encode_event(
+            wp.ActionLifecycle(phase="start", action="CLIPBOARD", label="Zwischenablage",
+                               detail="GEHEIME-KONTONUMMER-1234"),
+            wp.ProtocolContext.v1("s"), correlation_id="c")
+        self.assertEqual(env["payload"]["detail"], "")  # minimiert
+
+    def test_action_detail_kept_for_benign_action_in_v1(self):
+        env = _proto().encode_event(
+            wp.ActionLifecycle(phase="start", action="NEWS", label="News", detail="Sport"),
+            wp.ProtocolContext.v1("s"), correlation_id="c")
+        self.assertEqual(env["payload"]["detail"], "Sport")
+
+    def test_legacy_action_detail_stays_exact(self):
+        # Legacy bleibt byte-exakt — auch bei sensiblen Actions.
+        frame = _proto().encode_event(
+            wp.ActionLifecycle(phase="start", action="CLIPBOARD", label="Z", detail="ROH"),
+            wp.ProtocolContext.legacy())
+        self.assertEqual(frame["detail"], "ROH")
+
+    def test_decode_error_message_has_no_raw_input(self):
+        # ProtocolError-Meldungen sind statisch — kein Echo des Rohwerts.
+        err = _proto().decode_command(
+            {"protocol_version": 1, "type": "say_text",
+             "payload": {"text": "SENTINEL-GEHEIM-NIE-ECHO"}, "event_id": "x"},
+            wp.ProtocolContext.v1("s"))
+        self.assertIsInstance(err, wp.ProtocolError)
+        self.assertNotIn("SENTINEL", err.message)
+
+
 class NegotiationTests(unittest.TestCase):
     def test_ws_offers_v1(self):
         neg = wp.negotiate_ws(["jarvis.v1"])

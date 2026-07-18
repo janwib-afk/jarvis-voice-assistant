@@ -167,9 +167,25 @@ async def websocket_endpoint(ws: WebSocket):
 
     worker_task = asyncio.create_task(worker())
 
+    async def _v1_fault(code, message, close_code):
+        if channel.ctx.is_v1:
+            await channel.emit(
+                wp.ErrorEvent(component="protocol", message=message, code=code),
+                correlation_id=rt.wire_protocol.new_correlation_id())
+        await ws.close(code=close_code)
+
     try:
         while True:
-            data = await ws.receive_json()
+            raw = await ws.receive_text()
+            # Frame-Größenvertrag (A1.C): 64 KiB eingehend, VOR dem JSON-Decoding.
+            if len(raw.encode("utf-8")) > _MAX_WS_FRAME_BYTES:
+                await _v1_fault("too_large", "Frame zu groß.", 1009)
+                break
+            try:
+                data = json.loads(raw)
+            except Exception:
+                await _v1_fault("malformed_json", "Ungültiges JSON.", 1007)
+                break
             cmd = rt.wire_protocol.decode_command(data, channel.ctx)
 
             # V1-Validierungsfehler: strukturierter Fehler; bei close_code die
@@ -247,6 +263,8 @@ async def health_endpoint(request: Request):
 # -> 406. HTTP-Status bleibt maßgeblich. session_id ist bei REST immer null.
 
 _VENDOR_V1 = "application/vnd.jarvis.v1+json"
+_MAX_WS_FRAME_BYTES = 64 * 1024      # A1.C: eingehender WS-JSON-Frame
+_MAX_REST_BODY_BYTES = 1024 * 1024   # A1.C: V1-REST-Body
 _CORR_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
@@ -312,6 +330,18 @@ class RestV1Middleware(BaseHTTPMiddleware):
             return JSONResponse(env, status_code=406,
                                 headers={"X-Jarvis-Correlation-ID": corr,
                                          "Content-Type": _VENDOR_V1})
+        # Größenvertrag (A1.C): V1-Body > 1 MiB -> 413, VOR dem Route-Decoding.
+        if family and neg.context.is_v1:
+            try:
+                clen = int(request.headers.get("content-length") or 0)
+            except ValueError:
+                clen = 0
+            if clen > _MAX_REST_BODY_BYTES:
+                env = rt.wire_protocol.rest_error(
+                    "too_large", "Anfrage zu groß.", correlation_id=corr)
+                return JSONResponse(env, status_code=413,
+                                    headers={"X-Jarvis-Correlation-ID": corr,
+                                             "Content-Type": _VENDOR_V1})
         response = await call_next(request)
         if not family or not neg.context.is_v1:
             return response  # Legacy exakt (keine Umhüllung)

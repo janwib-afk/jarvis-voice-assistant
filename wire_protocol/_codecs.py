@@ -17,6 +17,11 @@ from ._model import (ActionLifecycle, AppEvent, ErrorEvent, Health, LauncherChan
                      MusicChanged, Sensitivity, SpokenResponse, StopAck)
 
 
+# Actions, deren `detail` (Screen-/Clipboard-/Vault-Ausschnitt, Rohtext) unter V1
+# minimiert wird (A1.D). Legacy bleibt byte-exakt.
+_SENSITIVE_ACTIONS = frozenset({"SCREEN", "CLIPBOARD", "PROJECT_CONTEXT", "RESEARCH"})
+
+
 @dataclass(frozen=True)
 class _Proj:
     legacy_type: str
@@ -39,7 +44,11 @@ _PROJECTIONS = {
         "action",
         lambda e: {"phase": e.phase, "action": e.action, "label": e.label, "detail": e.detail},
         True, Sensitivity.PERSONAL,
-        lambda e: {"phase": e.phase, "action": e.action, "label": e.label, "detail": e.detail}),
+        # V1-Projektion: bei sensiblen Actions (Screen/Clipboard/Vault) wird `detail`
+        # minimiert — es kann Ausschnitte sensibler Inhalte tragen (A1.D). Legacy
+        # bleibt exakt (roher detail).
+        lambda e: {"phase": e.phase, "action": e.action, "label": e.label,
+                   "detail": "" if e.action in _SENSITIVE_ACTIONS else e.detail}),
     ErrorEvent: _Proj(
         "error",
         lambda e: {"component": e.component, "text": e.message, "hint": e.hint}, False,

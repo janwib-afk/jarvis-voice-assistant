@@ -14,7 +14,7 @@ import time
 import unittest
 from unittest import mock
 
-import wire_testing as wt
+from tests import wire_testing as wt
 import tests  # noqa: F401  — synthetische Config-Fixture
 
 import obslog

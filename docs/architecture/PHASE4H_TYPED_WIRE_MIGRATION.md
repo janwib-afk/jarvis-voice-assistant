@@ -234,3 +234,24 @@ bauen keine Wire-Dicts mehr.
   UI-Änderung; deutsche Fehlermeldungen/Revision-/Conflict-Verhalten erhalten.
 - **Rollback:** Commit reverten (Frontend fällt auf rohe fetch/Legacy zurück).
 - **Commit:** `feat(frontend): migrate rest consumers to protocol v1`.
+
+### Slice 9 — Fault-/Security-Matrix vervollständigen
+- **Ziel:** verbleibende Matrixlücken schließen; kritische Race-/Stop-/Mixed-/Broadcast-
+  Tests 5× flakefrei.
+- **Änderung:** `server.py` WS-Receive auf `receive_text` + Frame-Größenvertrag
+  (64 KiB → Close 1009, VOR JSON-Decoding) + malformed JSON → Close 1007 (V1: strukturierter
+  `error` vor Close); REST-Middleware: V1-Body > 1 MiB → 413. `wire_protocol._codecs`:
+  `action.detail` bei sensiblen Actions (SCREEN/CLIPBOARD/PROJECT_CONTEXT/RESEARCH) unter
+  V1 minimiert (Legacy exakt).
+- **Tests:** Unit (Timestamp RFC3339 UTC ms; Event-ID-Eindeutigkeit; action.detail
+  minimiert V1 / exakt Legacy; Fehlermeldung ohne Rohwert-Echo) + Integration (WS malformed
+  →1007, oversize→1009, oversize say_text, unknown command hält Verbindung offen; REST
+  oversize→413). Frühere Slices decken bereits: falscher Root/fehlende Felder/unbekannte
+  Major/ID-Spoofing/gemeinsame Broadcast-Event-ID/eigene Session-ID/Health-Pfad-Redaction.
+- **5×-Flake:** `test_wire_mixed` + `test_wire_v1_ws` + `test_wire_fault` + `test_ws`
+  fünfmal grün. Volle Suite **819** grün; smoke EXIT 0. (`wire_testing`-Import robust
+  gemacht — `from tests import ...` —, damit Module auch standalone laufen.)
+- **Sicherheitsinvarianten:** Secret-Sentinels nie im serialisierten Output/Logs; keine
+  Replay-/Exactly-once-Behauptung.
+- **Rollback:** Commit reverten.
+- **Commit:** `test(protocol): complete wire fault and privacy matrix`.

@@ -22,7 +22,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
 import wire_protocol as wp
-import wire_testing as wt
+from tests import wire_testing as wt
 
 try:
     import server
