@@ -127,3 +127,30 @@ bauen keine Wire-Dicts mehr.
 - **Commit:** `refactor(protocol): route legacy traffic through typed channel`.
 - **Offene Risiken:** alle Verbindungen sind in Slice 3 Legacy (V1-Aushandlung erst Slice 4);
   `rt.ws_clients`-Attribut bleibt (Isolationstest), wird aber nicht mehr genutzt.
+
+### Slice 4 — V1-WebSocket aktivieren
+- **Ziel:** `Sec-WebSocket-Protocol: jarvis.v1` aushandeln + bestätigen; fehlt es → exakt
+  Legacy; nur nicht unterstütztes `jarvis.vN` → Ablehnung vor accept (Close 1002);
+  V1-Command-Envelope decodieren, V1-Event-Envelope senden; Session-/Event-/Correlation-/
+  Timestamp-Semantik; strukturierte V1-Fehler; Spoofing abgelehnt.
+- **Seam:** SEAM-WS/SEAM-CONVERSATION (echter TestClient-Handshake mit `subprotocols`).
+- **RED→GREEN:** V1-Tests hängen bzw. scheitern, wenn der Endpoint auf Legacy gezwungen
+  wird (Beweis, dass sie die Aushandlung beobachten) → nach Verdrahtung 10 Tests grün.
+- **Änderungen:** `server.py` (WS-Endpoint: `negotiate_ws(ws.scope["subprotocols"])`,
+  `accept(subprotocol=…)`, Reject vor accept mit Close 1002; Receive-Loop: `ProtocolError`
+  → strukturierter `error`-Envelope, bei `close_code` schließen [unsupported_version 1002,
+  too_large 1009]); sofortiger Health mit frischer Server-Correlation. `wire_protocol`:
+  `new_correlation_id`.
+- **Verifiziert:** sofortiger V1-Health-Envelope; kein Subprotocol → exakt Legacy-Health;
+  `jarvis.v2`-only → WebSocketDisconnect; Client-`correlation_id` gespiegelt; Correlation
+  über alle Events eines Commands (action start/done + response); Session-ID innerhalb einer
+  Verbindung stabil, zwei Verbindungen verschieden; Spoofing von `event_id`/`session_id` →
+  `reserved_field`-Fehler; falsche Major → Fehler + Close 1002. Kein Auth-/Origin-Verhalten
+  geändert. Volle Suite **796** grün.
+- **Sicherheitsinvarianten:** Origin/Token VOR der Versionsverarbeitung; Client bestimmt
+  `event_id`/`session_id`/`timestamp`/`sensitivity` nie; Session-ID ≠ Auth-Token.
+- **Rollback:** Commit reverten (Legacy bleibt der Default; V1 opt-in).
+- **Commit:** `feat(protocol): add versioned websocket transport`.
+- **Offene Punkte:** 64-KiB-Frame-Limit + malformed-JSON-Close (1007/1009 am Frame-Level)
+  und die vollständige Fault-Matrix → Slice 9; Mixed-Broadcasts (V1+Legacy gleichzeitig,
+  gemeinsame Broadcast-Event-ID) → Slice 5.

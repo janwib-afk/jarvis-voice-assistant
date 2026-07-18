@@ -98,16 +98,26 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.close(code=1008)
         return
 
-    await ws.accept()
-    # Verbindung in der Runtime-Registry anmelden (RFC-0005): opake Session-ID statt
-    # str(id(ws)); Sendepfad via ConversationChannel (Send-Lock). Slice 3: Legacy
-    # (kein Subprotokoll angeboten) — der beobachtbare Output bleibt unverändert.
-    channel, _accepted = rt.connections.register(ws.send_json, [])
+    # 3. Versionsaushandlung (RFC-0005 D4): angebotene Subprotokolle bestimmen den
+    #    Protocol Context. Nur nicht unterstütztes jarvis.vN -> Ablehnung VOR accept
+    #    (dort ist kein Error-Frame möglich, A1.C). Fehlt jarvis.v1 -> exakt Legacy.
+    offered = ws.scope.get("subprotocols", [])
+    neg = wp.negotiate_ws(offered)
+    if neg.rejected:
+        obslog.event("ws.rejected", reason="unsupported_version")
+        await ws.close(code=1002)
+        return
+
+    await ws.accept(subprotocol=neg.accepted_subprotocol)
+    # Verbindung in der Runtime-Registry anmelden: opake Session-ID statt str(id(ws));
+    # Sendepfad via ConversationChannel (Send-Lock).
+    channel, _accepted = rt.connections.register(ws.send_json, offered)
     session_id = channel.session_id
     obslog.event("ws.connected")
 
-    # Startup-Warnungen ans Status-Center melden (sofortiger Health-Frame).
-    await channel.emit(wp.Health(warnings=tuple(rt.startup_warnings)))
+    # Sofortiger Health-Frame (spontan -> frische Server-Correlation-ID).
+    await channel.emit(wp.Health(warnings=tuple(rt.startup_warnings)),
+                       correlation_id=rt.wire_protocol.new_correlation_id())
 
     # Nachrichten laufen als Task neben der Receive-Loop — so kommt ein "Stopp"
     # auch WÄHREND einer langen Aktion (z.B. 3-Minuten-Recherche) durch.
@@ -159,6 +169,18 @@ async def websocket_endpoint(ws: WebSocket):
         while True:
             data = await ws.receive_json()
             cmd = rt.wire_protocol.decode_command(data, channel.ctx)
+
+            # V1-Validierungsfehler: strukturierter Fehler; bei close_code die
+            # Verbindung schließen, sonst offen bleiben (korrigierbarer Fehler).
+            if isinstance(cmd, wp.ProtocolError):
+                await channel.emit(
+                    wp.ErrorEvent(component="protocol", message=cmd.message, hint=cmd.hint,
+                                  code=cmd.code, retryable=cmd.retryable),
+                    correlation_id=rt.wire_protocol.new_correlation_id())
+                if cmd.close_code is not None:
+                    await ws.close(code=cmd.close_code)
+                    break
+                continue
 
             # Stopp: explizites Stop-Command ODER ein Stop-Wort als SayText.
             is_stop = isinstance(cmd, wp.Stop) or (

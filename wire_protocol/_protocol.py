@@ -30,5 +30,9 @@ class WireProtocol:
         """Serverseitige Event-ID (für gemeinsame Broadcast-Event-ID)."""
         return self._idgen.new_id()
 
+    def new_correlation_id(self) -> str:
+        """Serverseitige Correlation-ID für spontane Events (D6)."""
+        return self._idgen.new_id()
+
     def now_iso(self) -> str:
         return self._clock.now_iso()
