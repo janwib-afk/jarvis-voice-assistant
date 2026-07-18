@@ -44,6 +44,8 @@ function voiceEpoch() { return V.state.epoch; }
 function audioIsLocked() { return V.state.playback === 'locked'; }
 /* Laeuft gerade eine Aktion? Kommt aus der Interaction-Region — NIE aus dem DOM (I9). */
 function actionIsRunning() { return V.state.interaction === 'action-running'; }
+/* Verbindungslage kommt aus der Connection-Region (kein eigenes Flag mehr). */
+function isConnected() { return V.state.connection === 'connected'; }
 let currentAudio = null;   // laufendes Audio-Element — fuer den Stopp-Pfad
 let currentAudioUrl = null;
 
@@ -51,7 +53,7 @@ let currentAudioUrl = null;
 let micMode = localStorage.getItem('jarvis.micMode') || 'auto';
 
 // Zentraler UI-Zustand fuers Status-Center
-const uiState = { connected: false, micMuted: false, jarvisState: 'idle', lastError: '', warnings: '' };
+const uiState = { micMuted: false, jarvisState: 'idle', lastError: '', warnings: '' };
 
 // Zustandsworte gemaess docs/ux/STATE_MODEL.md — ein Vokabular fuer
 // Statuszeile, Fussleiste und Screenreader (Klartext, nie Farbe allein).
@@ -65,16 +67,16 @@ function setStatusWord() {
 }
 
 function renderStatusCenter() {
-    document.getElementById('sc-conn').className = 'sc-dot ' + (uiState.connected ? 'ok' : 'err');
+    document.getElementById('sc-conn').className = 'sc-dot ' + (isConnected() ? 'ok' : 'err');
     document.getElementById('sc-mic').className = 'sc-dot ' + (uiState.micMuted ? 'off' : 'ok');
     const connText = document.getElementById('sc-conn-text');
     const micText = document.getElementById('sc-mic-text');
-    if (connText) connText.textContent = uiState.connected ? 'Server verbunden' : 'Getrennt';
+    if (connText) connText.textContent = isConnected() ? 'Server verbunden' : 'Getrennt';
     if (micText) micText.textContent = uiState.micMuted ? 'Mikrofon stumm' : 'Mikrofon bereit';
     // Zustandswort lebt allein in der Statuszeile (#status) — keine Fußleisten-Dopplung.
     const row = document.getElementById('status-row');
     if (row) {
-        row.className = uiState.connected ? ('s-' + uiState.jarvisState) : 's-disconnected';
+        row.className = isConnected() ? ('s-' + uiState.jarvisState) : 's-disconnected';
     }
     const scError = document.getElementById('sc-error');
     const msg = uiState.lastError || uiState.warnings;
@@ -397,17 +399,18 @@ function connect() {
         // Ausgehandelte Protokollversion fuer Diagnose/E2E sichtbar machen.
         window.__jarvisProtocol = ws.protocol || '';
         console.log('[jarvis] WebSocket connected', ws.protocol || '(legacy)');
-        uiState.connected = true;
         uiState.lastError = '';
         reconnectAttempts = 0;
         dismissErrorBanners('ws');
-        renderStatusCenter();
-        setStatusWord();
+        // Zustandsuebergang VOR dem Rendern: die Connection-Region ist die Quelle
+        // der Statusanzeige, sonst zeigte sie beim Verbinden noch 'Getrennt'.
         // Begruessung genau EINMAL pro Client Session (Amendment 1 / M2): der
         // Reducer haelt den Latch, der jeden Reconnect ueberlebt. Jede zusaetzliche
         // Begruessung wuerde echte LLM-/TTS-Kosten verursachen.
-        if (dispatchVoice({ type: 'WsOpen', epoch: voiceEpoch() })
-                .indexOf('SendGreeting') !== -1) {
+        const openEffects = dispatchVoice({ type: 'WsOpen', epoch: voiceEpoch() });
+        renderStatusCenter();
+        setStatusWord();
+        if (openEffects.indexOf('SendGreeting') !== -1) {
             setOrbState('thinking');
             awakenInstrument(); // Delight: einmaliger Erwachen-Glow
             JarvisWire.sayText(ws, 'Jarvis activate');
@@ -463,7 +466,6 @@ function connect() {
     };
     ws.onclose = () => {
         dispatchVoice({ type: 'WsClosed', epoch: voiceEpoch() });
-        uiState.connected = false;
         reportError('Verbindung verloren');
         reconnectAttempts++;
         // Kein Banner pro Reconnect-Versuch (Server-Neustart!) — erst wenn es haengt.
