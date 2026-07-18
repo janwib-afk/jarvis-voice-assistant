@@ -31,6 +31,8 @@
 | SEAM-LAUNCHER | Contract/Integration (TestClient) | Launcher-/Profil-REST + `app_launcher` Helfer | `_start_url`/`_start_process` | gut | approved |
 | SEAM-WINDOWS | Contract (Datenebene) + native Smokes | `monitors.detect_monitors`, `/launcher/monitors` | `monitors._enum_monitors_raw` (ctypes) | gut | approved (native Smokes seit Prompt 7) |
 | SEAM-BROWSER-UI | E2E/Visual/A11y (Playwright) | sichtbares Browserverhalten, Rollen/Labels | gestubbter E2E-Server (`server.app`, Fake-Provider) | gut | approved (seit Prompt 7) |
+| SEAM-CONVERSATION-STATE | Contract (pur) | `conversation` — `step`/Manager/Session, `snapshot()` | keine (rein; Fake-Kanal/-Runner) | sehr gut (`test_conversation_core` 23, `test_conversation_sessions` 9) | approved (RFC-0006, Phase 4J) |
+| SEAM-VOICE | Contract (pur, JS) | `frontend/voice.js` — `initialVoiceState`/`reduce`/`presentation`/`isStale` | keine (Sandbox-Reinheitsnachweis) | sehr gut (`e2e_voice_contract` 46) | approved (RFC-0006, Phase 4J) |
 | SEAM-WIRE | Contract (pur) | `wire_protocol` (Codecs/Decode/Negotiation, voll serialisiert) | Clock/ID über injizierte Seams | sehr gut | approved (RFC-0005, Phase 4H) |
 | SEAM-MIXED-WIRE | Integration (parallele WS) | gleichzeitige Legacy+V1-Verbindungen, versionsgerechte Broadcasts | `ai`/`synthesize_speech` (Provider) | gut | approved (RFC-0005, Phase 4H) |
 

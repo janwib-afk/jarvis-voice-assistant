@@ -4,6 +4,27 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-18 (Phase 4J, RFC-0006 TEILWEISE IMPLEMENTIERT):** Die Umsetzung von
+> [RFC-0006](../architecture/RFC-0006-explicit-runtime-state-machines.md) inkl. Amendment 1
+> hat begonnen. **Backend vollständig migriert:** neues tiefes Modul
+> [`conversation/`](../../conversation/) mit reinem Transitionskern
+> (`step(state, event) → (state, effects)`, I/O-frei) und runtime-eigenem
+> `ConversationManager`; `assistant_core.conversations`, `pending_confirm`, `end_session`
+> und die Runtime-Aliase sind **entfernt** (löst **K03** aus RFC-0002); der WS-Endpunkt ist
+> ein dünner Adapter ohne Queue-/Worker-/Task-Interna, die RFC-0005-Transportgrenze bleibt
+> dort. **Frontend teilweise migriert:** [`frontend/voice.js`](../../frontend/voice.js) ist
+> der reine Voice-Reducer (fünf orthogonale Regionen + Client-Session-Ebene, abgeleitete
+> Presentation), abgesichert durch 46 ausführbare Contract-Fälle im Browser-Gate. Entfernt
+> sind `hasGreeted`, `audioUnlocked`, `uiState.connected`, `isPlaying`, `isMuted` sowie die
+> DOM-Ableitung für `action-running` (Invariante I9). **Noch NICHT umgesetzt:** die
+> vollständige Presentation-Ableitung (`uiState.jarvisState` ist weiterhin Render-Ausgabe,
+> die 22 `setOrbState`-Aufrufe sind noch nicht auf Ereignisse umgestellt),
+> `reconnectAttempts`, sowie die vollständige Race-/Stale-Matrix als eigener Testblock.
+> Beobachtbares Verhalten und Wire-Contracts sind unverändert (RFC-0005 nicht erweitert);
+> Legacy bleibt byte-exakt. Keine Job-Engine, keine Persistenz, kein Capability-/
+> Policy-Kernel. Verlauf und Rollback-Punkte:
+> [PHASE4J_EXPLICIT_RUNTIME_STATE_MACHINES_MIGRATION.md](../architecture/PHASE4J_EXPLICIT_RUNTIME_STATE_MACHINES_MIGRATION.md).
+
 > **Status 2026-07-18 (Phase 4I, RFC-0006 AKZEPTIERT — nur Architektur):** Für die heute
 > impliziten Conversation- und Voice-Zustände sowie einen abgegrenzten zukünftigen Job-Lifecycle
 > wurde [RFC-0006](../architecture/RFC-0006-explicit-runtime-state-machines.md)
