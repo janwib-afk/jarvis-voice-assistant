@@ -29,6 +29,7 @@ import app_launcher
 import monitors
 import assistant_core
 import config_loader
+import conversation
 import configuration
 import memory
 import obslog
@@ -121,51 +122,17 @@ async def websocket_endpoint(ws: WebSocket):
     await channel.emit(wp.Health(warnings=tuple(rt.startup_warnings)),
                        correlation_id=rt.wire_protocol.new_correlation_id())
 
-    # Nachrichten laufen als Task neben der Receive-Loop — so kommt ein "Stopp"
-    # auch WÄHREND einer langen Aktion (z.B. 3-Minuten-Recherche) durch.
-    # Ein Worker arbeitet die Queue strikt sequenziell ab (wie bisher).
-    #
-    # ``stopping`` trennt die beiden Cancel-Ursachen sauber und racefrei:
-    #   - Stopp  → nur der Child-Task wird gecancelt, der Worker laeuft weiter.
-    #   - Disconnect → das finally setzt stopping=True und cancelt den Worker;
-    #     der Worker nimmt seinen Child-Task dann garantiert mit.
-    # Ohne dieses Flag koennte ein Stopp, der zeitgleich mit einem Disconnect
-    # eintrifft, den Worker seinen eigenen CancelledError schlucken lassen
-    # (task.cancelled() waere True) — der Worker wuerde leaken.
-    # Queue-Einträge tragen Command UND Correlation zusammen (RFC-0005 §4): ein
-    # dekodierter SayText (Text + serverseitige/gespiegelte correlation_id).
-    queue: asyncio.Queue = asyncio.Queue()
-    state: dict = {"task": None, "stopping": False}
+    # Conversation-Zustand liegt seit RFC-0006 (Phase 4J) im runtime-eigenen
+    # Session-Aggregat: Queue, aktiver Turn, Verlauf, offene Bestaetigung und der
+    # Cancellation-Lifecycle sind PRIVATE Implementierung der Session. Dieser
+    # Endpunkt ist nur noch Adapter — er kennt weder Queue noch Task noch Worker.
+    # Origin/Token/Handshake/Frame-Groesse/Decode/ProtocolError bleiben hier
+    # (RFC-0005-Transportgrenze, Praezisierung 8).
+    async def _run_turn(ctx, text, correlation_id, sink):
+        await assistant_core.process_message(
+            ctx, text, sink, mutate_launcher=_launcher_hook(rt))
 
-    async def worker():
-        while True:
-            cmd = await queue.get()
-            sink = channel.event_sink(cmd.correlation_id)  # Correlation pro Command gebunden
-            task = asyncio.create_task(assistant_core.process_message(
-                session_id, cmd.text, sink, mutate_launcher=_launcher_hook(rt)))
-            state["task"] = task
-            try:
-                await task
-            except asyncio.CancelledError:
-                if state["stopping"]:
-                    # Disconnect: Child zuverlaessig mitnehmen und sauber auslaufen
-                    # lassen, dann die Cancellation weiterreichen (Worker endet).
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await task
-                    raise
-                # Reiner Stopp: Child wurde abgebrochen — weiter mit der naechsten Nachricht.
-            except Exception as e:
-                # Unerwartete Fehler beenden nie die Verbindung.
-                obslog.event("message.failed", error_type=type(e).__name__, where="worker")
-                try:
-                    await assistant_core.send_error(sink, "llm", "Interner Fehler bei der Verarbeitung.")
-                except Exception:
-                    pass
-            finally:
-                state["task"] = None
-
-    worker_task = asyncio.create_task(worker())
+    session = rt.conversation_manager.open(channel, run_turn=_run_turn)
 
     async def _v1_fault(code, message, close_code):
         if channel.ctx.is_v1:
@@ -204,39 +171,25 @@ async def websocket_endpoint(ws: WebSocket):
             is_stop = isinstance(cmd, wp.Stop) or (
                 isinstance(cmd, wp.SayText) and actions.is_stop_command(cmd.text))
             if is_stop:
-                stop_corr = cmd.correlation_id
-                task = state["task"]
-                was_busy = task is not None and not task.done()
-                if was_busy:
-                    task.cancel()
-                while not queue.empty():
-                    queue.get_nowait()
-                assistant_core.pending_confirm.pop(session_id, None)
-                obslog.event("message.stopped", was_busy=was_busy)
-                await channel.emit(wp.StopAck(), correlation_id=stop_corr)
-                if was_busy:
-                    await channel.emit(wp.SpokenResponse(text="Okay, gestoppt.", audio=""),
-                                       correlation_id=stop_corr)
+                obslog.event("message.stopped",
+                             was_busy=not session.snapshot()["ready"])
+                await session.submit(conversation.StopReceived(cmd.correlation_id))
                 continue
 
             if not isinstance(cmd, wp.SayText):
                 continue  # None (Legacy ignoriert) — kein Fehlerframe
 
             obslog.event("message.received", text_len=len(cmd.text))
-            await queue.put(cmd)
+            await session.submit(
+                conversation.SayTextReceived(cmd.text, cmd.correlation_id))
 
     except WebSocketDisconnect:
         pass
     finally:
-        # Disconnect: Worker markieren, canceln und sauber auslaufen lassen —
-        # so wird auch ein gerade laufender Child-Task garantiert beendet
-        # (kein Task-Leak pro geschlossener Verbindung).
-        state["stopping"] = True
-        worker_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await worker_task
+        # Disconnect: die Session bricht eine laufende Verarbeitung garantiert ab
+        # und gibt ihre Ressourcen frei (kein Task-Leak pro Verbindung).
+        await rt.conversation_manager.close(session)
         rt.connections.unregister(channel)
-        assistant_core.end_session(session_id)
 
 
 INDEX_PATH = os.path.join(os.path.dirname(__file__), "frontend", "index.html")

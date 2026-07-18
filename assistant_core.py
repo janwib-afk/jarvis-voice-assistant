@@ -51,9 +51,9 @@ TODAY_INBOX = None
 DATA_LOADED = False
 LAST_REFRESH: float | None = None
 
-# Session-Verlauf + riskante Aktionen, die auf ein muendliches Ja warten.
-conversations: dict[str, list] = {}
-pending_confirm: dict[str, actions.Action] = {}
+# Session-Verlauf und offene Bestaetigung liegen seit RFC-0006 (Phase 4J) im
+# Session-Aggregat (``conversation.ConversationSession``) und werden ueber einen
+# expliziten ``TurnContext`` uebergeben — hier gibt es KEINE Session-Globals mehr.
 
 
 def configure(cfg: dict) -> None:
@@ -73,19 +73,6 @@ def init_clients(ai_client, http_client) -> None:
     global ai, http
     ai = ai_client
     http = http_client
-
-
-def _remember(session_id: str, role: str, content: str) -> None:
-    """Verlauf anhaengen und hart kappen (kein unbegrenztes Wachstum)."""
-    conv = conversations.setdefault(session_id, [])
-    conv.append({"role": role, "content": content})
-    del conv[:-MAX_HISTORY]
-
-
-def end_session(session_id: str) -> None:
-    """Session-Zustand aufraeumen (WS-Disconnect)."""
-    conversations.pop(session_id, None)
-    pending_confirm.pop(session_id, None)
 
 
 # ── Kontextdaten (Wetter/Tasks/Vault/Inbox) ─────────────────────────────────
@@ -275,32 +262,32 @@ def _llm_error_hint(e: Exception) -> str:
 # hier bleibt nur die Orchestrierung (Timeout/Cancel/Summary/TTS/WS/Autosave).
 
 
-def _action_context(session_id: str, mutate_launcher=None) -> actions.ActionContext:
+def _action_context(ctx, mutate_launcher=None) -> actions.ActionContext:
     """Request-scoped Kontext aus dem AKTUELLEN Prozesszustand bauen (RFC-0001).
 
     Der Verlauf wird als unveraenderlicher Snapshot uebergeben — die Action sieht
-    weder ``session_id`` noch das ``conversations``-Dict. ``mutate_launcher`` wird
+    weder eine Session-ID noch ein Verlaufs-Dict. ``mutate_launcher`` wird
     vom Aufrufer (WS-Endpoint) aus der Runtime der konkreten App injiziert
     (RFC-0003) — assistant_core kennt weder Runtime noch server.
     """
     return actions.ActionContext(
         ai=ai,
-        history=tuple(dict(msg) for msg in conversations.get(session_id, [])),
+        history=ctx.history_snapshot(),
         mutate_launcher=mutate_launcher,
     )
 
 
-async def execute_action(action: actions.Action, session_id: str,
+async def execute_action(action: actions.Action, ctx,
                          mutate_launcher=None) -> str:
     """Thin Dispatcher (RFC-0001): Kontext bauen, Registry-Lookup, ausfuehren.
 
     Die Action beschreibt und fuehrt sich selbst aus; hier bleibt nur die
-    Uebersetzung von (action, session_id) in einen request-scoped Kontext.
+    Uebersetzung von (action, TurnContext) in einen request-scoped Kontext.
     Nur validierte Actions erreichen diesen Punkt (parse_action ist der Adapter).
     ``mutate_launcher`` reicht der Aufrufer aus der App-Runtime durch (RFC-0003).
     """
     return await actions.spec_for(action.type).execute(
-        action.payload, _action_context(session_id, mutate_launcher))
+        action.payload, _action_context(ctx, mutate_launcher))
 
 
 async def _finish_research(summary: str, action_result: str) -> str | None:
@@ -321,7 +308,7 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
     return f"{summary}\n\n{quellen_block}"
 
 
-async def run_action_and_respond(session_id: str, action: actions.Action, sink,
+async def run_action_and_respond(ctx, action: actions.Action, sink,
                                  mutate_launcher=None):
     """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events)."""
     obslog.event("action.started", action=action.type)
@@ -335,7 +322,7 @@ async def run_action_and_respond(session_id: str, action: actions.Action, sink,
     try:
         # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
         action_result = await asyncio.wait_for(
-            execute_action(action, session_id, mutate_launcher), timeout=spec.timeout)
+            execute_action(action, ctx, mutate_launcher), timeout=spec.timeout)
         obslog.event("action.finished", action=action.type, result_len=len(action_result))
         await send_action_event(sink, "done", action.type)
     except asyncio.CancelledError:
@@ -360,7 +347,7 @@ async def run_action_and_respond(session_id: str, action: actions.Action, sink,
         msg = action_result
         if not msg or msg.startswith("Fehler:"):
             msg = f"Das hat leider nicht funktioniert, {USER_ADDRESS}."
-        _remember(session_id, "assistant", msg)
+        ctx.remember("assistant", msg)
         await send_spoken_response(sink, msg)
         return
 
@@ -387,31 +374,30 @@ async def run_action_and_respond(session_id: str, action: actions.Action, sink,
 
     # Anzeige-Version (mit Quellen) in die Historie — so funktionieren Folgefragen
     # wie "Öffne die zweite Quelle".
-    _remember(session_id, "assistant", display_text or summary)
+    ctx.remember("assistant", display_text or summary)
     await send_spoken_response(sink, summary, display_text)
 
 
-async def process_message(session_id: str, user_text: str, sink, mutate_launcher=None):
+async def process_message(ctx, user_text: str, sink, mutate_launcher=None):
     """Process message and send responses via WebSocket.
 
     ``mutate_launcher``: semantischer Launcher-Hook der KONKRETEN App-Runtime,
     vom WS-Endpoint injiziert (RFC-0003) — keine Runtime-/server-Abhaengigkeit hier.
     """
-    if session_id not in conversations:
-        conversations[session_id] = []
-
     # Wartet eine riskante Aktion auf Bestätigung? Ja => ausführen, Nein => verwerfen,
     # alles andere => Aktion verfällt und die Nachricht wird normal verarbeitet.
-    pending = pending_confirm.pop(session_id, None)
+    # Die offene Bestaetigung wurde beim Turn-Start vom Session-Kern KONSUMIERT und
+    # liegt hier als ``ctx.pending`` — identisch zum frueheren ``pop()``.
+    pending = ctx.pending
     if pending is not None:
         verdict = actions.is_confirmation(user_text)
         if verdict is not None:
-            _remember(session_id, "user", user_text)
+            ctx.remember("user", user_text)
             if verdict:
-                await run_action_and_respond(session_id, pending, sink, mutate_launcher)
+                await run_action_and_respond(ctx, pending, sink, mutate_launcher)
             else:
                 msg = f"Verstanden, {USER_ADDRESS} — ich lasse es bleiben."
-                _remember(session_id, "assistant", msg)
+                ctx.remember("assistant", msg)
                 await send_spoken_response(sink, msg)
             return
 
@@ -419,8 +405,8 @@ async def process_message(session_id: str, user_text: str, sink, mutate_launcher
     if "activate" in user_text.lower():
         await asyncio.to_thread(refresh_data)
 
-    _remember(session_id, "user", user_text)
-    history = conversations[session_id][-16:]
+    ctx.remember("user", user_text)
+    history = ctx.recent()
 
     # LLM call — Fehler duerfen die WS-Receive-Loop nicht beenden.
     try:
@@ -443,18 +429,18 @@ async def process_message(session_id: str, user_text: str, sink, mutate_launcher
 
     # Speak the main response immediately
     if spoken_text:
-        _remember(session_id, "assistant", spoken_text)
+        ctx.remember("assistant", spoken_text)
         await send_spoken_response(sink, spoken_text)
 
     # Execute action if any
     if action:
         if action.type in actions.CONFIRM_ACTIONS:
             # Riskante Aktion: erst merken und mündlich rückfragen.
-            pending_confirm[session_id] = action
+            ctx.request_confirmation(action)
             label = actions.label_for(action.type)
             detail = f" ({action.payload[:60]})" if action.payload else ""
             frage = f"Soll ich das wirklich ausführen: {label}{detail}? Ja oder Nein, {USER_ADDRESS}."
-            _remember(session_id, "assistant", frage)
+            ctx.remember("assistant", frage)
             await send_spoken_response(sink, frage)
             return
-        await run_action_and_respond(session_id, action, sink, mutate_launcher)
+        await run_action_and_respond(ctx, action, sink, mutate_launcher)

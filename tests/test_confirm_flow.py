@@ -51,15 +51,19 @@ class ConfirmFlowTests(unittest.TestCase):
     def setUp(self):
         self.ws = _StubWS()
         self.pending = actions.Action("SEARCH", "riskanter test")
-        assistant_core.conversations[self.SID] = []
-        assistant_core.pending_confirm[self.SID] = self.pending
+        # Oeffentlicher Seam statt Modul-Globals (RFC-0006 Phase 4J): die offene
+        # Bestaetigung wird vom Session-Kern beim Turn-Start konsumiert und liegt
+        # als ``ctx.pending`` vor; neue Rueckfragen meldet ``request_confirmation``.
+        self.requested = []
+        self.ctx = wt.turn_context(pending=self.pending,
+                                   on_confirm=self.requested.append)
         self.spoken = []
         self.executed = []
 
         async def fake_spoken(ws, text, display_text=None):
             self.spoken.append(text)
 
-        async def fake_run(session_id, action, ws, mutate_launcher=None):
+        async def fake_run(ctx, action, ws, mutate_launcher=None):
             self.executed.append(action)
 
         self._patches = [
@@ -73,25 +77,24 @@ class ConfirmFlowTests(unittest.TestCase):
     def tearDown(self):
         for p in self._patches:
             p.stop()
-        assistant_core.end_session(self.SID)
 
     def test_yes_executes_pending_action(self):
-        asyncio.run(assistant_core.process_message(self.SID, "Ja bitte", wt.legacy_sink(self.ws.send_json)))
+        asyncio.run(assistant_core.process_message(self.ctx, "Ja bitte", wt.legacy_sink(self.ws.send_json)))
         self.assertEqual(self.executed, [self.pending])
-        self.assertNotIn(self.SID, assistant_core.pending_confirm)
+        self.assertEqual(self.requested, [])   # keine NEUE Rueckfrage eroeffnet
 
     def test_no_discards_pending_action(self):
-        asyncio.run(assistant_core.process_message(self.SID, "Nein, lieber nicht", wt.legacy_sink(self.ws.send_json)))
+        asyncio.run(assistant_core.process_message(self.ctx, "Nein, lieber nicht", wt.legacy_sink(self.ws.send_json)))
         self.assertEqual(self.executed, [])
-        self.assertNotIn(self.SID, assistant_core.pending_confirm)
+        self.assertEqual(self.requested, [])   # keine NEUE Rueckfrage eroeffnet
         self.assertTrue(any("lasse es bleiben" in t for t in self.spoken))
 
     def test_unrelated_text_discards_pending_and_processes_normally(self):
         # Weder Ja noch Nein: Aktion verfaellt, die Nachricht geht den normalen
         # Weg (hier: der gestubbte LLM-Call schlaegt fehl => error-Frame).
-        asyncio.run(assistant_core.process_message(self.SID, "Wie ist das Wetter morgen in Hamburg?", wt.legacy_sink(self.ws.send_json)))
+        asyncio.run(assistant_core.process_message(self.ctx, "Wie ist das Wetter morgen in Hamburg?", wt.legacy_sink(self.ws.send_json)))
         self.assertEqual(self.executed, [])
-        self.assertNotIn(self.SID, assistant_core.pending_confirm)
+        self.assertEqual(self.requested, [])   # keine NEUE Rueckfrage eroeffnet
         self.assertTrue(any(f.get("type") == "error" for f in self.ws.sent))
 
 

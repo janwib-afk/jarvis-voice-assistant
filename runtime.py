@@ -62,8 +62,6 @@ class Runtime:
         self.owns_http = http is None
         # per-App-Laufzeitzustand (Besitz verschoben, Semantik unverändert)
         self.ws_clients: set = set()
-        self.conversations: dict = {}
-        self.pending_confirm: dict = {}
         # Wire-Protokoll + Verbindungsregistry (RFC-0005 §12): runtime-besessen,
         # kein Modul-Global. Import-sicher (kein I/O). Legacy bleibt Default.
         self.wire_protocol = wire_protocol.WireProtocol()
@@ -117,7 +115,7 @@ class Runtime:
     def wire(self) -> None:
         """EINZIGER Aufrufer der Start-Verdrahtung (D2), idempotent (_wired):
         memory/assistant_core/app_launcher konfigurieren, Clients injizieren,
-        per-App conversations/pending_confirm an die Module aliasen."""
+        Clients injizieren. Session-Zustand liegt seit RFC-0006 im Manager."""
         if self._wired:
             return
         import app_launcher
@@ -130,10 +128,6 @@ class Runtime:
         )
         assistant_core.configure(cfg)
         assistant_core.init_clients(self.ai, self.http)
-        # per-App-Session-State: die Modul-Dicts sind ab jetzt DIE Runtime-Dicts
-        # (serielle Isolation — Semantik unverändert; RFC-0002 Slice 3).
-        assistant_core.conversations = self.conversations
-        assistant_core.pending_confirm = self.pending_confirm
         app_launcher.configure(cfg.get("apps", []), cfg.get("launcher"))
         self._wired = True
 
