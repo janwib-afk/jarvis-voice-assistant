@@ -22,7 +22,6 @@ const SVG_MIC_MUTED = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 
 let ws;
 let audioQueue = [];
-let isMuted = false;
 let reconnectAttempts = 0;
 
 // ── Voice-Zustand (RFC-0006 + Amendment 1, Phase 4J) ────────────────────────
@@ -46,6 +45,8 @@ function voiceEpoch() { return V.state.epoch; }
 function audioIsLocked() { return V.state.playback === 'locked'; }
 /* Laeuft gerade Audio? Kommt aus der Playback-Region. */
 function audioIsPlaying() { return V.state.playback === 'playing'; }
+/* Ist das Mikrofon stumm? Kommt aus der Capture-Region — kein eigenes Flag mehr. */
+function captureIsMuted() { return V.state.capture === 'muted'; }
 /* Laeuft gerade eine Aktion? Kommt aus der Interaction-Region — NIE aus dem DOM (I9). */
 function actionIsRunning() { return V.state.interaction === 'action-running'; }
 /* Verbindungslage kommt aus der Connection-Region (kein eigenes Flag mehr). */
@@ -520,9 +521,9 @@ function playNext() {
     if (audioQueue.length === 0) return;
     setOrbState('speaking');
     setStatusWord();
-    if (isListening) {
+    if (recognitionRunning) {
         recognition.stop();
-        isListening = false;
+        recognitionRunning = false;
     }
 
     const epochAtStart = voiceEpoch();
@@ -595,7 +596,10 @@ document.addEventListener('keydown', (e) => {
 // Speech Recognition
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition;
-let isListening = false;
+// ADAPTER-Ressource, KEINE semantische Wahrheit: ob die Erkennungs-Engine laeuft.
+// Unter Mute laeuft sie bewusst weiter, um Stop/Entstummen zu erkennen
+// (Praezisierung 1) — die Semantik 'wird zugehoert' ist V.state.capture.
+let recognitionRunning = false;
 
 if (SpeechRecognition) {
     recognition = new SpeechRecognition();
@@ -612,20 +616,20 @@ if (SpeechRecognition) {
             if (STOP_RE.test(text)) { requestStop(); return; }
             const muteOff = /\b(mikro(fon)? (an|ein)|entstummen|stummschaltung (aufheben|aus))\b/i;
             const muteOn  = /\b(stumm|mikro(fon)? aus|stummschalten)\b/i;
-            if (muteOff.test(text)) { isMuted = false; updateMuteButton(); if (!audioIsPlaying() && micMode === 'auto') startListening(); return; }
-            if (muteOn.test(text))  { isMuted = true;  updateMuteButton(); setOrbState('idle'); status.textContent = 'Mikrofon stumm'; return; }
-            if (isMuted) return;
+            if (muteOff.test(text)) { if (captureIsMuted()) dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() }); updateMuteButton(); if (!audioIsPlaying() && micMode === 'auto') startListening(); return; }
+            if (muteOn.test(text))  { if (!captureIsMuted()) dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() }); updateMuteButton(); setOrbState('idle'); status.textContent = 'Mikrofon stumm'; return; }
+            if (captureIsMuted()) return;
             sendUtterance(text);
         }
     };
 
     recognition.onend = () => {
-        isListening = false;
+        recognitionRunning = false;
         if (!audioIsPlaying() && micMode === 'auto') setTimeout(startListening, 300);
     };
 
     recognition.onerror = (event) => {
-        isListening = false;
+        recognitionRunning = false;
         if (event.error === 'not-allowed' || event.error === 'audio-capture') {
             setOrbState('error');
             status.textContent = 'Kein Mikrofon-Zugriff. Erlaube das Mikrofon in der Adressleiste und lade die Seite neu.';
@@ -641,11 +645,11 @@ if (SpeechRecognition) {
 function startListening() {
     if (audioIsPlaying() || !recognition) return;
     try { recognition.start(); } catch (e) { /* laeuft ggf. schon */ }
-    isListening = true;
+    recognitionRunning = true;
     // Bei Stummschaltung laeuft die Erkennung weiter (Sprach-Entstummen),
     // der Orb zeigt aber 'muted' statt 'listening'.
-    setOrbState(isMuted ? 'idle' : 'listening');
-    if (!isMuted) setStatusWord();
+    setOrbState(captureIsMuted() ? 'idle' : 'listening');
+    if (!captureIsMuted()) setStatusWord();
 }
 
 // Zuhoeren fortsetzen — nur im Auto-Modus (ptt/off starten nicht von selbst).
@@ -661,9 +665,9 @@ function resumeListening(delay) {
 function applyMicMode() {
     micMode = localStorage.getItem('jarvis.micMode') || 'auto';
     if (micMode === 'auto') {
-        if (!audioIsPlaying() && !isListening) startListening();
+        if (!audioIsPlaying() && !recognitionRunning) startListening();
     } else {
-        if (isListening && recognition) { recognition.stop(); isListening = false; }
+        if (recognitionRunning && recognition) { recognition.stop(); recognitionRunning = false; }
         if (uiState.jarvisState === 'listening') setOrbState('idle');
     }
 }
@@ -679,19 +683,19 @@ document.addEventListener('keydown', (e) => {
 });
 document.addEventListener('keyup', (e) => {
     if (micMode !== 'ptt' || e.code !== 'Space') return;
-    if (isListening && recognition) {
+    if (recognitionRunning && recognition) {
         // stop() statt abort(): das finale Ergebnis wird noch geliefert.
         recognition.stop();
-        isListening = false;
+        recognitionRunning = false;
     }
     if (uiState.jarvisState === 'listening') setOrbState('idle');
 });
 
 orb.addEventListener('click', () => {
     if (audioIsPlaying()) return;
-    if (isListening) {
+    if (recognitionRunning) {
         recognition.stop();
-        isListening = false;
+        recognitionRunning = false;
         setOrbState('idle');
         status.textContent = 'Pausiert. Klicke zum Fortsetzen.';
     } else {
@@ -702,7 +706,7 @@ orb.addEventListener('click', () => {
 // ── Orb-Zustaende: idle / listening / thinking / speaking / muted / error ──
 function setOrbState(state) {
     // 'idle' + Stummschaltung wird als eigener Zustand 'muted' angezeigt.
-    const effective = (state === 'idle' && isMuted) ? 'muted' : state;
+    const effective = (state === 'idle' && captureIsMuted()) ? 'muted' : state;
     orb.className = effective;
     uiState.jarvisState = effective;
     renderStatusCenter();
@@ -730,11 +734,11 @@ function flashOrbError() {
 }
 
 function updateMuteButton() {
-    uiState.micMuted = isMuted;
+    uiState.micMuted = captureIsMuted();
     const btn = document.getElementById('mute-btn');
-    btn.setAttribute('aria-pressed', isMuted ? 'true' : 'false');
-    btn.setAttribute('aria-label', isMuted ? 'Mikrofon wieder aktivieren' : 'Mikrofon stummschalten');
-    if (isMuted) {
+    btn.setAttribute('aria-pressed', captureIsMuted() ? 'true' : 'false');
+    btn.setAttribute('aria-label', captureIsMuted() ? 'Mikrofon wieder aktivieren' : 'Mikrofon stummschalten');
+    if (captureIsMuted()) {
         btn.innerHTML = SVG_MIC_MUTED;
         btn.classList.add('muted');
     } else {
@@ -750,9 +754,9 @@ function updateMuteButton() {
 }
 
 function toggleMute() {
-    isMuted = !isMuted;
+    dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() });
     updateMuteButton();
-    if (isMuted) {
+    if (captureIsMuted()) {
         setOrbState('idle');
         status.textContent = 'Mikrofon stumm';
     } else {
@@ -960,7 +964,7 @@ function addActionEntry(data) {
 }
 
 // Texteingabe als Fallback: Senden nur per Strg+Enter, einfaches Enter tut nichts.
-// Mute gilt fuers Mikro, nicht fuers Tippen — daher kein isMuted-Check.
+// Mute gilt fuers Mikro, nicht fuers Tippen — daher kein captureIsMuted()-Check.
 const textInput = document.getElementById('text-input');
 document.getElementById('text-form').addEventListener('submit', (e) => e.preventDefault());
 textInput.addEventListener('keydown', (e) => {
@@ -1890,7 +1894,7 @@ async function openApp(appId, btn) {
 }
 
 // ── Start ────────────────────────────────────────────────────────────────────
-if (micMode === 'off') isMuted = true;
+if (micMode === 'off') dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() });
 updateMuteButton();
 updateModeButton();
 updatePageButton();
