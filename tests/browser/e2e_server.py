@@ -18,6 +18,7 @@ Nutzung:  python tests/browser/e2e_server.py --port <PORT> [--tmp <DIR>]
 Readiness: GET /health liefert 200. Stoppen: SIGTERM/kill.
 """
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -121,7 +122,17 @@ _SCENARIO = {
     # Begruessung Anthropic + ElevenLabs — nach einem Reconnect darf sie NICHT
     # erneut feuern. Der Browsertest prueft diesen Zaehler.
     "greetings": 0,
+    # Audio-Pfad-Abdeckung (Phase 4J): normalerweise liefert der Stub KEIN Audio,
+    # damit kein TTS-Netz noetig ist. Mit diesem Schalter liefert er ein winziges,
+    # echtes stilles MP3 — nur so laufen queueAudio/playNext/audio.onended und der
+    # Playback-Zustand ueberhaupt durch einen Browsertest.
+    "audio": False,
 }
+
+# Stilles MP3 (471 Bytes) — identisch mit dem Entsperr-Ton des Frontends.
+_SILENT_MP3 = base64.b64decode(
+    "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZNIGPkAAAAAAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZNIGPkAAAAAAAAAAAAAAAAAAAA"
+)
 _DEFAULT_REPLY = "Alles bereit, Chef. Diese Antwort stammt aus dem E2E-Stub."
 _GREETING_TEXT = "jarvis activate"
 
@@ -155,6 +166,8 @@ class _FakeAI:
 
 
 async def _fake_synth(text):
+    if _SCENARIO["audio"]:
+        return _SILENT_MP3, None      # echter Audio-Pfad im Browser
     return b"", None  # kein Audio -> Client geht sauber auf idle (kein TTS-Netz)
 
 
@@ -221,6 +234,7 @@ async def _e2e_scenario(request: Request):
         _SCENARIO["replies"].append(item)
     _SCENARIO["llm_delay"] = float(body.get("llm_delay", 0.0))
     _SCENARIO["action_delay"] = float(body.get("action_delay", 0.0))
+    _SCENARIO["audio"] = bool(body.get("audio", False))
     return JSONResponse({"ok": True, "queued": len(_SCENARIO["replies"])})
 
 
@@ -236,6 +250,7 @@ async def _e2e_reset():
     _SCENARIO["llm_delay"] = 0.0
     _SCENARIO["action_delay"] = 0.0
     _SCENARIO["greetings"] = 0
+    _SCENARIO["audio"] = False
     return JSONResponse({"ok": True})
 
 

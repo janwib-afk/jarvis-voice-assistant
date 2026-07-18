@@ -134,9 +134,10 @@ class JarvisServer:
                 time.sleep(0.3)
         raise TimeoutError(f"E2E-Server nicht bereit (Log: {self.log_path})")
 
-    def scenario(self, replies=None, llm_delay=0.0, action_delay=0.0):
+    def scenario(self, replies=None, llm_delay=0.0, action_delay=0.0, audio=False):
         payload = json.dumps({
-            "replies": replies or [], "llm_delay": llm_delay, "action_delay": action_delay,
+            "replies": replies or [], "llm_delay": llm_delay,
+            "action_delay": action_delay, "audio": audio,
         }).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/__e2e__/scenario", data=payload,

@@ -205,6 +205,44 @@ def flow_greeting_once(pw):
         col.assert_clean("greeting_once")
 
 
+def flow_audio_playback(pw):
+    """6c. AUDIO-PFAD und Playback-`locked` (RFC-0006 Amendment 1 / M1).
+
+    Der Stub liefert hier ein ECHTES stilles MP3, sodass `queueAudio`/`playNext`
+    und der Wiedergabeversuch wirklich durchlaufen — ohne dieses Szenario ist der
+    gesamte Audio-Pfad testfrei.
+
+    Ehrliche Grenze: das Chromium von Playwright ist ein Open-Source-Build OHNE
+    MP3-Codec (`play()` -> NotSupportedError). Erfolgreiche Wiedergabe ist hier
+    daher nicht darstellbar. Verifizierbar — und genau der zustandsrelevante Teil —
+    ist der Fehlschlagpfad: er muss die Playback-Region auf `locked` halten, ein
+    `recoverable-error`-Overlay setzen und die Presentation NICHT auf 'error'
+    ziehen (Praezisierung 3)."""
+    with JarvisServer("audio") as srv, browser_context(pw, srv.base_url) as (page, col):
+        srv.scenario(replies=["Ich spreche jetzt."], audio=True)
+        # Erwartet: Chromium loggt die abgelehnte Wiedergabe.
+        col.allow_console_error("Autoplay")
+        open_jarvis(page, srv.base_url)
+
+        # Startwert der Playback-Region (Praezisierung 4).
+        assert page.evaluate("window.__voice.state.playback") == "locked", "Start nicht locked"
+
+        page.get_by_label("Textnachricht an Jarvis").fill("sag was")
+        page.get_by_label("Textnachricht an Jarvis").press("Control+Enter")
+        expect(jarvis_said(page, "Ich spreche jetzt.")).to_be_visible()
+
+        # Der Audio-Pfad lief wirklich (Wiedergabeversuch fand statt) und der
+        # Fehlschlag haelt den Zustand auf locked statt ihn haengen zu lassen.
+        page.wait_for_function(
+            "window.__voice.state.overlays.indexOf('recoverable-error') !== -1",
+            timeout=15000)
+        assert page.evaluate("window.__voice.state.playback") == "locked"
+        # Overlay veraendert die Presentation NICHT (Praezisierung 3).
+        assert page.evaluate(
+            "JarvisVoice.presentation(window.__voice.state)") != "error"
+        col.assert_clean("audio_playback")
+
+
 def flow_settings(pw):
     """7. Settings: oeffnen, synthetische Werte, Aenderung/Dirty, Speichern, keine Secrets."""
     with JarvisServer("settings") as srv, browser_context(pw, srv.base_url) as (page, col):
@@ -341,6 +379,7 @@ FLOWS = {
     "mute": flow_mute,
     "reconnect": flow_reconnect,
     "greeting_once": flow_greeting_once,
+    "audio_playback": flow_audio_playback,
     "settings": flow_settings,
     "settings_conflict": flow_settings_conflict,
     "monitor_keyboard": flow_monitor_keyboard,

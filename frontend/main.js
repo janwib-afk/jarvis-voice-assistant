@@ -31,6 +31,9 @@ let reconnectAttempts = 0;
 // Die frueheren Globals `audioUnlocked` und `hasGreeted` gibt es nicht mehr — sie
 // werden aus diesem Zustand gelesen. Die uebrigen Regionen folgen in Slice 9.
 const V = { state: JarvisVoice.initialVoiceState() };
+// Nur Diagnose/E2E-Sichtbarkeit (wie window.__jarvisProtocol) — nie eine zweite
+// Wahrheit: Leser sehen denselben Zustand, den der Reducer fuehrt.
+window.__voice = V;
 
 /* Ereignis in den reinen Reducer geben und die beschriebenen Effekte zurueckliefern.
  * Asynchrone Aufrufer taggen ihr Ereignis mit der beim PLANEN gemerkten Epoch;
