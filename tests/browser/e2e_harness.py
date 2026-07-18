@@ -66,8 +66,13 @@ INIT_WS_CONTROL = """
     const Real = window.WebSocket;
     window.__wsInstances = [];
     window.__wsConnectCount = 0;
+    // Gesendete Frames zaehlen: belegt Invariante I12 ("der Server erfaehrt es
+    // nicht") beobachtbar, statt sie nur zu behaupten.
+    window.__wsSentCount = 0;
     function Wrapped(url, protocols) {
         const ws = protocols ? new Real(url, protocols) : new Real(url);
+        const realSend = ws.send.bind(ws);
+        ws.send = function (data) { window.__wsSentCount++; return realSend(data); };
         window.__wsConnectCount++;
         window.__wsInstances.push(ws);
         window.__lastWs = ws;
