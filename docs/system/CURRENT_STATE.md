@@ -4,6 +4,31 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-18 (Phase 4I, RFC-0006 AKZEPTIERT — nur Architektur):** Für die heute
+> impliziten Conversation- und Voice-Zustände sowie einen abgegrenzten zukünftigen Job-Lifecycle
+> wurde [RFC-0006](../architecture/RFC-0006-explicit-runtime-state-machines.md)
+> `Accepted for incremental implementation` (Variante C: domänenspezifische explizite Modelle —
+> runtime-eigenes tiefes ConversationSession-Modul mit getrennter Session-/Turn-Execution-Semantik,
+> browserseitiger reiner Voice-Reducer mit fünf orthogonalen Regionen und **abgeleitetem**
+> Presentation State, getrennte Autorität ohne gespiegelten Globalzustand, purer Transitionskern
+> `state + event → (state, effects)` mit I/O außerhalb). **Die Zustände sind NICHT implementiert:**
+> der aktuelle Code nutzt weiterhin die impliziten Flags, Modul-Dicts (`assistant_core.conversations`/
+> `pending_confirm`), endpunktlokalen Variablen (`queue`, `state["task"]`, `state["stopping"]`),
+> Browser-Globals sowie DOM- und Timer-abgeleitete Zustände. **Es wurde keine State Machine
+> implementiert**; die Umsetzung beginnt erst mit **Prompt 17** in 11 rückrollbaren Slices.
+> **Der dauerhafte Job-Code bleibt Phase 6** — RFC-0006 modelliert den Job-Lifecycle ausschließlich
+> als Zukunftsvertrag; es existiert nachweislich kein Job-Aggregat und keine Job-Persistenz
+> (0 Treffer für sqlite3/aiosqlite/outbox/saga/checkpoint/resume/JobState; `TASKS_INFO` sind
+> read-only Obsidian-Aufgaben, `asyncio.Task` ist kein Job). Reiner Doku-Pass: kein Produktionscode,
+> keine Tests, kein Frontend-JavaScript, keine Workflows, keine Dependencies geändert.
+> Belegte Doku-Abweichungen (A1–A6 im RFC): `docs/ux/STATE_MODEL.md` dokumentiert **13** Zustände,
+> die Laufzeit-Enum hat **6** Werte, von denen nur **4** je direkt gesetzt werden — 7 dokumentierte
+> Zustände haben null Implementierung; die Doku nennt `muted` einen Modifikator, der Code projiziert
+> ihn aber in die flache Enum. `STATE_MODEL.md` bleibt in Phase 4I **bewusst unverändert**
+> (historische Design-/Ist-Referenz) und wird erst mit der Prompt-17-Umsetzung angeglichen.
+> Der veraltete `str(id(ws))`-Hinweis in `CONTEXT.md` wurde korrigiert (RFC-0005 nutzt eine opake
+> UUID pro Verbindung).
+
 > **Status 2026-07-18 (Phase 4H, RFC-0005 IMPLEMENTIERT):** Die typisierten und
 > versionierten Wire-Contracts sind umgesetzt
 > ([RFC-0005](../architecture/RFC-0005-typed-versioned-wire-contracts.md), Variante C, inkl.

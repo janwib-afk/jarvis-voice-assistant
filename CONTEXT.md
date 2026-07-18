@@ -11,12 +11,15 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
 ## Etablierte Domänenbegriffe (Ist-Stand)
 
 ### Conversation Session
-- **Bedeutung:** Der Gesprächszustand einer offenen WebSocket-Verbindung.
+- **Bedeutung:** Der Gesprächszustand einer akzeptierten WebSocket-Verbindung — Verlauf,
+  offene Rückfrage und die Reihenfolge der Turns.
 - **Verantwortung:** Verlauf und offene Rückfrage eines Clients zusammenhalten.
 - **Abgrenzung:** Nicht die WS-Verbindung selbst (Transport) und nicht die
-  prozessweiten Kontextdaten (Wetter/Tasks/Vault gelten für alle Sessions).
-- **Quellen:** `assistant_core.conversations` (dict `session_id → list`),
-  `session_id = str(id(ws))` in `server.py:124`, `end_session` (`assistant_core.py:92`).
+  prozessweiten Kontextdaten (Wetter/Tasks/Vault gelten für alle Sessions). Die
+  **Conversation Session ID** ist nicht der Auth-Token.
+- **Quellen:** `assistant_core.conversations` (dict `session_id → list`), `end_session`
+  (`assistant_core.py`); die `session_id` ist seit RFC-0005 eine **opake UUID pro Verbindung**
+  (`channel.session_id`, `server.py`) — **nicht mehr** `str(id(ws))`.
 
 ### Message
 - **Bedeutung:** Ein einzelner Gesprächsbeitrag `{"role", "content"}` im Verlauf.
@@ -186,6 +189,58 @@ vorhanden**. Nicht mit dem Ist-Stand vermischen.
   (Phase 6). Heute laufen Nachrichten nur als flüchtige asyncio-Tasks.
 - **Outbox / Saga** — geplante Crash-Sicherheit für externe Wirkungen (Phase 6).
 - **Scheduler / Briefing / Workspace-Szene** — geplant (Phase 8).
+
+## Laufzeit-Zustandsbegriffe (RFC-0006 akzeptiert — Umsetzung ab Prompt 17)
+
+Diese Begriffe sind mit [RFC-0006](docs/architecture/RFC-0006-explicit-runtime-state-machines.md)
+**akzeptiert**, aber **noch nicht implementiert**: der Code nutzt weiterhin verstreute Flags,
+Modul-Dicts und `asyncio.Task`-Zustände. Nicht mit dem Ist-Stand vermischen.
+
+### Conversation Turn
+- **Bedeutung:** Ein Client Command und **alle** daraus entstehenden Antworten und Aktionen.
+- **Abgrenzung:** Nicht die `Message` (`{role, content}`) und nicht die `Action`.
+
+### Turn Execution
+- **Bedeutung:** Die **flüchtige** Bearbeitung eines Turns (LLM, Action, Sprachausgabe).
+- **Abgrenzung:** **Kein Job.** Nicht persistiert, nicht wiederaufnehmbar; endet mit der Verbindung.
+
+### Voice State
+- **Bedeutung:** Der **browserlokale** Zustand aus Mikrofon, Erkennung und Wiedergabe.
+- **Abgrenzung:** Kein Serverzustand; wird nie zwischen Server und Browser gespiegelt.
+
+### Capture State
+- **Bedeutung:** Verfügbarkeit und Aktivität des Mikrofons.
+- **Abgrenzung:** `muted` ist ein **Capture-Modifikator**, kein globaler Ausführungszustand —
+  „stumm" und „spricht" schließen einander nicht aus.
+
+### Playback State
+- **Bedeutung:** Ob tatsächlich Audio abgespielt wird.
+- **Abgrenzung:** **Nur der Browser** kann das autoritativ feststellen. Der Server weiß
+  ausschließlich, dass Audio **gesendet** wurde.
+
+### Connection State
+- **Bedeutung:** Verbindungslage des Clients (getrennt/verbindend/verbunden/neu verbindend).
+- **Abgrenzung:** Kein Gesprächszustand.
+
+### Presentation State
+- **Bedeutung:** Der **abgeleitete** Anzeigewert, berechnet aus allen Zustandsregionen.
+- **Abgrenzung:** Wird **nie gesetzt**, immer berechnet. Das DOM ist Ausgabe, nicht Wahrheit.
+
+### Stop / Cancel / Disconnect
+- **Stop:** Nutzeranforderung, laufende Wirkung abzubrechen — beendet **nicht** die Verbindung.
+- **Cancel:** Die technische Abbruchwirkung auf eine laufende Turn Execution.
+- **Disconnect:** Ende der Verbindung und damit der Conversation Session.
+
+### Transition / Effect
+- **Transition:** `Zustand + Ereignis → (Zustand, Effekte)` — deterministisch und rein.
+- **Effect:** Eine vom Transitionskern **beschriebene**, vom Aufrufer **ausgeführte** Wirkung.
+- **Abgrenzung:** Der Transitionskern führt selbst kein I/O aus.
+
+### Job / Job State
+- **Bedeutung:** **Phase 6** — ein dauerhafter, wiederaufnehmbarer Vorgang mit eigener Persistenz
+  und eigenem Lifecycle.
+- **Abgrenzung:** **Kein** `asyncio.Task`, **keine** Obsidian-Aufgabe, **kein** Browser Task.
+  Existiert heute nicht; ein Conversation-Stop ist kein Job-Cancel.
 
 ## Wire-Contracts (RFC-0005 — IMPLEMENTIERT, Phase 4H)
 
