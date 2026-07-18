@@ -193,8 +193,10 @@ vorhanden**. Nicht mit dem Ist-Stand vermischen.
 ## Laufzeit-Zustandsbegriffe (RFC-0006 akzeptiert — Umsetzung ab Prompt 17)
 
 Diese Begriffe sind mit [RFC-0006](docs/architecture/RFC-0006-explicit-runtime-state-machines.md)
-**akzeptiert**, aber **noch nicht implementiert**: der Code nutzt weiterhin verstreute Flags,
-Modul-Dicts und `asyncio.Task`-Zustände. Nicht mit dem Ist-Stand vermischen.
+(inkl. Amendment 1) **akzeptiert**, aber **noch nicht implementiert**: der Code nutzt weiterhin
+verstreute Flags, Modul-Dicts und `asyncio.Task`-Zustände. Nicht mit dem Ist-Stand vermischen.
+Allgemeines Zustandsmaschinen-Vokabular (Transition, Effect) steht bewusst **nicht** hier, sondern
+im RFC — dieses Glossar führt nur Jarvis-eigene Begriffe.
 
 ### Conversation Turn
 - **Bedeutung:** Ein Client Command und **alle** daraus entstehenden Antworten und Aktionen.
@@ -214,9 +216,17 @@ Modul-Dicts und `asyncio.Task`-Zustände. Nicht mit dem Ist-Stand vermischen.
   „stumm" und „spricht" schließen einander nicht aus.
 
 ### Playback State
-- **Bedeutung:** Ob tatsächlich Audio abgespielt wird.
+- **Bedeutung:** Ob Audio abgespielt wird — und ob es überhaupt abgespielt werden **darf**.
 - **Abgrenzung:** **Nur der Browser** kann das autoritativ feststellen. Der Server weiß
-  ausschließlich, dass Audio **gesendet** wurde.
+  ausschließlich, dass Audio **gesendet** wurde. „Gesperrt" (Browser-Audio ist noch nicht durch
+  eine Nutzerinteraktion freigeschaltet) ist ein eigener Zustand, kein Fehler.
+
+### Client Session
+- **Bedeutung:** Die browserlokale Lebensdauer **einer Seitenladung** — sie überspannt alle
+  WebSocket-Verbindungen, die währenddessen auf- und abgebaut werden.
+- **Abgrenzung:** **Nicht** die Conversation Session (die endet mit jeder WS-Verbindung). Hält
+  Zustände, die einen Reconnect bewusst überleben — etwa, dass die automatische Begrüßung bereits
+  gesendet wurde. Wird ausschließlich durch ein Neuladen der Seite zurückgesetzt.
 
 ### Connection State
 - **Bedeutung:** Verbindungslage des Clients (getrennt/verbindend/verbunden/neu verbindend).
@@ -230,11 +240,6 @@ Modul-Dicts und `asyncio.Task`-Zustände. Nicht mit dem Ist-Stand vermischen.
 - **Stop:** Nutzeranforderung, laufende Wirkung abzubrechen — beendet **nicht** die Verbindung.
 - **Cancel:** Die technische Abbruchwirkung auf eine laufende Turn Execution.
 - **Disconnect:** Ende der Verbindung und damit der Conversation Session.
-
-### Transition / Effect
-- **Transition:** `Zustand + Ereignis → (Zustand, Effekte)` — deterministisch und rein.
-- **Effect:** Eine vom Transitionskern **beschriebene**, vom Aufrufer **ausgeführte** Wirkung.
-- **Abgrenzung:** Der Transitionskern führt selbst kein I/O aus.
 
 ### Job / Job State
 - **Bedeutung:** **Phase 6** — ein dauerhafter, wiederaufnehmbarer Vorgang mit eigener Persistenz

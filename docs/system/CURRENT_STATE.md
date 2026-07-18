@@ -28,6 +28,21 @@
 > (historische Design-/Ist-Referenz) und wird erst mit der Prompt-17-Umsetzung angeglichen.
 > Der veraltete `str(id(ws))`-Hinweis in `CONTEXT.md` wurde korrigiert (RFC-0005 nutzt eine opake
 > UUID pro Verbindung).
+>
+> **Nachtrag 2026-07-18 (Amendment 1 nach Compliance-Audit):** Ein nachgeholter Skill-Pass
+> (Prompt 16F) fand das **Zustandsinventar** des RFC an drei Stellen unvollständig — die
+> Architekturentscheidungen D1–D14 und die öffentliche Interface blieben davon **unberührt** und
+> wurden bestätigt (inkl. nachgeholtem Design-It-Twice). Ergänzt wurden: (1) der Playback-Zustand
+> **`locked`** (Browser-Audio ist bis zur ersten Nutzergeste nicht freigeschaltet — `audioUnlocked`,
+> `main.js:26,338-350`); (2) eine browserlokale **Client-Session-Ebene** für den
+> verbindungsübergreifenden **Greeting-Latch** (`hasGreeted`, `main.js:28,387-393`) samt
+> ausdrücklicher Reset-Grenze (nur Seiten-Neuladen) — ohne ihn löste künftig **jeder Reconnect einen
+> kostenpflichtigen LLM-/TTS-Aufruf** aus; (3) der vollständige Geltungsbereich des Epoch-Guards
+> (**15 zustandstragende** asynchrone Stellen statt der ursprünglich ~4 benannten; 7 rein kosmetische
+> Timer ausdrücklich ausgenommen). Zusätzlich drei redaktionelle Präzisierungen (Provider-Ressourcen-
+> Lifecycles out of scope; `Transition`/`Effect` aus `CONTEXT.md` entfernt, da allgemeines
+> Programmiervokabular; Glossar-Hausformat dokumentiert). **Weiterhin keine State Machine
+> implementiert, keine Wire-Änderung, kein Produktionscode.**
 
 > **Status 2026-07-18 (Phase 4H, RFC-0005 IMPLEMENTIERT):** Die typisierten und
 > versionierten Wire-Contracts sind umgesetzt

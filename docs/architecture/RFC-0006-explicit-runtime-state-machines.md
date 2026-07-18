@@ -1,7 +1,8 @@
 # RFC-0006 — Explicit Conversation, Voice and Job State Models
 
-- **Status:** Accepted for incremental implementation
-- **Datum:** 2026-07-18 (Proposed); 2026-07-18 (Accepted nach ausdrücklicher Nutzerfreigabe)
+- **Status:** Accepted for incremental implementation — **inkl. [Amendment 1](#amendment-1--vervollständigtes-zustandsinventar)**
+- **Datum:** 2026-07-18 (Proposed); 2026-07-18 (Accepted nach ausdrücklicher Nutzerfreigabe);
+  2026-07-18 (Amendment 1 nach Compliance-Audit, ausdrücklich freigegeben)
 - **Autor:** Masterplan Prompt 16 (Phase 4I), Architektur-only
 - **Basis:** `origin/master` `31b3f795810db1095f48953be622af9b881839fc` (regulärer Merge von PR #8, RFC-0005);
   Post-Merge-Hosted-Run **29639177233** (`workflow_dispatch`, Fast + Browser success)
@@ -15,6 +16,13 @@
 > vergleicht Architekturvarianten und legt die Entscheidungen D1–D13 fest. **Es wurde keine
 > State Machine implementiert.** Die Produktion nutzt weiterhin verstreute Flags, Modul-Dicts
 > und `asyncio.Task`-Zustände; die Umsetzung beginnt erst mit Prompt 17.
+
+> **Amendment 1 (2026-07-18) ist Bestandteil dieses RFC.** Ein nachgeholter Skill-Compliance-Audit
+> (Prompt 16F) fand das **Zustandsinventar in §2.2 an drei Stellen unvollständig**. Amendment 1
+> ergänzt den Playback-Zustand `locked`, den verbindungsübergreifenden **Greeting-Latch** und den
+> **vollständigen Geltungsbereich des Epoch-Guards**. Die Architekturentscheidungen D1–D14 und die
+> öffentliche Interface (§24) bleiben **unverändert**. Wo §2.2, §12, §13, §15.3, §16 oder §21 vom
+> Amendment abweichen, **gilt Amendment 1**.
 
 ---
 
@@ -841,3 +849,215 @@ Job-Persistenz, `stopping`-Watchdog (>2 s), Presence/Policy, Mehrfach-Sessions j
 **In Prompt 16 wurde keine State Machine implementiert.** Es entstanden ausschließlich
 Dokumentationsdateien; Produktionscode, Tests, Fixtures, Frontend-JavaScript, Workflows und
 Dependencies blieben unverändert.
+
+---
+
+# Amendment 1 — Vervollständigtes Zustandsinventar
+
+- **Datum:** 2026-07-18
+- **Anlass:** Prompt 16F — nachgeholter Skill-Compliance-Audit (`improve-codebase-architecture`,
+  `codebase-design`, `domain-modeling`, `grilling` dateibasiert geladen)
+- **Basis:** `origin/master` `bc3f9103c106951914ccb68675aa90b5496a95a9`;
+  Post-Merge-Hosted-Run **29642839819** (`workflow_dispatch`, Fast + Browser success)
+- **Status:** vom Nutzer ausdrücklich freigegeben (M1–M3 + drei redaktionelle Präzisierungen)
+
+> **Was sich NICHT ändert:** Architekturvariante (C), Autoritätsaufteilung (D2), Trennung von
+> Session/Turn/Job (D3–D5), Confirmation-Semantik (D6), StopAck-Bedeutung (D7), Transitionsmodell
+> (D12), Job-Vertrag (D13), Test-Seams (D14) und die öffentliche Interface (§24). **Keine neue
+> Wire-Nachricht; RFC-0005 und Legacy bleiben unverändert.**
+
+## A1.0 Warum das Amendment nötig wurde
+
+Der Audit stellte das Zustandsinventar in §2.2 dem tatsächlichen Code gegenüber:
+
+| | §2.2 (ursprünglich) | Tatsächlich im Code |
+|---|---|---|
+| Veränderliche Frontend-Globals | ~10 benannt | **27** auf Modulebene |
+| Asynchrone Stale-Quellen | ~4 benannt | **13** Timer + **9** zustandstragende Callbacks |
+| Audio-Freischaltung | nicht erfasst | `audioUnlocked` (`main.js:26,338-350`) |
+| Begrüßungs-Latch | nicht erfasst | `hasGreeted` (`main.js:28,387-393`) |
+
+Die **Architekturentscheidung war korrekt**, das **Inventar dahinter unvollständig**. Ohne
+Korrektur würde Prompt 17 zwei reale Zustände verlieren und eine akzeptierte Invariante (I10)
+nicht erfüllen können.
+
+## A1.1 (M1) Playback-Region erhält `locked`
+
+**Befund.** `main.js:26` hält `audioUnlocked = false`; erst eine beliebige Nutzergeste
+(`click`/`touchstart`/`keydown`, `main.js:348-350`) spielt einen stillen Ton ab und setzt
+`audioUnlocked = true` (`:343`). Die in §12 festgelegte Playback-Region `idle | playing` kann
+diesen Zustand **nicht ausdrücken** — obwohl Race-Szenario 16 („Server sendet Audio, Browser kann
+es nicht abspielen") genau seine Manifestation ist. Die Capture-Region besitzt mit `unavailable`
+den symmetrischen Wert bereits.
+
+**Festlegung.** Die Playback-Region hat **drei** Werte:
+
+| Wert | Bedeutung |
+|---|---|
+| `locked` | Browser-Audio ist **noch nicht** durch eine Nutzerinteraktion freigeschaltet. **Startwert.** |
+| `idle` | freigeschaltet, aber es läuft nichts |
+| `playing` | Audio läuft tatsächlich |
+
+**Übergänge (ergänzt §15.3):**
+
+| Vorzustand | Ereignis | Folgezustand | Effekte |
+|---|---|---|---|
+| `locked` | `UserGesture` (Unlock erfolgreich) | `idle` | `UnlockAudio` |
+| `locked` | `AudioReceived` | `locked` | `EnqueueAudio`, `AddOverlay(recoverable-error)`, `AwaitUserGesture` |
+| `locked` | `UserGesture` bei gefüllter Queue | `playing` | `UnlockAudio`, `PlayAudio`, `DismissOverlay` |
+| `playing` | `AutoplayBlocked` | `locked` | `AddOverlay(recoverable-error)`, `AwaitUserGesture` |
+
+> **Wichtig:** `locked` ist **kein** Fehlerzustand. Der Überlagerungs-Banner ist ein Overlay (D9);
+> `locked` ist die Fähigkeitslage der Wiedergabe. Ein Rückfall `idle`/`playing` → `locked` ist
+> **nur** über `AutoplayBlocked` möglich.
+
+**Presentation-Projektion (ergänzt §13).** `locked` erzeugt **keinen** eigenen Anzeigewert — die
+Prioritätsregel 3 (`Playback = playing` → `speaking`) greift bei `locked` schlicht nicht, und die
+Sichtbarkeit entsteht über das Overlay. Damit bleibt die Projektion verhaltenskompatibel: das
+heutige Verhalten bei blockiertem Autoplay ist `setOrbState('idle')` **plus** Banner
+(`main.js:495-496`).
+
+## A1.2 (M2) Greeting-Latch und die Client-Session-Ebene
+
+**Befund.** `main.js:28` hält `hasGreeted = false`; beim ersten `ws.onopen` wird die automatische
+Äußerung „Jarvis activate" gesendet und der Latch gesetzt (`:387-392`). Der Kommentar im Code ist
+ausdrücklich: „Begruessung nur einmal — nicht bei jedem Reconnect wiederholen." Der Latch ist damit
+**verbindungsübergreifend** und gehört **nicht** in die Connection-Region.
+
+**Kostenrelevanz.** Die Auto-Begrüßung löst einen **echten LLM- und TTS-Aufruf** aus. Würde
+Prompt 17 die Connection-Region ohne diesen Latch neu bauen, feuerte **jeder Reconnect** einen
+kostenpflichtigen Aufruf. Das ist der schwerwiegendste Einzelbefund des Audits.
+
+**Festlegung — neue Ebene „Client Session".** Oberhalb der fünf Voice-Regionen wird eine
+browserlokale Ebene eingeführt, die **alle** WebSocket-Verbindungen einer Seitenlebensdauer
+überspannt:
+
+| Feld | Typ | Bedeutung |
+|---|---|---|
+| `greeted` | bool | Die automatische Begrüßung wurde in dieser Client Session bereits gesendet. |
+| `epoch` | int | Monotoner Generationszähler (siehe A1.3). |
+
+**Reset-Grenze (ausdrücklich).** Die Client Session — und damit `greeted` — wird **ausschließlich**
+durch das Neuladen des Dokuments zurückgesetzt (Page Load / Reload / Navigation zur Seite hin).
+Sie wird **nicht** zurückgesetzt durch: WebSocket-Reconnect, Mute-Toggle, Stop, Fenstermodus-Wechsel,
+Seiten-/View-Navigation innerhalb der App oder Overlay-Wechsel. Belegt durch die Modulskopierung
+von `hasGreeted` (`let` auf Modulebene, `main.js:28`).
+
+**Abgrenzung.** Die **Client Session** (browserlokal, Seitenlebensdauer, mehrere Verbindungen) ist
+etwas anderes als die **Conversation Session** (serverseitig, genau eine WS-Verbindung, §9). Sie
+wird **nie** zwischen Server und Browser gespiegelt (I14 bleibt gültig) und ist **kein** Identifier.
+
+> `audioUnlocked` (A1.1) hat dieselbe Reset-Grenze. Der Unterschied: die Audio-Freischaltung wird
+> als **Playback-Regionswert** modelliert (weil sie Übergänge steuert), der Begrüßungs-Latch als
+> **Client-Session-Feld** (weil er keine Region hat und nur einmalig wirkt).
+
+## A1.3 (M3) Geltungsbereich des Epoch-/Generation-Guards
+
+**Befund.** §2.2 und D9 benannten rund vier asynchrone Stellen. Tatsächlich enthält `main.js`
+**13** `setTimeout`-Aufrufstellen und **9** zustandstragende Nicht-Timer-Callbacks.
+
+**Festlegung.** Der Guard aus D9 bindet **jede asynchrone Stelle, die Regions- oder
+Client-Session-Zustand schreiben kann**. Die vollständige Inventur mit Klassifikation:
+
+### Zustandstragende Timer (6) — Guard **verbindlich**
+
+| Zeile | Stelle | Betroffene Region |
+|---|---|---|
+| 458 | `setTimeout(connect, delay)` — Reconnect-Backoff | Connection |
+| 577 | `setTimeout(startListening, 300)` — nach Erkennungsergebnis | Capture |
+| 587 | `setTimeout(startListening, 300)` — nach `recognition.onend` | Capture |
+| 589 | `setTimeout(startListening, 1000)` — nach `recognition.onerror` | Capture |
+| 610 | `setTimeout(startListening, delay)` — `resumeListening` | Capture |
+| 680 | `orbErrorRevert` — Fehler-Rückfall nach 2500 ms | Overlays / Presentation |
+
+### Zustandstragende Nicht-Timer-Callbacks (9) — Guard **verbindlich**
+
+| Zeile | Stelle | Betroffene Region |
+|---|---|---|
+| 377 / 398 / 440 / 443 | `ws.onopen` / `onmessage` / `onerror` / `onclose` | Connection (+ Interaction) |
+| 490 / 491 | `audio.onended` / `audio.onerror` | Playback |
+| 559 / 575 / 580 | `recognition.onresult` / `onend` / `onerror` | Capture |
+
+### Rein kosmetische Timer (7) — Guard **ausdrücklich nicht erforderlich**
+
+Zeilen **133** (Banner-Entfernung), **369** (Awaken-Fallback), **803** (Kopiert-Feedback),
+**1223** (`mapStatusTimer`), **1529** (Puls-Klasse), **1804** (`ccRefreshTimer`),
+**1835** (Button-Rückmeldung).
+
+Begründung: Diese Stellen wechseln ausschließlich CSS-Klassen bzw. laden Kontrollzentrums-Daten
+neu; sie schreiben **keinen** Regions- oder Client-Session-Zustand und können daher keinen
+neueren Zustand überschreiben. Sie werden hier **benannt**, damit ihre Ausnahme belegt und nicht
+versehentlich ist.
+
+**Epoch-Regel.** Der Zähler wird bei jedem echten Kontextwechsel erhöht — **Stop**, **Mute-Toggle**,
+**WS-Open**, **WS-Close** — und bei keiner anderen Gelegenheit. Jeder asynchrone Vorgang merkt sich
+die Epoch beim Planen; bei Zustellung mit veralteter Epoch wird er **verworfen** (Invariante I10).
+
+**Präzisierung von I10.** I10 gilt für die 15 oben als zustandstragend markierten Stellen. Für die
+7 kosmetischen Stellen gilt sie nicht, weil sie definitionsgemäß keinen Zustand verändern.
+
+**Ergänzung zu Szenario 13.** Das ursprüngliche Szenario nannte nur `recognition.onend`. Es gilt
+identisch für die drei `startListening`-Timer der Zeilen 577, 587 und 589 — genau diese können nach
+einem Mute oder Disconnect verspätet feuern.
+
+## A1.4 Redaktionelle Präzisierungen
+
+**R1 — Provider-Ressourcen-Lifecycles sind out of scope.** `browser_tools._pw` / `_browser` /
+`_context` (`browser_tools.py:19-21`) sind ein Ressourcen-Lifecycle im Besitz der Runtime
+(RFC-0002 D4), **kein** Conversation-Zustand. Ist der geteilte Browser nicht verfügbar, äußert sich
+das über den bestehenden Pfad `ActionError` → Turn-Ergebnis `failed` (§15.2). Ebenso liegen
+`assistant_core.TASKS_INFO` / `VAULT_SUMMARY` / `TODAY_INBOX` / `DATA_LOADED` / `LAST_REFRESH`
+außerhalb: sie sind **prozessweite Kontextdaten**, die für alle Sessions gelten (so bereits in
+`CONTEXT.md` abgegrenzt), kein Sitzungszustand.
+
+**R2 — `Transition` und `Effect` gehören nicht ins Domänenglossar.** `CONTEXT-FORMAT.md` schließt
+allgemeine Programmierkonzepte aus `CONTEXT.md` aus. Beide Begriffe sind generisches
+Zustandsmaschinen-Vokabular, kein Jarvis-Domänenbegriff. Ihre verbindliche Bedeutung steht in
+**§5 und §17/§18 dieses RFC**; die Einträge in `CONTEXT.md` werden entsprechend entfernt.
+
+**R3 — Glossarformat.** Die Zustandsbegriffe in `CONTEXT.md` folgen bewusst dem seit Prompt 3
+etablierten Hausformat (`Bedeutung` / `Abgrenzung` / `Quellen`) statt dem `_Avoid_`-Format aus
+`CONTEXT-FORMAT.md` — Konsistenz mit den rund zwanzig Bestandsbegriffen wiegt hier schwerer als
+Formattreue. Abweichung hiermit dokumentiert.
+
+## A1.5 Bestätigung der öffentlichen Interface (nachgeholter Design-It-Twice)
+
+Der in Prompt 16 ausgelassene Schritt aus `DESIGN-IT-TWICE.md` wurde nachgeholt. Dependency-Kategorie
+nach `DEEPENING.md`: **in-process** — kein Port/Adapter an der externen Interface; einziger
+gerechtfertigter interner Seam ist Clock/ID (zwei Adapter: System/Fixed, Präzedenz RFC-0005).
+
+| Entwurf | Kern | Ergebnis |
+|---|---|---|
+| **A — minimal** | ein `step(state, message) → (state, effects)` je Seite | Tiefste Variante, stärkste Race-Kontrolle (ein Trichter). **Kollidiert mit D4**: der Endpunkt müsste den Session-Zustand selbst halten, was dem runtime-eigenen Manager die Heimat nimmt. |
+| **B — maximal flexibel** | `subscribe`, `register_effect_handler`, `replay`, `transitions` | **Verworfen.** Interface wächst der Implementierung entgegen (shallow); Middleware erzeugt Reentrancy-/Reihenfolgeprobleme; `replay`/`transitions` sind **Event Sourcing** — ausdrückliches Nicht-Ziel (§6). |
+| **C — auf den häufigsten Aufrufer optimiert** | `await handle(cmd)` führt Effekte selbst aus | **Verworfen.** I/O läge im Kern — verletzt **D12** und **I13**; die 18 Race-Szenarien würden von reinen Assertions zu Integrationstests mit Provider-Fakes. |
+
+**Ergebnis: §24 bleibt unverändert bestätigt.** B und C scheitern an bereits akzeptierten
+Entscheidungen. A ist dieselbe Architektur in anderer Schnittform — `submit`/`on` sind `step`,
+getrennt nach Nachrichtenkategorie; Autorität, Transitionen, Regionen, Effekte und Seams sind in
+allen Entwürfen identisch.
+
+**Erlaubte Umsetzungsverfeinerung in Prompt 17** (aus Entwurf A übernommen, ändert die Architektur
+nicht): `submit` und `on` dürfen zu einem einzigen `handle(message)` verschmolzen werden, und
+`snapshot()` darf durch einen unveränderlichen Zustandswert ersetzt werden, sofern D4 (Manager
+besitzt Sessions) und D12 (purer Kern) gewahrt bleiben. Präzedenz: RFC-0005 hat exakte Signaturen
+ebenfalls erst bei der Umsetzung fixiert.
+
+## A1.6 Auswirkung auf den Prompt-17-Migrationsplan
+
+Der Slice-Plan (§28) bleibt strukturell unverändert. Präzisierungen:
+
+- **Slice 8** integriert die Playback-Region mit **drei** Werten inkl. `locked` und legt die
+  Client-Session-Ebene mit `greeted` + `epoch` an.
+- **Slice 10** deckt den Epoch-Guard für **alle 15 zustandstragenden** Stellen aus A1.3 ab und
+  weist für Szenario 13 zusätzlich die Zeilen 577/587/589 nach.
+- **Slice 11** entfernt `Transition` und `Effect` aus `CONTEXT.md` (R2) und gleicht
+  `docs/ux/STATE_MODEL.md` an.
+- Ein **Regressionstest gegen Doppelbegrüßung bei Reconnect** wird Pflicht in Slice 8
+  (Kostenschutz, A1.2).
+
+## A1.7 Unverändert gültig
+
+Keine neue Wire-Nachricht · RFC-0005 und Legacy byte-exakt unverändert · kein Major-Bump ·
+keine Persistenz · kein Job-Code · kein Capability-/Policy-Kernel · **keine State Machine
+implementiert**. Amendment 1 ist wie der RFC selbst ein reiner Dokumentationsvorgang.
