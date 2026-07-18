@@ -65,12 +65,40 @@
     return frame; // Legacy unverändert
   }
 
+  var V1_MEDIA_TYPE = 'application/vnd.jarvis.v1+json';
+
+  /* REST-V1: setzt den Vendor-Accept + Correlation-Header und entpackt die V1-Envelope
+   * zu ihrem payload (= Legacy-Body), sodass bestehende Handler (.ok/.status/.json())
+   * unveraendert weiterlaufen. Legacy-Antworten (kein Vendor-Content-Type) bleiben die
+   * echte fetch-Response. X-Jarvis-Token/If-Match aus options.headers bleiben erhalten. */
+  async function fetchV1(url, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    headers['Accept'] = V1_MEDIA_TYPE;
+    var cid = newCorrelationId();
+    if (cid) headers['X-Jarvis-Correlation-ID'] = cid;
+    var resp = await fetch(url, Object.assign({}, options, { headers: headers }));
+    var ct = resp.headers.get('content-type') || '';
+    if (ct.indexOf(V1_MEDIA_TYPE) === -1) return resp; // Legacy/kein Envelope
+    var env = null;
+    try { env = await resp.json(); } catch (e) { env = null; }
+    var payload = (env && env.payload && typeof env.payload === 'object') ? env.payload : {};
+    return {
+      ok: resp.ok,
+      status: resp.status,
+      headers: resp.headers,
+      json: function () { return Promise.resolve(payload); }
+    };
+  }
+
   global.JarvisWire = {
     createSocket: createSocket,
     isV1: isV1,
     sayText: sayText,
     stop: stop,
     decodeFrame: decodeFrame,
-    V1_SUBPROTOCOL: V1_SUBPROTOCOL
+    fetchV1: fetchV1,
+    V1_SUBPROTOCOL: V1_SUBPROTOCOL,
+    V1_MEDIA_TYPE: V1_MEDIA_TYPE
   };
 })(window);

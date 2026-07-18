@@ -1200,7 +1200,7 @@ function resolveMonitorIndex(monitors, key) {
 async function loadMonitors() {
     if (mapMonitors !== null) return;
     try {
-        const resp = await fetch('/launcher/monitors', { headers: ccAuthHeaders() });
+        const resp = await JarvisWire.fetchV1('/launcher/monitors', { headers: ccAuthHeaders() });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         mapMonitors = (data.ok && Array.isArray(data.monitors)) ? data.monitors : [];
@@ -1496,7 +1496,7 @@ async function assignPlacement(appId, monitorId, zone, zoneEl) {
     if (zoneEl) zoneEl.classList.add('saving');
     setMapStatus('Speichere…', false);
     try {
-        const resp = await fetch('/launcher/apps/' + encodeURIComponent(appId) + '/placement', {
+        const resp = await JarvisWire.fetchV1('/launcher/apps/' + encodeURIComponent(appId) + '/placement', {
             method: 'POST',
             headers: ccAuthHeaders(),
             body: JSON.stringify({ monitor: monitorId, zone: zone }),
@@ -1537,7 +1537,7 @@ function currentActiveProfile() {
 
 async function loadProfiles() {
     try {
-        const resp = await fetch('/launcher/profiles', { headers: ccAuthHeaders() });
+        const resp = await JarvisWire.fetchV1('/launcher/profiles', { headers: ccAuthHeaders() });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         if (data.ok) {
@@ -1554,7 +1554,7 @@ async function loadProfiles() {
 // frischen Zustand (Profile + effective Apps des aktiven Profils).
 async function profileRequest(url, options, successMsg) {
     try {
-        const resp = await fetch(url, Object.assign({ headers: ccAuthHeaders() }, options));
+        const resp = await JarvisWire.fetchV1(url, Object.assign({ headers: ccAuthHeaders() }, options));
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || !data.ok) {
             setMapStatus((data.errors || ['Profil-Aktion fehlgeschlagen.']).join(' '), true);
@@ -1720,7 +1720,7 @@ async function toggleAutostart(appId, nextValue, toggle, appName) {
     toggle.disabled = true;
     toggle.classList.add('busy');
     try {
-        const resp = await fetch('/launcher/apps/' + encodeURIComponent(appId) + '/toggle', {
+        const resp = await JarvisWire.fetchV1('/launcher/apps/' + encodeURIComponent(appId) + '/toggle', {
             method: 'POST',
             headers: ccAuthHeaders(),
             body: JSON.stringify({ autostart: nextValue }),
@@ -1782,7 +1782,7 @@ async function loadDashboardState() {
     loadMonitors(); // einmalig, asynchron — rendert die Map nach, sobald geladen
     loadProfiles(); // haelt die Profil-Leiste bei jedem Refresh synchron
     try {
-        const resp = await fetch('/dashboard/state', { headers: ccAuthHeaders() });
+        const resp = await JarvisWire.fetchV1('/dashboard/state', { headers: ccAuthHeaders() });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         renderApps(data.apps);
@@ -1814,7 +1814,7 @@ async function openApp(appId, btn) {
     btn.classList.add('busy');
     btn.disabled = true;
     try {
-        const resp = await fetch('/commands/app/open', {
+        const resp = await JarvisWire.fetchV1('/commands/app/open', {
             method: 'POST',
             headers: ccAuthHeaders(),
             body: JSON.stringify({ app: appId }),

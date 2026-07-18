@@ -216,3 +216,21 @@ bauen keine Wire-Dicts mehr.
 - **Commit:** `feat(protocol): present rest routes over protocol v1`.
 - **Offene Punkte:** Frame-Size/malformed-Vertrag (WS) + volle Fault-Matrix → Slice 9;
   Frontend-REST auf V1 → Slice 8.
+
+### Slice 8 — First-Party-REST-Frontend auf V1
+- **Ziel:** der zentrale Wire-Adapter setzt den V1-Accept + Correlation-Header, erkennt den
+  Vendor-Content-Type, entpackt V1-Envelopes und reicht Ergebnisse/Fehler unverändert an
+  die bestehende UI. `main.js`/`settings.js`/`music.js` migriert.
+- **Seam:** SEAM-BROWSER-UI (echte REST-Flows im Browser).
+- **Änderung:** `frontend/wire.js` `fetchV1(url, options)` — setzt Accept
+  `application/vnd.jarvis.v1+json` + `X-Jarvis-Correlation-ID`, entpackt die Envelope zu
+  ihrem payload (= Legacy-Body), sodass `.ok/.status/.json()` unverändert bleiben;
+  Legacy-Antwort ohne Vendor-Content-Type bleibt die echte Response. Alle 11 `fetch`-Sites
+  in main/settings/music auf `JarvisWire.fetchV1` umgestellt; `X-Jarvis-Token` und
+  Settings-`If-Match` bleiben in `options.headers` erhalten.
+- **Verifiziert:** alle Functional-Flows grün (inkl. `settings`/`settings_conflict` mit
+  If-Match/revision/409 über V1, `monitor_keyboard`, `window_modes`); Visual 0.0000% Diff;
+  A11y 22/22; Reduced-Motion 16/16; Python-Suite 808 grün. Keine visuelle/funktionale
+  UI-Änderung; deutsche Fehlermeldungen/Revision-/Conflict-Verhalten erhalten.
+- **Rollback:** Commit reverten (Frontend fällt auf rohe fetch/Legacy zurück).
+- **Commit:** `feat(frontend): migrate rest consumers to protocol v1`.
