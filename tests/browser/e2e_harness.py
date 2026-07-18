@@ -286,3 +286,37 @@ def open_jarvis(page, base_url, expect_connected=True):
             "document.querySelectorAll('#transcript .msg.jarvis').length >= 1",
             timeout=15000,
         )
+
+
+# Presentation ueber SEMANTISCHE Ereignisse herstellen (RFC-0006 / Phase 4J).
+# Kein beliebiger State-Setter: jeder Zustand entsteht ueber den echten Ereignispfad
+# des Reducers, genau wie im Betrieb. `renderVoice()` leitet danach die Anzeige ab.
+FORCE_PRESENTATION = """
+(function (want) {
+    const D = (e) => dispatchVoice(Object.assign({ epoch: window.__voice.state.epoch }, e));
+    // Grundzustand ueber echte Ereignisse: laufende Wiedergabe beenden, nicht
+    // stumm, nichts laeuft, keine Overlays. Ohne das Zuruecksetzen der Wiedergabe
+    // wuerde ein vorheriger 'speaking'-Zustand alle Folgeaufnahmen dominieren
+    // (Presentation-Prioritaet 3).
+    D({ type: 'StopRequested' });
+    D({ type: 'StopAck' });
+    if (window.__voice.state.capture === 'muted') D({ type: 'MuteToggled' });
+    // Auch das laufende Zuhoeren beenden — sonst dominiert 'listening' den
+    // Grundzustand (der Harness startet die Erkennung automatisch).
+    if (window.__voice.state.capture === 'listening') D({ type: 'RecognitionEnd' });
+    D({ type: 'ErrorDismissed', overlay: 'fatal-error' });
+    D({ type: 'ErrorDismissed', overlay: 'recoverable-error' });
+    if (want === 'listening')      D({ type: 'StartListening' });
+    else if (want === 'thinking')  D({ type: 'SayTextSent' });
+    else if (want === 'speaking')  { D({ type: 'UserGesture' });
+                                     D({ type: 'AudioReceived', audio: 'x' }); }
+    else if (want === 'muted')     D({ type: 'MuteToggled' });
+    else if (want === 'error')     D({ type: 'ErrorEvent', fatal: true });
+    renderVoice();
+})
+"""
+
+
+def force_presentation(page, want):
+    """Den gewuenschten Presentation-Zustand ueber echte Ereignisse herstellen."""
+    page.evaluate(FORCE_PRESENTATION + "('%s')" % want)

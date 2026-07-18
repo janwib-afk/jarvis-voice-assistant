@@ -354,7 +354,7 @@ function sendUtterance(text) {
         return false;
     }
     addTranscript('user', text);
-    setOrbState('thinking');
+    dispatchVoice({ type: 'SayTextSent', epoch: voiceEpoch() }); renderVoice();
     JarvisWire.sayText(ws, text);
     return true;
 }
@@ -416,7 +416,8 @@ function connect() {
         renderStatusCenter();
         setStatusWord();
         if (openEffects.indexOf('SendGreeting') !== -1) {
-            setOrbState('thinking');
+            dispatchVoice({ type: 'SayTextSent', epoch: voiceEpoch() });
+            renderVoice();
             awakenInstrument(); // Delight: einmaliger Erwachen-Glow
             JarvisWire.sayText(ws, 'Jarvis activate');
         } else {
@@ -430,10 +431,13 @@ function connect() {
         if (!data) return;
         if (data.type === 'response') {
             addTranscript('jarvis', data.text);
+            // Die Antwort beendet das Warten: Interaction zurueck (bleibt
+            // 'action-running', solange eine Aktion laeuft).
+            dispatchVoice({ type: 'SpokenResponse', epoch: voiceEpoch() });
             if (data.audio && data.audio.length > 0) {
                 queueAudio(data.audio);
             } else {
-                setOrbState('idle');
+                renderVoice();
                 resumeListening(500);
             }
         } else if (data.type === 'status') {
@@ -443,6 +447,7 @@ function connect() {
             renderStatusCenter();
         } else if (data.type === 'stop') {
             // Server bestaetigt Stopp (auch wenn er von anderswo ausgeloest wurde).
+            dispatchVoice({ type: 'StopAck', epoch: voiceEpoch() });
             stopPlaybackLocal();
         } else if (data.type === 'action') {
             addActionEntry(data);
@@ -460,8 +465,10 @@ function connect() {
             if (window.loadMusic) window.loadMusic();
         } else if (data.type === 'error') {
             showErrorBanner(data);
+            // Ein Fehler beendet das Warten ebenfalls.
+            dispatchVoice({ type: 'SpokenResponse', epoch: voiceEpoch() });
             if (!audioIsPlaying()) {
-                setOrbState('idle');
+                renderVoice();
                 resumeListening(500);
             }
         }
@@ -509,7 +516,7 @@ function onAudioFinished(epochAtStart) {
     if (eff.length === 0) return;                 // stale -> nichts tun
     if (eff.indexOf('PlayAudio') !== -1) { playNext(); return; }
     if (eff.indexOf('MaybeResumeListening') !== -1) {
-        setOrbState('idle');
+        renderVoice();
         setStatusWord();
         resumeListening(500);
     }
@@ -519,8 +526,7 @@ function playNext() {
     // Reiner Effekt-Ausfuehrer: den Zustand fuehrt der Reducer. Der Kopf des
     // Puffers wird nur GELESEN und erst in onAudioFinished entfernt (Symmetrie).
     if (audioQueue.length === 0) return;
-    setOrbState('speaking');
-    setStatusWord();
+    renderVoice();
     if (recognitionRunning) {
         recognition.stop();
         recognitionRunning = false;
@@ -541,14 +547,13 @@ function playNext() {
         console.warn('[jarvis] Autoplay blocked, waiting for click...');
         status.textContent = 'Klicke irgendwo damit Jarvis sprechen kann.';
         showErrorBanner({ component: 'audio', text: 'Audio blockiert — Klick benötigt.', hint: 'Einmal irgendwo in das Fenster klicken.' });
-        setOrbState('idle');
+        renderVoice();
         // Wait for click then retry
         document.addEventListener('click', function retry() {
             document.removeEventListener('click', retry);
             audio.play().then(() => {
                 dismissErrorBanners('audio');
-                setOrbState('speaking');
-                setStatusWord();
+                renderVoice();
             }).catch(() => playNext());
         });
     });
@@ -569,7 +574,7 @@ function stopPlaybackLocal() {
         currentAudioUrl = null;
     }
     dispatchVoice({ type: 'StopRequested', epoch: voiceEpoch() });
-    setOrbState('idle');
+    renderVoice();
     if (wasActive) status.textContent = 'Gestoppt.';
     resumeListening(300);
 }
@@ -617,7 +622,7 @@ if (SpeechRecognition) {
             const muteOff = /\b(mikro(fon)? (an|ein)|entstummen|stummschaltung (aufheben|aus))\b/i;
             const muteOn  = /\b(stumm|mikro(fon)? aus|stummschalten)\b/i;
             if (muteOff.test(text)) { if (captureIsMuted()) dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() }); updateMuteButton(); if (!audioIsPlaying() && micMode === 'auto') startListening(); return; }
-            if (muteOn.test(text))  { if (!captureIsMuted()) dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() }); updateMuteButton(); setOrbState('idle'); status.textContent = 'Mikrofon stumm'; return; }
+            if (muteOn.test(text))  { if (!captureIsMuted()) dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() }); updateMuteButton(); renderVoice(); status.textContent = 'Mikrofon stumm'; return; }
             if (captureIsMuted()) return;
             sendUtterance(text);
         }
@@ -625,40 +630,54 @@ if (SpeechRecognition) {
 
     recognition.onend = () => {
         recognitionRunning = false;
-        if (!audioIsPlaying() && micMode === 'auto') setTimeout(startListening, 300);
+        dispatchVoice({ type: 'RecognitionEnd', epoch: voiceEpoch() });
+        renderVoice();
+        if (!audioIsPlaying() && micMode === 'auto') scheduleListen(300);
     };
 
     recognition.onerror = (event) => {
         recognitionRunning = false;
         if (event.error === 'not-allowed' || event.error === 'audio-capture') {
-            setOrbState('error');
+            flashOrbError();
             status.textContent = 'Kein Mikrofon-Zugriff. Erlaube das Mikrofon in der Adressleiste und lade die Seite neu.';
             showErrorBanner({ component: 'mic', text: 'Kein Mikrofon-Zugriff.', hint: 'Mikrofon in der Adressleiste erlauben und Seite neu laden.' });
         } else if (event.error === 'no-speech' || event.error === 'aborted') {
-            if (!audioIsPlaying() && micMode === 'auto') setTimeout(startListening, 300);
+            if (!audioIsPlaying() && micMode === 'auto') scheduleListen(300);
         } else {
-            if (micMode === 'auto') setTimeout(startListening, 1000);
+            if (micMode === 'auto') scheduleListen(1000);
         }
     };
 }
 
 function startListening() {
     if (audioIsPlaying() || !recognition) return;
+    // Die ENGINE laeuft auch unter Mute weiter (Sprach-Entstummen, Praezisierung 1);
+    // die Capture-REGION wird nur ausserhalb von Mute auf 'listening' gesetzt — das
+    // entscheidet der Reducer (StartListening ist unter Mute ein No-Op).
     try { recognition.start(); } catch (e) { /* laeuft ggf. schon */ }
     recognitionRunning = true;
-    // Bei Stummschaltung laeuft die Erkennung weiter (Sprach-Entstummen),
-    // der Orb zeigt aber 'muted' statt 'listening'.
-    setOrbState(captureIsMuted() ? 'idle' : 'listening');
-    if (!captureIsMuted()) setStatusWord();
+    dispatchVoice({ type: 'StartListening', epoch: voiceEpoch() });
+    renderVoice();
+}
+
+/* Zuhoeren spaeter fortsetzen — EPOCH-GESICHERT: Stop, Mute, WsOpen und WsClose
+ * erhoehen die Epoch, wodurch ein bereits geplanter Restart stale wird und nichts
+ * mehr tut (Amendment 1 / M3, Szenarien 11 und 13). */
+function scheduleListen(delay) {
+    const epochAtSchedule = voiceEpoch();
+    setTimeout(() => {
+        if (JarvisVoice.isStale(V.state, epochAtSchedule)) return;
+        startListening();
+    }, delay);
 }
 
 // Zuhoeren fortsetzen — nur im Auto-Modus (ptt/off starten nicht von selbst).
 function resumeListening(delay) {
     if (micMode !== 'auto') {
-        if (!audioIsPlaying()) setOrbState('idle');
+        renderVoice();
         return;
     }
-    setTimeout(startListening, delay);
+    scheduleListen(delay);
 }
 
 // Mikrofonmodus anwenden (wird auch von settings.js nach dem Speichern gerufen).
@@ -668,7 +687,7 @@ function applyMicMode() {
         if (!audioIsPlaying() && !recognitionRunning) startListening();
     } else {
         if (recognitionRunning && recognition) { recognition.stop(); recognitionRunning = false; }
-        if (uiState.jarvisState === 'listening') setOrbState('idle');
+        renderVoice();
     }
 }
 window.applyMicMode = applyMicMode;
@@ -688,7 +707,7 @@ document.addEventListener('keyup', (e) => {
         recognition.stop();
         recognitionRunning = false;
     }
-    if (uiState.jarvisState === 'listening') setOrbState('idle');
+    renderVoice();
 });
 
 orb.addEventListener('click', () => {
@@ -696,7 +715,7 @@ orb.addEventListener('click', () => {
     if (recognitionRunning) {
         recognition.stop();
         recognitionRunning = false;
-        setOrbState('idle');
+        renderVoice();
         status.textContent = 'Pausiert. Klicke zum Fortsetzen.';
     } else {
         startListening();
@@ -704,32 +723,56 @@ orb.addEventListener('click', () => {
 });
 
 // ── Orb-Zustaende: idle / listening / thinking / speaking / muted / error ──
-function setOrbState(state) {
-    // 'idle' + Stummschaltung wird als eigener Zustand 'muted' angezeigt.
-    const effective = (state === 'idle' && captureIsMuted()) ? 'muted' : state;
+/* Presentation -> Orb-CSS-Klasse. Die CSS kennt nur diese sechs Klassen; die
+ * Presentation-Werte 'disconnected', 'stopping' und 'action-running' werden
+ * ausdruecklich abgebildet, damit keine visuelle Regression entsteht. */
+const ORB_CLASS = {
+    disconnected: 'idle',
+    error: 'error',
+    speaking: 'speaking',
+    stopping: 'idle',
+    'action-running': 'thinking',
+    thinking: 'thinking',
+    listening: 'listening',
+    muted: 'muted',
+    idle: 'idle',
+};
+
+/* EINZIGE state-bezogene DOM-Ausgabe (Render-Effekt, RFC-0006 §18/I8): leitet die
+ * Presentation aus dem Voice-Zustand ab und schreibt sie. Presentation wird NIE
+ * gesetzt; `uiState.jarvisState` ist reine Render-Ausgabe, keine Wahrheit. */
+function renderVoice() {
+    const effective = ORB_CLASS[JarvisVoice.presentation(V.state)] || 'idle';
     orb.className = effective;
-    uiState.jarvisState = effective;
+    uiState.jarvisState = effective;   // nur Ausgabe-Spiegel fuer die Statuszeile
     renderStatusCenter();
     setStatusWord();
     status.classList.toggle('active', effective !== 'idle' && effective !== 'muted');
     // Stop ist waehrend Sprache/laufender Aktion die visuell primaere Aktion.
     const stopBtn = document.getElementById('stop-btn');
     if (stopBtn) {
-        const actionRunning = actionIsRunning();
-        stopBtn.classList.toggle('primary-now', effective === 'speaking' || actionRunning);
+        stopBtn.classList.toggle('primary-now',
+            effective === 'speaking' || actionIsRunning());
     }
 }
 
 let orbErrorRevert = null;
+/* Kurzer Fehler-Puls: setzt ein fatal-error-Overlay und nimmt es wieder zurueck.
+ * Der Ruecknahme-Timer ist EPOCH-GESICHERT — ein veralteter Timer darf einen
+ * neueren Zustand nie ueberschreiben (Amendment 1 / M3, Szenario 14). */
 function flashOrbError() {
-    const cur = uiState.jarvisState;
+    const cur = JarvisVoice.presentation(V.state);
     // Laufende Antwort nicht unterbrechen; persistenten Fehler nicht ueberschreiben.
     if (cur === 'speaking' || cur === 'thinking' || cur === 'error') return;
-    const prev = (cur === 'muted') ? 'idle' : cur;
-    setOrbState('error');
+    dispatchVoice({ type: 'ErrorEvent', fatal: true, epoch: voiceEpoch() });
+    renderVoice();
     clearTimeout(orbErrorRevert);
+    const epochAtSchedule = voiceEpoch();
     orbErrorRevert = setTimeout(() => {
-        if (uiState.jarvisState === 'error') setOrbState(prev);
+        if (JarvisVoice.isStale(V.state, epochAtSchedule)) return;   // stale -> nichts
+        dispatchVoice({ type: 'ErrorDismissed', overlay: 'fatal-error',
+                        epoch: epochAtSchedule });
+        renderVoice();
     }, 2500);
 }
 
@@ -747,7 +790,7 @@ function updateMuteButton() {
     }
     // Orb-Anzeige mit dem Mute-Zustand synchronisieren.
     if (uiState.jarvisState === 'idle' || uiState.jarvisState === 'muted') {
-        setOrbState('idle');
+        renderVoice();
     } else {
         renderStatusCenter();
     }
@@ -757,7 +800,7 @@ function toggleMute() {
     dispatchVoice({ type: 'MuteToggled', epoch: voiceEpoch() });
     updateMuteButton();
     if (captureIsMuted()) {
-        setOrbState('idle');
+        renderVoice();
         status.textContent = 'Mikrofon stumm';
     } else {
         setStatusWord();
@@ -1904,7 +1947,7 @@ if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         .then(stream => { stream.getTracks().forEach(t => t.stop()); })
         .catch(() => {
             status.textContent = 'Mikrofon-Zugriff verweigert. Bitte Erlaubnis in der Adressleiste erteilen und Seite neu laden.';
-            setOrbState('error');
+            flashOrbError();
             showErrorBanner({ component: 'mic', text: 'Kein Mikrofon-Zugriff.', hint: 'Mikrofon in der Adressleiste erlauben und Seite neu laden.' });
         });
 }
