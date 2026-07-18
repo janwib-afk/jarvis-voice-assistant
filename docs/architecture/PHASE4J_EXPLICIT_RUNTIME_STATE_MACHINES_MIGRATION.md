@@ -283,31 +283,25 @@ WAV-Szenario — **offen**.
 | 5 Queue/Worker/Stop/Disconnect migrieren | ✅ grün | `8a950cd` (mit 6) |
 | 6 `assistant_core` entkoppeln | ✅ grün | `8a950cd` (mit 5) |
 | 7 Purer Voice-Reducer | ✅ grün | `6e37582` |
-| 8 Voice-Integration | ⏳ teilweise (8a grün) | `899b5ef` |
-| 9 Presentation ableiten | ⏳ teilweise (9a–9d grün) | `f2ec57b`, `a94383f`, `ba688fc`, `9bd8d22` |
-| 10 Race-/Stale-/Cleanup-Matrix | offen | — |
-| 11 Doku + CI | offen | — |
+| 8 Voice-Integration | ✅ grün | `899b5ef` |
+| 9 Presentation ableiten | ✅ grün | `f2ec57b`, `a94383f`, `ba688fc`, `9bd8d22`, `1dc9dfb` (9e), `1d0d5fc` (9f) |
+| 10 Race-/Stale-/Cleanup-Matrix | ✅ grün | `e41dbfa`, `aeba8a1` (Audio-Seam) |
+| 11 Doku + CI | ✅ grün | dieser Commit |
 
 **Backend vollständig migriert (Slices 1–6).** Session-Globals, Runtime-Aliase und
 `end_session` sind entfernt; der WS-Endpunkt ist ein dünner Adapter; die Verhaltensgleichheit
-ist durch die Slice-1-Charakterisierung **und** alle 14 echten Browser-Flows belegt.
+ist durch die Slice-1-Charakterisierung **und** alle echten Browser-Flows belegt.
 
-**Frontend: Client Session migriert, Regionen offen.** `frontend/voice.js` ist fertig (46
-Contract-Fälle). In `main.js` sind `hasGreeted` und `audioUnlocked` **entfernt** und laufen
-über den Reducer (Slice 8a). **Noch nicht migriert:** `uiState.jarvisState`, `isMuted`,
-`isPlaying`, `isListening`, `reconnectAttempts` und die DOM-Ableitung für `action-running`
-(Slice 9).
+**Frontend vollständig migriert (Slices 7–9f).** `frontend/voice.js` trägt den reinen
+Reducer (55 Contract-Fälle). In `main.js` gibt es keine konkurrierende Zustandswahrheit
+mehr: `setOrbState()` ist entfernt, die Anzeige wird ausschließlich über
+`JarvisVoice.presentation(V.state)` abgeleitet, und `uiState.jarvisState` ist nur noch
+Render-Ausgabe.
 
-**Erledigt in Slice 9a:** die DOM-Ableitung für `action-running` ist weg (I9 eingelöst).
+### Presentation → `orb.className`
 
-**Restlicher Slice 9 — konkreter Plan.** Noch nicht migriert: `uiState.jarvisState`,
-`isMuted`, `isPlaying`, `isListening`, `reconnectAttempts` und die vollständige
-Presentation-Ableitung.
-
-*Kritischer Punkt:* `orb.className` erhält heute nur `idle|listening|thinking|speaking|
-muted|error` — die CSS hängt daran. Die Presentation-Werte `disconnected`, `stopping` und
-`action-running` brauchen deshalb eine ausdrückliche Abbildung, sonst entsteht eine
-visuelle Regression:
+`orb.className` erhält nur `idle|listening|thinking|speaking|muted|error` — die CSS hängt
+daran. Die zusätzlichen Presentation-Werte werden deshalb ausdrücklich abgebildet:
 
 | Presentation | `orb.className` |
 |---|---|
@@ -321,27 +315,98 @@ visuelle Regression:
 | `muted` | `muted` |
 | `idle` | `idle` |
 
-*Reihenfolge:* (1) Audio-Pfad ✅ erledigt (9c); (2) Capture ✅ erledigt (9d);
-(3) **offen:** `setOrbState(x)` → `renderVoice()` mit obiger Abbildung — die **22**
-Aufrufstellen müssen die passenden Ereignisse dispatchen; (4) **offen:**
-`reconnectAttempts` wird private Adapter-Ressource des Backoffs.
+Die Ableitung ist ohne visuelle Regression eingeführt: 12/12 Visual-Shots grün **ohne**
+Baseline-Aktualisierung, davon 9 pixelgenau identisch.
 
-> **Warum (3) der riskanteste Schritt ist:** `orb.className` trägt die CSS. Solange nicht
-> jede der 22 Stellen das semantisch richtige Ereignis dispatcht, erzeugt eine Ableitung
-> falsche Klassen und damit eine visuelle Regression. Dieser Schritt gehört in eine
-> Sitzung mit Budget für Umsetzung **und** volle Verifikation.
-
-## Erreichter Umfang (Stand dieser Lieferung)
+## Erreichter Umfang (Endstand Prompt 17)
 
 **Entfernte semantische Doppelwahrheiten:** `assistant_core.conversations`,
 `assistant_core.pending_confirm`, `end_session`, Runtime-Aliase, `hasGreeted`,
-`audioUnlocked`, `uiState.connected`, `isPlaying`, `isMuted`, DOM-Ableitung für
-`action-running`.
+`audioUnlocked`, `uiState.connected`, `isPlaying`, `isMuted`, `setOrbState`,
+`reconnectAttempts`, DOM-Ableitung für `action-running`.
 
 **Als Adapter-Ressource geklärt (kein Zustand):** `recognitionRunning`, `currentAudio`,
-`currentAudioUrl`, `audioQueue` (Payload-Puffer), Timer-Handles.
+`currentAudioUrl`, `audioQueue` (Payload-Puffer, symmetrisch zur Reducer-Queue),
+Timer-Handles, Reconnect-Backoff (`JarvisVoice.createBackoff`, Slice 9f).
 
-**Noch in Betrieb (unverändert, keine Doppelwahrheit):** `uiState.jarvisState` als
-Render-Ausgabe, `reconnectAttempts` als Backoff-Zähler.
+**`uiState.jarvisState`** bleibt in Betrieb, aber ausschließlich als **Render-Ausgabe** —
+nie als Quelle. Die einzige Wahrheit ist der Reducer-Zustand.
+
+## Slice 10 — Race-, Stale- und Cleanup-Matrix
+
+Die 17 verbindlichen Szenarien aus RFC-0006 §21 haben einen eigenen, benannten Testblock;
+jeder Test trägt seine Matrixnummer.
+
+| Datei | Szenarien | Seam |
+|---|---|---|
+| `tests/test_race_matrix.py` | 1–10, 17 | SEAM-CONVERSATION / SEAM-WS / SEAM-CONVERSATION-STATE |
+| `tests/browser/e2e_race_matrix.py` | 11–16 | SEAM-VOICE / SEAM-BROWSER-UI |
+| — | 18 | SEAM-JOB-CONTRACT, **ausdrücklich Phase 6**; als Nicht-Ziel festgehalten |
+
+Geprüft wird nur beobachtbares Verhalten (Frames, `snapshot()`, sichtbarer Zustand) — nie
+Tasks, Locks oder Queue-Interna. Kein Sleep dient als Race-Lösung. Jedes Stale-Szenario hat
+eine **Gegenprobe**, damit kein Test grün sein kann, weil schlicht nichts passiert.
+
+**Der Block war sofort grün — das allein beweist nichts.** Ein Mutationsnachweis belegt,
+dass er beißt, und deckte dabei drei echte Schwächen der Tests selbst auf:
+
+| Mutation | erwartet rot |
+|---|---|
+| Stop leert die Queue nicht mehr | Szenario 6 |
+| Stop verwirft die Rückfrage nicht mehr | Szenario 7 |
+| Stop meldet immer „gestoppt" | Szenario 9 |
+| `scheduleListen` ohne Epoch-Guard | Szenario 11, 13b |
+| Reducer verwirft veraltete Ereignisse nicht | Szenario 12 |
+| beide Error-Revert-Guards entfernt | Szenario 14 |
+
+*Korrigierte Testschwächen:* Szenario 12 warf das alte Audio-Ende auf einen bereits leeren
+Playback (dort ohnehin ein No-Op) — jetzt läuft nach dem Stop eine **neue** Wiedergabe, die
+das verspätete Ende ohne Guard fälschlich beenden würde. Szenario 13 prüft Mute und
+Disconnect getrennt: Mute schützt die Reducer-Regel, Disconnect die Epoch. Szenario 14 wird
+von **zwei** unabhängigen Guards geschützt; Rot entsteht erst, wenn beide fallen — gewollte
+Redundanz, keine Testschwäche.
+
+## Audio-Seam — und die ehrlich benannte Umgebungsgrenze
+
+**Playwright-Chromium ist ein Open-Source-Build ohne verwendbaren MP3-Codec.**
+`audio.play()` lehnt dort mit `NotSupportedError` ab, unabhängig von jeder
+Autoplay-Richtlinie. Der Erfolgspfad der Wiedergabe war deshalb im Browser-Gate nie
+ausführbar und damit ungetestet.
+
+Diese Grenze **bleibt bestehen und wird nicht vorgetäuscht.** `tests/browser/e2e_audio_seam.py`
+ersetzt vor dem App-Start `window.Audio` durch eine kontrollierbare Implementierung und prüft
+damit ausschließlich die **Adapter- und Zustandssemantik** gegen den Reducer: erfolgreicher
+`play()`-Pfad, `AudioEnded`, Queue-Fortschritt, Stop während der Wiedergabe, verspätetes
+Audio-Ende nach Epoch-Wechsel und Autoplay-Block. Ob Chromium MP3 dekodiert, ist damit
+ausdrücklich **nicht** geprüft.
+
+Der Seam liegt **rein auf der Testseite**. Im Produktionscode gibt es dafür keine Setter-,
+Inject- oder Test-Modus-API.
+
+### Dabei gefundener Produktionsfehler
+
+`onAudioFinished` leerte den lokalen Puffer **vor** der Stale-Prüfung. Ein bereits
+zugestellter Rückruf einer abgebrochenen Wiedergabe löschte damit einen Eintrag aus dem
+Puffer der inzwischen **neu** gestarteten Wiedergabe, während die Reducer-Queue ihn noch
+führte — ein stiller Audioverlust und ein Verstoß gegen I10/§19 (stale = totaler No-Op).
+Der Kommentar behauptete bereits Symmetrie; der Code hielt sie nicht ein.
+
+    RED   lokal=0, reducer=1
+    GREEN lokal=1, reducer=1
+
+Behoben: erst fragen, dann ändern. Leere Effekte heißen „veraltet oder es lief nichts" —
+dann bleibt auch der lokale Puffer unberührt.
+
+## Ein Verifikator-Fehler, kein Produktionsfehler
+
+`verify_phase5` stand nach Slice 9e bei 12/13: der `muted`-Zweig der Zustandsmatrix übergab
+nach der Ereignis-Migration weiterhin das alte Argument `'idle'`, wodurch der Zweig
+`else if (w === 'muted')` nie lief. Gemessen in der Schleife:
+
+    angefordert=muted  pres=idle   cls='idle'   anims=['orb-breathe']  capture='idle'
+    nach der Korrektur pres=muted  cls='muted'  anims=[]               capture='muted'
+
+Betroffen war ausschließlich der Verifikator. Die Produktionsableitung war korrekt und ist
+zusätzlich durch den pixelgenauen `muted`-Visual-Shot belegt.
 
 Die Branch ist an jedem Slice gefahrlos rückrollbar; es gibt keinen halb migrierten Zustand.

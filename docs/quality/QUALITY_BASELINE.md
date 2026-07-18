@@ -20,6 +20,35 @@ Test-Zusammensetzung: 484 (Baseline Prompt 1) + 9 (`test_config_seam.py`) + 10
 läuft auf 127.0.0.1:8341 (Fake-LLM/TTS); UTF-8-Konsole (`PYTHONUTF8=1`), sonst bricht
 der Tool-`print()` unter Windows-cp1252 an Nicht-ASCII-Zeichen ab (kein Funktionsfehler).
 
+## 1b. Frische Zahlen (2026-07-18, Phase 4J / RFC-0006)
+
+Der Abschnitt oben bleibt als **datierter Schnappschuss vom 2026-07-13** unverändert
+stehen. Hier die am 2026-07-18 tatsächlich gemessenen Werte nach Abschluss von Phase 4J:
+
+| Prüfung | Befehl | Ergebnis | Exit |
+|---|---|---|---|
+| Unit/Contract/Integration-Suite | `python -m unittest discover -s tests` | **870 Tests, 0 Failures, 0 Errors, 0 Skips** | 0 |
+| Smoke (config-unabhängig) | `python scripts/smoke-test.py` | 870 Tests, 0/0/0/0 Skips, Fixture bytegleich, „Alles ok" | 0 |
+| Windows-Native-Adapter-Smokes | `python tests/native/windows_native_smoke.py` | 9/9 | 0 |
+| Voice-Contract (purer Reducer) | `python tests/browser/e2e_voice_contract.py` | 55/55 | 0 |
+| Browser-Flows (vollständig) | `python tests/browser/e2e_functional.py` | 15/15 | 0 |
+| Race-/Stale-Matrix Server | `python -m unittest tests.test_race_matrix` | 12/12 | 0 |
+| Race-/Stale-Matrix Browser | `python tests/browser/e2e_race_matrix.py` | 16/16 | 0 |
+| Audio-Seam | `python tests/browser/e2e_audio_seam.py` | 19/19 | 0 |
+| Accessibility/Tastatur | `python tests/browser/e2e_a11y.py` | 22/22 | 0 |
+| Reduced Motion | `python tests/browser/e2e_reduced_motion.py` | 16/16 | 0 |
+| Visual Regression (ohne Baseline-Update) | `python tests/browser/e2e_visual.py` | 12/12, davon 10 pixelgenau identisch | 0 |
+| Browser-E2E Phase 4 | `python docs/redesign/phase-4/tools/verify_phase4.py` ¹ | 27/27 | 0 |
+| Browser-Motion Phase 5 | `python docs/motion/tools/verify_phase5.py` ¹ | 13/13 | 0 |
+
+Race-Matrix und Audio-Seam wurden zusätzlich **je fünfmal hintereinander flakefrei**
+ausgeführt und per Mutationsnachweis gegen Scheingrün abgesichert.
+
+**Umgebungsgrenze, ausdrücklich offen:** Playwright-Chromium besitzt keinen verwendbaren
+MP3-Codec. Der Erfolgspfad der Wiedergabe ist deshalb über einen rein testseitigen
+Audio-Seam geprüft (Adapter- und Zustandssemantik), **nicht** die Dekodierung durch den
+Browser. Siehe [TEST_SEAMS.md](TEST_SEAMS.md) → SEAM-AUDIO-PLAYBACK.
+
 ## 2. Testklassen
 
 | Klasse | Zweck | Testdateien / Harness | Befehl | Umgebung | Automatisiert |

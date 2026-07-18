@@ -16,7 +16,11 @@
 | 6 Skip-Policy | `fast` › Smoke | `python scripts/smoke-test.py` |
 | 7 Windows-Adapter-Smokes | `fast` › Gate 7 | `python tests/native/windows_native_smoke.py` |
 | (+) Voice-State-Contract | `browser` | `python tests/browser/e2e_voice_contract.py` |
-| (+) Accessibility | `browser` | `python tests/browser/e2e_a11y.py` |
+| (+) Race-/Stale-Matrix (Szenarien 11-16) | `browser` | `python tests/browser/e2e_race_matrix.py` |
+| (+) Audio-Seam | `browser` | `python tests/browser/e2e_audio_seam.py` |
+| (+) Accessibility | `browser` | `python tests/browser/e2e_race_matrix.py
+python tests/browser/e2e_audio_seam.py
+python tests/browser/e2e_a11y.py` |
 | (+) Reduced Motion | `browser` | `python tests/browser/e2e_reduced_motion.py` |
 
 **Eigenschaften:** Windows-Runner · dokumentierte Python-Version (3.12) · frische
