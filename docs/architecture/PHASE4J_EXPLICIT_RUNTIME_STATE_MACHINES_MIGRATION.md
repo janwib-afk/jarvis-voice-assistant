@@ -131,6 +131,53 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
 - **Commit / Rollback-SHA:** `37a0fc7` — `feat(state): add runtime-owned conversation sessions`
 - **Suite:** 849 → **858** grün.
 
+### Slice 4 — Verlauf und Confirmation in den Session-Besitz
+- **Ziel:** Verlauf und offene Bestätigung gehören dem Session-Aggregat, nicht Modul-Globals.
+- **Inhalt:** `StartTurn` trägt die beim Turn-Start **konsumierte** Bestätigung (`pending`),
+  damit `suspended` genau **eine** Wahrheit bleibt — exakt das frühere
+  `pending_confirm.pop()` zu Beginn von `process_message`, inklusive des stillen
+  Verfallens. Neuer öffentlicher `TurnContext` (Verlauf, `MAX_HISTORY` 60 /
+  `LLM_HISTORY` 16 unverändert, `request_confirmation`, unveränderlicher
+  `history_snapshot`). `tests/wire_testing.turn_context()` als öffentlicher Seam-Helfer.
+- **Additiv** — `assistant_core`/`server.py` in diesem Commit unverändert.
+- **Rollback-SHA:** `e791fcc`
+
+### Slices 5 + 6 — WS-Adapter und session-explizites `assistant_core`
+- **Bewusst EIN Commit.** Beide Slices sind wechselseitig abhängig: sobald
+  `assistant_core.conversations`/`pending_confirm` entfallen, kann der alte WS-Worker
+  nicht mehr laufen — und umgekehrt. Ein Zwischenstand wäre **nie verifiziert** worden.
+  Präzedenz: Phase 4A (Prompt 8C) hat aus demselben Grund atomar committet.
+- **Slice 5:** Queue, aktiver Turn, Worker und Cancellation sind private
+  Session-Implementierung; `server.py` hat **0 Treffer** für `asyncio.Queue`/`worker`/
+  `state["task"]`/`state["stopping"]`. Die RFC-0005-Transportgrenze bleibt im Adapter
+  (Origin, Token, Handshake, 64 KiB, `receive_text`, `decode_command`, `ProtocolError`).
+- **Slice 6:** `conversations`, `pending_confirm`, `end_session` und die Runtime-Aliase
+  **vollständig entfernt**; `process_message`/`run_action_and_respond`/`execute_action`/
+  `_action_context` nehmen einen expliziten `TurnContext`.
+- **Verhaltenskompatibilität belegt:** Slice-1-Charakterisierung unverändert grün —
+  inklusive der exakten Cancel-Framefolge. **Alle 14 Browser-Flows grün** gegen das
+  migrierte Backend (`stop_action`, `mute`, `reconnect`, `greeting_once`, …).
+- **Alt-Tests** auf den öffentlichen Seam umgestellt (7 Dateien), keine neue Schicht auf
+  alte Interna.
+- **Rollback-SHA:** `8a950cd` · **Suite:** 858 grün
+
+### Slice 7 — Purer Voice-Reducer
+- **Ziel:** `frontend/voice.js` als reiner Zustandskern; **keine** Integration.
+- **Inhalt:** fünf orthogonale Regionen + Client-Session-Ebene; Presentation immer
+  abgeleitet (9 Prioritätsregeln); `degraded`/`recoverable-error` sind additive Overlays,
+  nur `fatal-error` ergibt `error`.
+- **Runner:** `tests/browser/e2e_voice_contract.py` — **46/46** Fälle per
+  `page.evaluate` gegen echten Code; keine Quelltext-Assertions, keine npm-Dependency.
+- **Belegt:** initialer Zustand (`locked`, `greeted=false`, `epoch=0`); `muted` **und**
+  `playing` gleichzeitig darstellbar; `locked` puffert Audio; `AutoplayBlocked` fällt nach
+  `locked` zurück; **genau eine** Begrüßung über drei Reconnects; Epoch-Bumps bei
+  Stop/Mute/WsOpen/WsClosed; stale Reconnect-Timer, Audio-Ende nach Stop,
+  Recognition-Ende nach Mute und stale Error-Revert verändern **nichts**; normale Sprache
+  unter Mute ignoriert, Stop/Entstummen wirken weiter.
+- **Reinheit verhaltensbasiert belegt:** Sandbox, in der DOM/Netz/Audio/Timer werfen.
+- **CI:** Contract-Runner im Browser-Gate ergänzt (keine neuen Trigger/Secrets).
+- **Rollback-SHA:** `6e37582`
+
 ---
 
 ## Stand der Umsetzung
@@ -140,16 +187,23 @@ könnte die Voice-Migration bei jedem Reconnect echte Anthropic-/ElevenLabs-Kost
 | 1 Charakterisierung | ✅ grün | `fe9a5fe` |
 | 2 Purer Conversation-Kern | ✅ grün | `1295ce3` |
 | 3 Runtime-owned Manager/Sessions | ✅ grün | `37a0fc7` |
-| 4 Verlauf + Confirmation migrieren | offen | — |
-| 5 Queue/Worker/Stop/Disconnect migrieren | offen | — |
-| 6 `assistant_core` entkoppeln | offen | — |
-| 7 Purer Voice-Reducer | offen | — |
+| 4 Verlauf + Confirmation migrieren | ✅ grün | `e791fcc` |
+| 5 Queue/Worker/Stop/Disconnect migrieren | ✅ grün | `8a950cd` (mit 6) |
+| 6 `assistant_core` entkoppeln | ✅ grün | `8a950cd` (mit 5) |
+| 7 Purer Voice-Reducer | ✅ grün | `6e37582` |
 | 8 Voice-Integration | offen | — |
 | 9 Presentation ableiten | offen | — |
 | 10 Race-/Stale-/Cleanup-Matrix | offen | — |
 | 11 Doku + CI | offen | — |
 
-**Slices 1–3 sind rein additiv:** es wurde noch **kein** beobachtbares Produktionsverhalten
-geändert. `server.py` und `assistant_core.py` sind unverändert; der neue Manager ist
-verdrahtet, aber noch nicht in Benutzung. Die Branch ist an diesem Punkt jederzeit
-gefahrlos rückrollbar.
+**Backend vollständig migriert (Slices 1–6).** Session-Globals, Runtime-Aliase und
+`end_session` sind entfernt; der WS-Endpunkt ist ein dünner Adapter; die Verhaltensgleichheit
+ist durch die Slice-1-Charakterisierung **und** alle 14 echten Browser-Flows belegt.
+
+**Frontend: Kern vorhanden, Integration offen (Slices 8–9).** `frontend/voice.js` ist fertig
+und mit 46 Contract-Fällen abgesichert, aber `main.js` nutzt ihn **noch nicht** — die alten
+Globals (`uiState.jarvisState`, `isMuted`, `isPlaying`, `isListening`, `audioUnlocked`,
+`hasGreeted`, `reconnectAttempts`, DOM-Ableitung für `action-running`) sind unverändert in
+Betrieb. Das Frontend verhält sich daher exakt wie vor der Phase.
+
+Die Branch ist an jedem Slice gefahrlos rückrollbar; es gibt keinen halb migrierten Zustand.
