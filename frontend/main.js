@@ -513,9 +513,15 @@ function queueAudio(base64Audio) {
 /* Wiedergabe beendet/abgebrochen: der Reducer sagt, ob es weitergeht. Der lokale
  * Puffer wird SYMMETRISCH zur Reducer-Queue geleert (hier, nicht beim Start). */
 function onAudioFinished(epochAtStart) {
-    audioQueue.shift();
+    // Erst FRAGEN, dann aendern: der Reducer entscheidet, ob dieser Rueckruf
+    // ueberhaupt noch gilt. Leere Effekte heissen 'veraltet oder es lief nichts'
+    // — dann ist der Rueckruf ein TOTALER No-Op (I10/§19) und darf auch den
+    // lokalen Puffer nicht anfassen. Wurde hier zuerst geschoben, verlor eine
+    // inzwischen NEU gestartete Wiedergabe einen Teil, waehrend die
+    // Reducer-Queue ihn noch fuehrte.
     const eff = dispatchVoice({ type: 'AudioEnded', epoch: epochAtStart });
-    if (eff.length === 0) return;                 // stale -> nichts tun
+    if (eff.length === 0) return;
+    audioQueue.shift();                           // symmetrisch zur Reducer-Queue
     if (eff.indexOf('PlayAudio') !== -1) { playNext(); return; }
     if (eff.indexOf('MaybeResumeListening') !== -1) {
         renderVoice();
