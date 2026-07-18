@@ -23,10 +23,25 @@ const SVG_MIC_MUTED = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 let ws;
 let audioQueue = [];
 let isPlaying = false;
-let audioUnlocked = false;
 let isMuted = false;
-let hasGreeted = false;
 let reconnectAttempts = 0;
+
+// ── Voice-Zustand (RFC-0006 + Amendment 1, Phase 4J) ────────────────────────
+// Einzige Wahrheit fuer Client Session (greeted/epoch) und Playback-Freischaltung.
+// Die frueheren Globals `audioUnlocked` und `hasGreeted` gibt es nicht mehr — sie
+// werden aus diesem Zustand gelesen. Die uebrigen Regionen folgen in Slice 9.
+const V = { state: JarvisVoice.initialVoiceState() };
+
+/* Ereignis in den reinen Reducer geben und die beschriebenen Effekte zurueckliefern.
+ * Asynchrone Aufrufer taggen ihr Ereignis mit der beim PLANEN gemerkten Epoch;
+ * veraltete Ereignisse veraendern nichts (Amendment 1 / M3). */
+function dispatchVoice(event) {
+    const r = JarvisVoice.reduce(V.state, event);
+    V.state = r.state;
+    return r.effects;
+}
+function voiceEpoch() { return V.state.epoch; }
+function audioIsLocked() { return V.state.playback === 'locked'; }
 let currentAudio = null;   // laufendes Audio-Element — fuer den Stopp-Pfad
 let currentAudioUrl = null;
 
@@ -337,10 +352,12 @@ function sendUtterance(text) {
 
 // Unlock audio on ANY user interaction
 function unlockAudio() {
-    if (!audioUnlocked) {
+    if (audioIsLocked()) {
         const silent = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZNIGPkAAAAAAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZNIGPkAAAAAAAAAAAAAAAAAAAA');
         silent.play().then(() => {
-            audioUnlocked = true;
+            // Freischaltung ist ein Zustandsuebergang locked -> idle (Amendment 1/M1).
+            const effects = dispatchVoice({ type: 'UserGesture', epoch: voiceEpoch() });
+            if (effects.indexOf('PlayAudio') !== -1) playNext();
             console.log('[jarvis] Audio unlocked');
         }).catch(() => {});
     }
@@ -384,9 +401,11 @@ function connect() {
         dismissErrorBanners('ws');
         renderStatusCenter();
         setStatusWord();
-        if (!hasGreeted) {
-            // Begruessung nur einmal — nicht bei jedem Reconnect wiederholen.
-            hasGreeted = true;
+        // Begruessung genau EINMAL pro Client Session (Amendment 1 / M2): der
+        // Reducer haelt den Latch, der jeden Reconnect ueberlebt. Jede zusaetzliche
+        // Begruessung wuerde echte LLM-/TTS-Kosten verursachen.
+        if (dispatchVoice({ type: 'WsOpen', epoch: voiceEpoch() })
+                .indexOf('SendGreeting') !== -1) {
             setOrbState('thinking');
             awakenInstrument(); // Delight: einmaliger Erwachen-Glow
             JarvisWire.sayText(ws, 'Jarvis activate');
@@ -441,6 +460,7 @@ function connect() {
         reportError('Verbindungsfehler');
     };
     ws.onclose = () => {
+        dispatchVoice({ type: 'WsClosed', epoch: voiceEpoch() });
         uiState.connected = false;
         reportError('Verbindung verloren');
         reconnectAttempts++;
@@ -490,6 +510,7 @@ function playNext() {
     audio.onended = () => { URL.revokeObjectURL(url); currentAudio = null; playNext(); };
     audio.onerror = () => { URL.revokeObjectURL(url); currentAudio = null; playNext(); };
     audio.play().catch(err => {
+        dispatchVoice({ type: 'AutoplayBlocked', epoch: voiceEpoch() });
         console.warn('[jarvis] Autoplay blocked, waiting for click...');
         status.textContent = 'Klicke irgendwo damit Jarvis sprechen kann.';
         showErrorBanner({ component: 'audio', text: 'Audio blockiert — Klick benötigt.', hint: 'Einmal irgendwo in das Fenster klicken.' });
