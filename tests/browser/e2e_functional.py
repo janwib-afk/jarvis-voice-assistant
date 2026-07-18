@@ -178,6 +178,33 @@ def flow_reconnect(pw):
         col.assert_clean("reconnect")
 
 
+def flow_greeting_once(pw):
+    """6b. KOSTENSCHUTZ (RFC-0006 Amendment 1 / M2): die automatische Begruessung
+    'Jarvis activate' darf pro Seitenlebensdauer GENAU EINMAL einen LLM-Call
+    ausloesen — auch ueber mehrere echte Reconnects hinweg. Im Echtbetrieb kostet
+    jede zusaetzliche Begruessung Anthropic + ElevenLabs."""
+    with JarvisServer("greeting_once") as srv, browser_context(pw, srv.base_url) as (page, col):
+        open_jarvis(page, srv.base_url)
+        page.wait_for_function("window.__wsConnectCount === 1")
+        assert srv.stats()["greetings"] == 1, "erste Begruessung fehlt"
+
+        # Zwei echte Reconnect-Zyklen erzwingen.
+        for expected in (2, 3):
+            page.evaluate("window.__lastWs.close()")
+            expect(page.get_by_text("Getrennt")).to_be_visible()
+            page.wait_for_function(
+                f"window.__wsConnectCount >= {expected} && "
+                "document.getElementById('sc-conn-text').textContent === 'Server verbunden'",
+                timeout=15000,
+            )
+
+        # Entscheidend: trotz drei Verbindungen genau EINE Begruessung.
+        assert srv.stats()["greetings"] == 1, (
+            f"Begruessung wurde {srv.stats()['greetings']}x ausgeloest — "
+            "jeder Reconnect wuerde echte LLM-/TTS-Kosten verursachen")
+        col.assert_clean("greeting_once")
+
+
 def flow_settings(pw):
     """7. Settings: oeffnen, synthetische Werte, Aenderung/Dirty, Speichern, keine Secrets."""
     with JarvisServer("settings") as srv, browser_context(pw, srv.base_url) as (page, col):
@@ -313,6 +340,7 @@ FLOWS = {
     "stop_action": flow_stop_action,
     "mute": flow_mute,
     "reconnect": flow_reconnect,
+    "greeting_once": flow_greeting_once,
     "settings": flow_settings,
     "settings_conflict": flow_settings_conflict,
     "monitor_keyboard": flow_monitor_keyboard,

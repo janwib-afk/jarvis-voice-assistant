@@ -116,12 +116,30 @@ _SCENARIO = {
     "replies": deque(),
     "llm_delay": 0.0,     # kuenstliche LLM-Latenz (s)
     "action_delay": 0.0,  # kuenstliche Aktions-Dauer (s) fuer Stop-Tests
+    # Kostenschutz (RFC-0006 Amendment 1 / M2): zaehlt, wie oft die automatische
+    # Begruessung einen LLM-Call ausgeloest hat. Im Echtbetrieb kostet jede
+    # Begruessung Anthropic + ElevenLabs — nach einem Reconnect darf sie NICHT
+    # erneut feuern. Der Browsertest prueft diesen Zaehler.
+    "greetings": 0,
 }
 _DEFAULT_REPLY = "Alles bereit, Chef. Diese Antwort stammt aus dem E2E-Stub."
+_GREETING_TEXT = "jarvis activate"
+
+
+def _counts_as_greeting(kwargs) -> bool:
+    """True, wenn die JUENGSTE Nutzernachricht die Auto-Begruessung ist."""
+    msgs = kwargs.get("messages") or []
+    for msg in reversed(msgs):
+        if msg.get("role") != "user":
+            continue
+        return _GREETING_TEXT in str(msg.get("content", "")).lower()
+    return False
 
 
 class _FakeMessages:
     async def create(self, **kwargs):
+        if _counts_as_greeting(kwargs):
+            _SCENARIO["greetings"] += 1
         if _SCENARIO["llm_delay"]:
             await asyncio.sleep(_SCENARIO["llm_delay"])
         item = _SCENARIO["replies"].popleft() if _SCENARIO["replies"] else _DEFAULT_REPLY
@@ -206,11 +224,18 @@ async def _e2e_scenario(request: Request):
     return JSONResponse({"ok": True, "queued": len(_SCENARIO["replies"])})
 
 
+@app.get("/__e2e__/stats")
+async def _e2e_stats():
+    """Kostenschutz-Zaehler fuer den Browsertest (nur Zahlen, keine Inhalte)."""
+    return JSONResponse({"ok": True, "greetings": _SCENARIO["greetings"]})
+
+
 @app.post("/__e2e__/reset")
 async def _e2e_reset():
     _SCENARIO["replies"].clear()
     _SCENARIO["llm_delay"] = 0.0
     _SCENARIO["action_delay"] = 0.0
+    _SCENARIO["greetings"] = 0
     return JSONResponse({"ok": True})
 
 

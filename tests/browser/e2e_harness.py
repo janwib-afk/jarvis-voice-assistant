@@ -145,6 +145,11 @@ class JarvisServer:
         with urllib.request.urlopen(req, timeout=5) as r:
             return json.loads(r.read())
 
+    def stats(self):
+        """Kostenschutz-Zaehler des Stub-Servers (nur Zahlen, keine Inhalte)."""
+        with urllib.request.urlopen(self.base_url + "/__e2e__/stats", timeout=5) as r:
+            return json.loads(r.read())
+
     def __exit__(self, exc_type, exc, tb):
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
