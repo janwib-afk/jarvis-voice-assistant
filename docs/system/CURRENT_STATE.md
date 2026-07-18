@@ -4,6 +4,30 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-18 (Phase 4H, RFC-0005 IMPLEMENTIERT):** Die typisierten und
+> versionierten Wire-Contracts sind umgesetzt
+> ([RFC-0005](../architecture/RFC-0005-typed-versioned-wire-contracts.md), Variante C, inkl.
+> Amendment 1). Neues tiefes Modul [`wire_protocol/`](../../wire_protocol/): typisierte
+> Client Commands / Server Events + getrennte `LegacyCodec`/`V1Codec`; nested V1-Envelope
+> (`protocol_version`/`event_id`/`correlation_id`/`session_id`/`timestamp`/`sensitivity`/
+> `payload`). **V1 ist opt-in und Legacy bleibt der Default:** WS über
+> `Sec-WebSocket-Protocol: jarvis.v1`, REST über `Accept: application/vnd.jarvis.v1+json`;
+> ohne Opt-in antworten beide Transporte **byte-/shape-exakt Legacy**. `server`/
+> `assistant_core` bauen **keine Wire-Dicts** mehr, sondern emittieren semantische Events
+> über `EventSink`/`ConversationChannel`; Broadcasts laufen über die runtime-besessene
+> `ConnectionRegistry` (gemeinsame Broadcast-`event_id`/`correlation_id`, eigene
+> `session_id` je Empfänger). Server-erzeugte IDs/Timestamps (UUIDv4, RFC3339-UTC-ms),
+> serverseitige `sensitivity` mit fail-closed Redaction (**`secret` nie auf dem Wire**),
+> strukturierte V1-Fehler + Close-Codes (1002/1007/1009) / HTTP-Status (400/406/413). Das
+> Frontend (`frontend/wire.js`) verhandelt V1 für WS **und** REST (real per Playwright
+> `protocol_v1` belegt). Migrierte Alt-Tests wurden über `tests/wire_testing.legacy_sink`
+> bzw. Registry-Empfänger auf gleichwertige öffentliche Abdeckung umgestellt (keine
+> Verhaltensabdeckung gelöscht). Full-Suite **819** grün; Browser Functional/Visual
+> (0.0000 % Diff)/A11y (22/22)/Reduced-Motion (16/16) grün; smoke EXIT 0; Fixture bytegleich.
+> **Nicht** in dieser Phase: obslog-/Audit-Korrelation, State-Machines, Capability-/
+> Policy-Kernel. Verlauf pro Slice:
+> [PHASE4H_TYPED_WIRE_MIGRATION.md](../architecture/PHASE4H_TYPED_WIRE_MIGRATION.md).
+
 > **Status 2026-07-17 (Phase 4G, RFC-0005 AKZEPTIERT — nur Architektur):** Für
 > typisierte und versionierte REST-/WS-Verträge wurde
 > [RFC-0005](../architecture/RFC-0005-typed-versioned-wire-contracts.md)

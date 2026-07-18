@@ -1,11 +1,21 @@
-# Jarvis – WebSocket-Protokoll (Ist-Zustand, `legacy-unversioned`)
+# Jarvis – WebSocket-Protokoll (Ist-Zustand, Dual-Stack: Legacy + V1)
 
 > Dokumentiert das **aktuelle** WS-Protokoll (`server.websocket_endpoint`,
-> `server.py:102`, + Frame-Erzeuger in `assistant_core`). Stand 2026-07-14. Alle
-> Beispielwerte synthetisch. Es gibt **kein** `protocol_version`-Feld — das
-> Protokoll ist `legacy-unversioned` und wird in diesem Prompt **nicht** versioniert
-> oder um Frames erweitert. Bezug:
-> [../quality/TEST_SEAMS.md](../quality/TEST_SEAMS.md) (SEAM-WS/-CONVERSATION).
+> + typisiertes Modul [`wire_protocol/`](../../wire_protocol/)). Stand 2026-07-18. Alle
+> Beispielwerte synthetisch. Bezug:
+> [../quality/TEST_SEAMS.md](../quality/TEST_SEAMS.md) (SEAM-WS/-CONVERSATION/-WIRE/-MIXED-WIRE),
+> [../architecture/RFC-0005-typed-versioned-wire-contracts.md](../architecture/RFC-0005-typed-versioned-wire-contracts.md).
+>
+> **Seit Phase 4H (RFC-0005) ist der Endpunkt Dual-Stack:**
+> - **Ohne** `Sec-WebSocket-Protocol`-Angabe (Default) spricht der Server das unten
+>   dokumentierte **Legacy-Protokoll** — `legacy-unversioned`, **kein**
+>   `protocol_version`-Feld, byte-/shape-exakt wie zuvor.
+> - Bietet der Client **`jarvis.v1`** an, wird V1 ausgehandelt und bestätigt; alle
+>   Frames laufen dann als typisierte **V1-Envelope** (Abschnitt „V1-Protokoll" unten).
+>
+> Beide Wege erzeugen dieselben semantischen Nachrichten; nur die Serialisierung
+> unterscheidet sich (`wire_protocol.LegacyCodec` bzw. `V1Codec`). Die Origin-/Token-
+> Prüfung ist identisch und läuft **vor** jeder Versionsverarbeitung.
 
 ## Verbindung & Token
 
@@ -26,7 +36,9 @@
 
 ## Client-Frames (eingehend)
 
-Der Server liest JSON via `ws.receive_json()` (`server.py:175`).
+Der Server liest jeden Frame als Text (`ws.receive_text`), prüft die **Frame-Größe**
+(> 64 KiB → Close 1009) und decodiert dann JSON (malformed → Close 1007; im V1-Modus mit
+vorangehendem strukturiertem `error`). Danach folgt das Legacy- bzw. V1-Decoding.
 
 | Frame | Felder | Bedeutung |
 |---|---|---|
@@ -104,9 +116,99 @@ verarbeitet. Ein reiner Stopp beendet die Verbindung nicht.
   Secrets nie in Frames (SI-5). Details:
   [../security/SECURITY_REQUIREMENTS.md](../security/SECURITY_REQUIREMENTS.md).
 
+---
+
+## V1-Protokoll (opt-in, `jarvis.v1`)
+
+### Aushandlung
+
+- Der Client verbindet mit `Sec-WebSocket-Protocol: jarvis.v1`
+  (`new WebSocket(url, ['jarvis.v1'])`). Der Server handelt über
+  `wire_protocol.negotiate_ws(offered)` aus und **bestätigt** das Subprotocol im
+  Accept (`ws.accept(subprotocol="jarvis.v1")`).
+- Bietet der Client **kein** Subprotocol an → exakt Legacy (kein Accept-Subprotocol).
+- Bietet der Client **nur** nicht unterstützte `jarvis.vN` an (z.B. `jarvis.v2`) →
+  Ablehnung **vor** Accept mit `ws.close(code=1002)`.
+- Additive/unbekannte weitere Subprotocol-Angebote neben `jarvis.v1` sind unschädlich
+  (das erste unterstützte gewinnt).
+
+### V1-Envelope (jede Nachricht)
+
+Alle V1-Nachrichten (Server→Client) sind eine geschachtelte Hülle:
+
+```json
+{
+  "protocol_version": 1,
+  "type": "response",
+  "event_id": "<uuid4>",
+  "correlation_id": "<uuid4>",
+  "session_id": "<uuid4>",
+  "timestamp": "2026-07-18T12:34:56.789Z",
+  "sensitivity": "personal",
+  "payload": { "…": "eventspezifisch" }
+}
+```
+
+- **`protocol_version`** — Integer-Major `1`. Additive Erweiterungen bleiben `1`.
+- **`event_id`** — server-erzeugte UUIDv4 **je semantischem Event**. Ein Broadcast ist
+  ein Event → **dieselbe** `event_id` an alle Empfänger (keine Replay-/Dedup-Garantie).
+- **`correlation_id`** — verbindet einen Client Command (bzw. REST-Request) mit **allen**
+  Folge-Events. Eine gültige Client-`correlation_id` (UUIDv4) wird gespiegelt; sonst
+  server-erzeugt. Spontane Events (Health nach Connect, Settings-Broadcast) tragen eine
+  frische Server-Correlation.
+- **`session_id`** — server-erzeugte opake UUIDv4 **pro Verbindung** (stabil innerhalb der
+  Verbindung, nach Reconnect neu). **Nicht** der Auth-Token, **nicht** `str(id(ws))`.
+  Bei einem Broadcast erhält jeder Empfänger seine **eigene** `session_id`.
+- **`timestamp`** — RFC3339-UTC mit Millisekunden (`…Z`), aus dem Clock-Seam.
+- **`sensitivity`** — serverseitige Datenklasse (`public`/`local`/`personal`/`sensitive`);
+  **`secret` erscheint nie** (der Encoder ist fail-closed). Der Client kann sie nie setzen
+  oder herabstufen.
+
+### Client Commands (V1-Envelope, eingehend)
+
+Schlanke Command-Hülle `{protocol_version, type, correlation_id?, payload}`:
+
+| `type` | Payload | Wirkung |
+|---|---|---|
+| `say_text` | `{"text": "<nutzertext>"}` (≤ 16 KiB) | wie Legacy-`{text}` |
+| `stop` | `{}` | wie Legacy-`{type:"stop"}` |
+
+- Der Client darf **nur** `protocol_version`, `type`, optional `correlation_id`, `payload`
+  setzen. Server-Felder (`event_id`/`session_id`/`timestamp`/`sensitivity`) im Command →
+  Fehler `reserved_field`. Additive unbekannte Felder werden ignoriert.
+- `correlation_id` muss, falls gesetzt, eine UUIDv4 sein.
+
+### Server Events (V1, ausgehend)
+
+Dieselben acht semantischen Events wie Legacy, jeweils als V1-Envelope mit `type` ∈
+`health`, `response`, `action`, `error`, `stop`, `music_changed`, `app_event`,
+`launcher_changed`. Unterschiede zur Legacy-Projektion:
+
+- **`health`** — `payload` ist die **öffentliche Projektion** `{"warnings_count": int}`
+  (`sensitivity=public`); die Legacy-Warnliste/Pfade erscheinen nicht.
+- **`action`** — bei sensiblen Actions (`SCREEN`, `CLIPBOARD`, `PROJECT_CONTEXT`,
+  `RESEARCH`) ist `detail` unter V1 minimiert (Legacy exakt).
+- **`error`** — strukturiert: `{component, message, hint, code, retryable}`. Der
+  Frontend-Adapter bildet `message` auf das Legacy-Feld `text` ab.
+
+### V1-Fehler- und Close-Semantik
+
+| Situation | Reaktion |
+|---|---|
+| Malformed JSON | strukturierter `error` (`code:"malformed_json"`) → Close **1007** |
+| Frame > 64 KiB | `error` (`code:"too_large"`) → Close **1009** |
+| `say_text` > 16 KiB | `error` (`code:"too_large"`), Verbindung **bleibt offen** |
+| Falsche Major-Version | `error` (`code:"unsupported_version"`) → Close **1002** |
+| Server-Feld im Command | `error` (`code:"reserved_field"`), Verbindung bleibt offen |
+| Unbekannter `type` | `error` (`code:"unknown_command"`), Verbindung bleibt offen |
+
+Fehlermeldungen echoen **nie** den Rohwert der fehlerhaften Eingabe.
+
 ## Nicht abgedeckt / offen
 
-- **Keine** Protokollversionierung (`legacy-unversioned`) — bewusst; ein
-  `protocol_version`-Feld folgt frühestens in einer späteren Phase.
-- Frame-Verträge des Happy-Path (response/action) über den **echten** WS-Dialog:
-  Slice 4 (SEAM-CONVERSATION).
+- **Reconnect-Resume** ist ein Nicht-Ziel: nach Reconnect ist die `session_id` neu; es gibt
+  keinen Nachrichten-Replay.
+- **obslog-/Audit-Korrelation** (durchgängige `correlation_id` in den Betriebslogs) ist in
+  Phase 4H **nicht** verdrahtet (RFC-0005 Nicht-Ziel dieser Phase).
+- Das **Legacy-Restrisiko** des Health-Frames (Warntexte/Pfade) besteht nur im
+  Legacy-Modus; V1-Health ist die sichere `warnings_count`-Projektion.

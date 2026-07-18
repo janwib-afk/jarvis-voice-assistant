@@ -255,3 +255,33 @@ bauen keine Wire-Dicts mehr.
   Replay-/Exactly-once-Behauptung.
 - **Rollback:** Commit reverten.
 - **Commit:** `test(protocol): complete wire fault and privacy matrix`.
+
+### Slice 10 — Verträge, CI-Gates, Abschlussdoku
+- **Ziel:** die Dual-Stack-Verträge und Seams verbindlich dokumentieren; `wire_protocol`
+  in die Syntax-/Import-Gates aufnehmen; RFC-0005/CONTEXT/CURRENT_STATE auf „implementiert"
+  stellen. Kein Produktionscode.
+- **Änderung (CI):** `wire_protocol` in `.github/workflows/pr.yml` Gate 1 (`compileall`),
+  in `docs/quality/CI_PIPELINE.md` (beide `compileall`-Zeilen) und in
+  `scripts/smoke-test.py` `check_imports` ergänzt (Import-Gate).
+- **Änderung (Verträge):** `docs/contracts/WEBSOCKET_PROTOCOL.md` (Dual-Stack-Kopf +
+  V1-Abschnitt: Aushandlung, Envelope, Client Commands, Server Events, Fehler-/Close-Matrix),
+  `docs/contracts/REST_CONTRACTS.md` (Dual-Stack-Kopf + V1-Presentation + korrigierte
+  `/settings`-Zusätze `revision`/`If-Match`/`409`/`conflict`/`degraded`).
+- **Änderung (Seams/Glossar/Status):** `docs/quality/TEST_SEAMS.md` (SEAM-WIRE +
+  SEAM-MIXED-WIRE ergänzt; SEAM-BROWSER-UI/-WINDOWS von „deferred → Prompt 7" auf
+  „approved seit Prompt 7" korrigiert); `CONTEXT.md` (Wire-Contracts → IMPLEMENTIERT);
+  `docs/system/CURRENT_STATE.md` (Phase-4H-Statusblock); `RFC-0005` (Umsetzungsstatus-Note).
+- **Ergebnis:** `compileall` inkl. `wire_protocol` EXIT 0; volle Verifikation (Abschnitt 10
+  des Prompts) grün — siehe Abschlussbericht.
+- **Rollback:** Commit reverten (reine Doku/CI-Listen).
+- **Commit:** `docs(protocol): record dual-stack wire contracts`.
+
+---
+
+## Abschluss
+
+Slices 0–10 umgesetzt; Legacy byte-/shape-exakt erhalten, V1 opt-in über WS-Subprotocol
+`jarvis.v1` bzw. REST-`Accept: application/vnd.jarvis.v1+json`. Keine State-Machines, kein
+Capability-/Policy-Kernel, keine neue Dependency, kein Pydantic im Wire-Pfad. obslog-/
+Audit-Korrelation bleibt bewusst offen (spätere Phase). Finale Verifikations- und
+Hosted-Runner-Evidenz: siehe Prompt-15-Abschlussbericht.

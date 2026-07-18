@@ -187,11 +187,17 @@ vorhanden**. Nicht mit dem Ist-Stand vermischen.
 - **Outbox / Saga** — geplante Crash-Sicherheit für externe Wirkungen (Phase 6).
 - **Scheduler / Briefing / Workspace-Szene** — geplant (Phase 8).
 
-## Wire-Contracts (RFC-0005 akzeptiert — Umsetzung ab Prompt 15)
+## Wire-Contracts (RFC-0005 — IMPLEMENTIERT, Phase 4H)
 
 Diese Begriffe sind mit [RFC-0005](docs/architecture/RFC-0005-typed-versioned-wire-contracts.md)
-**akzeptiert**, aber **im aktuellen Code noch nicht implementiert** (die Produktion nutzt
-weiterhin die untypisierten Legacy-Verträge). Nicht mit dem Ist-Stand vermischen.
+akzeptiert **und in Phase 4H (Prompt 15) umgesetzt** — als tiefes Modul
+[`wire_protocol/`](wire_protocol/) mit typisierten Client Commands / Server Events und
+getrennten `LegacyCodec`/`V1Codec`. **V1 ist opt-in** (`Sec-WebSocket-Protocol: jarvis.v1`
+bzw. `Accept: application/vnd.jarvis.v1+json`); ohne Opt-in bleiben REST/WS **byte-/shape-exakt
+Legacy** (Default). `assistant_core`/`server` bauen keine Wire-Dicts mehr, sondern emittieren
+semantische Events über `EventSink`/`ConversationChannel`; Broadcasts laufen über die
+runtime-besessene `ConnectionRegistry`. Verlauf:
+[docs/architecture/PHASE4H_TYPED_WIRE_MIGRATION.md](docs/architecture/PHASE4H_TYPED_WIRE_MIGRATION.md).
 
 ### Wire Frame
 - **Bedeutung:** Das Transportformat einer einzelnen über REST/WS gesendeten Nachricht

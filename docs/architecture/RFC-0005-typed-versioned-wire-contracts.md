@@ -13,6 +13,20 @@
 > Architekturvarianten und legt die Entscheidungen D1–D12 fest. Die Produktion nutzt nach
 > Annahme weiterhin die **Legacy-Verträge**; die Umsetzung beginnt erst mit Prompt 15.
 
+> **Umsetzungsstatus (2026-07-18, Phase 4H — IMPLEMENTIERT):** Dieser RFC ist inkl.
+> [Amendment 1](#amendment-1--prompt-15-implementation-contracts) in Prompt 15
+> als tiefes Modul [`wire_protocol/`](../../wire_protocol/) umgesetzt (Variante C). WS-Opt-in
+> über `Sec-WebSocket-Protocol: jarvis.v1`, REST-Opt-in über `Accept:
+> application/vnd.jarvis.v1+json`; ohne Opt-in bleiben beide Transporte **byte-/shape-exakt
+> Legacy**. Nested V1-Envelope, server-erzeugte `event_id`/`session_id`/`timestamp`,
+> gespiegelte/erzeugte `correlation_id`, serverseitige `sensitivity` mit fail-closed
+> Redaction (`secret` nie auf dem Wire), strukturierte V1-Fehler + Close-Codes
+> (1002/1007/1009) / HTTP-Status (400/406/413). Frontend (`frontend/wire.js`) verhandelt V1
+> für WS und REST. Belegter Verlauf pro Slice:
+> [PHASE4H_TYPED_WIRE_MIGRATION.md](PHASE4H_TYPED_WIRE_MIGRATION.md). Ist-Verträge:
+> [../contracts/WEBSOCKET_PROTOCOL.md](../contracts/WEBSOCKET_PROTOCOL.md),
+> [../contracts/REST_CONTRACTS.md](../contracts/REST_CONTRACTS.md).
+
 ---
 
 ## 1. Kontext und Ist-Befund

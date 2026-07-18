@@ -1,9 +1,16 @@
-# Jarvis – REST-Verträge (Ist-Zustand)
+# Jarvis – REST-Verträge (Ist-Zustand, Dual-Stack: Legacy + V1)
 
 > Dokumentiert das **aktuelle** Verhalten der REST-Routen in `server.py`, nicht ein
-> Zielprotokoll. Stand 2026-07-14. Alle Beispielwerte sind synthetisch. Bezug:
-> [../quality/TEST_SEAMS.md](../quality/TEST_SEAMS.md) (SEAM-REST/-LAUNCHER),
-> [../security/SECURITY_REQUIREMENTS.md](../security/SECURITY_REQUIREMENTS.md).
+> Zielprotokoll. Stand 2026-07-18. Alle Beispielwerte sind synthetisch. Bezug:
+> [../quality/TEST_SEAMS.md](../quality/TEST_SEAMS.md) (SEAM-REST/-LAUNCHER/-WIRE),
+> [../security/SECURITY_REQUIREMENTS.md](../security/SECURITY_REQUIREMENTS.md),
+> [../architecture/RFC-0005-typed-versioned-wire-contracts.md](../architecture/RFC-0005-typed-versioned-wire-contracts.md).
+>
+> **Seit Phase 4H (RFC-0005) sind alle Routen Dual-Stack:** ohne V1-`Accept`-Header
+> antworten sie **byte-exakt Legacy** (die unten dokumentierten Formen). Mit `Accept:
+> application/vnd.jarvis.v1+json` wird der Legacy-Body in eine V1-Envelope verpackt
+> (Abschnitt „V1-Presentation" unten). Statuscodes, Auth (403) und Validierung sind in
+> beiden Modi identisch und laufen **vor** der Versionsverarbeitung.
 
 ## Gemeinsame Regeln
 
@@ -68,8 +75,9 @@ Alle folgenden Routen antworten `403` ohne gültiges `x-jarvis-token`.
 ### `GET /settings`
 - **Zweck:** UI-editierbare Settings + Startwarnungen lesen.
 - **Response `200`:** `{"ok": true, "settings": {<UI_EDITABLE_KEYS>}, "warnings":
-  [str]}`. `settings` enthält nur die Whitelist (`config_loader.UI_EDITABLE_KEYS`),
-  **nie** API-Keys.
+  [str], "revision": str}`. `settings` enthält nur die Whitelist
+  (`config_loader.UI_EDITABLE_KEYS`), **nie** API-Keys. `revision` ist die opake
+  Configuration-Revision (RFC-0003) für optimistisches Sperren beim Speichern.
 - **Wirkungsklasse:** `read-local`. **Datenklasse:** `personal` (Name/Rolle/Stadt/
   Pfade).
 - **Idempotenz:** ja.
@@ -79,19 +87,28 @@ Alle folgenden Routen antworten `403` ohne gültiges `x-jarvis-token`.
 ### `POST /settings`
 - **Zweck:** UI-editierbare Felder validieren, atomar speichern, live anwenden.
 - **Request:** JSON-Objekt aus `UI_EDITABLE_KEYS` (z.B. `{"city": "Beispielstadt",
-  "user_address": "Chef"}`).
+  "user_address": "Chef"}`). **Optionaler Header `If-Match: <revision>`** für
+  optimistisches Sperren (RFC-0003): fehlt er, wird gegen die frisch gelesene Basis
+  gearbeitet; ist er vorhanden und überholt → `409`.
 - **Response `200`:** `{"ok": true, "applied": [<sortierte Keys>], "warnings":
-  [str]}`.
+  [str], "revision": str}`; zusätzlich `"degraded": [str]`, falls der
+  Post-Commit-Refresh (Wetter/Vault) teilweise fehlschlug (der Save selbst gilt
+  trotzdem als erfolgreich).
 - **Statuscodes:** `200` ok; `400` Validierungsfehler oder ungültiges JSON; `403`
-  ohne Token; `500` Schreibfehler (`ConfigError`, nur Schlüsselnamen).
+  ohne Token; **`409`** `{"ok": false, "errors": [<Konflikttext>], "conflict": true}`
+  bei überholtem `If-Match` (Lost-Update verhindert); `500` Schreibfehler
+  (`ConfigError`, nur Schlüsselnamen).
 - **Validierung:** `config_loader.validate_settings_update` — geschützte Keys
   abgelehnt (`'anthropic_api_key' kann nur direkt in config.json geändert
   werden.`), unbekannte Keys abgelehnt.
 - **Wirkungsklasse:** `local-write` (`config.json`). **Datenklasse:** `personal`.
-- **Idempotenz:** ja (gleicher Body → gleicher Zustand; Merge, kein Append).
+- **Idempotenz:** ja (gleicher Body → gleicher Zustand; Merge, kein Append). Der
+  einzige Schreibweg ist `configuration.mutate` (Single Writer, `os.replace` als
+  Linearization Point).
 - **Security Requirements:** SI-5, `PROTECTED_KEYS`, atomarer Schreibpfad
   (`.tmp` → `os.replace`) bewahrt Secrets/unbekannte Felder.
-- **Tests:** `test_settings_api.py`, `test_config.py` (Persistenz).
+- **Tests:** `test_settings_api.py`, `test_config.py` (Persistenz),
+  `test_configuration.py` (Revision/Konflikt).
 
 ### `GET /music/files`
 - **Zweck:** `.mp3`-Liste des konfigurierten Musikordners + aktuelle Auswahl.
@@ -168,7 +185,66 @@ Alle Profil-Antworten nutzen die einheitliche Form
 
 ---
 
+---
+
+## V1-Presentation (opt-in, `application/vnd.jarvis.v1+json`)
+
+Seit Phase 4H (RFC-0005) verpackt `server.RestV1Middleware` jede Route optional in eine
+V1-Envelope. Die Middleware sitzt **vor** den Routen und ändert deren Logik/Status nicht.
+
+### Aushandlung
+
+- **Opt-in:** `Accept: application/vnd.jarvis.v1+json`. Fehlt der Header (oder nennt er
+  nur andere Typen) → **Legacy-Passthrough**, byte-exakt.
+- **Unbekannte Vendor-Major** (z.B. `application/vnd.jarvis.v2+json`) → **`406`**
+  (V1-Fehler-Envelope, `code:"unsupported_version"`).
+- **Correlation:** ein mitgegebener `X-Jarvis-Correlation-ID` (UUIDv4) wird in die
+  Envelope und als Response-Header **gespiegelt**; sonst server-erzeugt. REST-getriggerte
+  Broadcasts (`/commands/app/open`, `/music/selection`, `/launcher/*`) binden **dieselbe**
+  Request-Correlation → Response und WS-Broadcast teilen die `correlation_id`.
+
+### Envelope
+
+Erfolg: der übliche Legacy-Body wandert unverändert nach `payload`; Content-Type der
+Antwort ist `application/vnd.jarvis.v1+json`:
+
+```json
+{
+  "protocol_version": 1,
+  "type": "settings",
+  "event_id": "<uuid4>",
+  "correlation_id": "<uuid4>",
+  "session_id": null,
+  "timestamp": "2026-07-18T12:34:56.789Z",
+  "sensitivity": "personal",
+  "payload": { "…": "der Legacy-Body dieser Route" }
+}
+```
+
+- **`type`** ist die Routen-Familie (`health`, `settings`, `music_files`,
+  `music_selection`, `dashboard`, `app_open`, `launcher`); Fehler-Envelopes tragen
+  `type:"error"`. **`sensitivity`** ist pro Familie festgelegt (`_rest_family`:
+  health=`public`, settings/dashboard=`personal`, music/app_open/launcher=`local`).
+- **`session_id` ist bei REST immer `null`** (REST erfindet keine Conversation Session).
+- Der **HTTP-Status bleibt maßgeblich** (200/400/403/404/406/409/413/500); die Envelope
+  transportiert ihn nicht erneut.
+- **`GET /health` V1** liefert die **öffentliche Projektion** (`sensitivity=public`):
+  Warnungen → Anzahl, lokale Vault-Pfade entfernt (`_redact_health_v1`). Die Legacy-Form
+  (`GET /health` ohne V1-Accept) bleibt unverändert für Launcher/Smoke.
+
+### V1-Fehler / Grenzen
+
+| Situation | Reaktion |
+|---|---|
+| Unbekannte Vendor-Major | `406` + V1-Fehler-Envelope (`unsupported_version`) |
+| V1-Request-Body > 1 MiB | `413` + V1-Fehler-Envelope (`too_large`) |
+| Fachliche Route-Fehler (400/403/404/409/500) | unveränderter Status, Body als V1-Envelope |
+
+`secret` erscheint nie in Body, Envelope oder Header; Fehlermeldungen echoen keine Rohwerte.
+
 ## Nicht abgedeckt / offen
 
-- Durchgängige „ohne Token → 403"-Contract-Tests je Routen-Gruppe (Slice 1).
-- Response-Feld-Verträge zentral (Slice 2) statt vollständiger JSON-Snapshots.
+- **obslog-/Audit-Korrelation:** die REST-`correlation_id` fließt in Phase 4H **noch nicht**
+  in die Betriebslogs (RFC-0005 Nicht-Ziel dieser Phase).
+- Legacy bleibt der **Default**; ein Entfernen des Legacy-Passthroughs ist erst nach
+  vollständiger Consumer-Migration vorgesehen (spätere Phase).

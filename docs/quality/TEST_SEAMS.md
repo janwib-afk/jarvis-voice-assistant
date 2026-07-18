@@ -1,16 +1,19 @@
-# Jarvis – Test-Seams (Phase 3A / Prompt 6)
+# Jarvis – Test-Seams (Phase 3A / Prompt 6, erweitert bis Phase 4H)
 
-> Öffentliche Test-Seams, an denen Prompt 6 ein verhaltensorientiertes
-> Sicherheitsnetz aufbaut. **Ein Seam wird erst getestet, nachdem der Nutzer
-> ihn ausdrücklich bestätigt hat.** Stand: Entwurf zur Bestätigung.
+> Öffentliche Test-Seams, an denen ein verhaltensorientiertes Sicherheitsnetz
+> aufbaut. **Ein Seam wird erst getestet, nachdem der Nutzer ihn ausdrücklich
+> bestätigt hat.** Stand 2026-07-18.
 >
 > Grundregeln (aus `$tdd`): Test am öffentlichen Interface, nicht an Interna;
 > eigene Module nicht mocken; nur externe Grenzen kontrolliert ersetzen; erwartete
 > Werte aus den bestätigten Verträgen (siehe `docs/contracts/`) ableiten.
 >
 > Status ∈ {`proposed`, `approved`, `deferred`, `rejected`}.
-> **Vom Nutzer bestätigt am 2026-07-14** („Alle wie vorgeschlagen"): alle Seams
-> `approved`; SEAM-BROWSER-UI und der native Windows-Anteil `deferred → Prompt 7`.
+> **Vom Nutzer bestätigt am 2026-07-14** („Alle wie vorgeschlagen"): alle Prompt-6-Seams
+> `approved`. **Prompt 7 (Phase 3B) hat SEAM-BROWSER-UI und den nativen Windows-Anteil
+> umgesetzt** (E2E-/A11y-/Reduced-Motion-/Visual-Harness + Windows-Native-Smokes); beide
+> sind damit **`approved` statt `deferred`**. **Phase 4H (Prompt 15, RFC-0005)** ergänzt
+> **SEAM-WIRE** und **SEAM-MIXED-WIRE** für die typisierten/versionierten Wire-Contracts.
 
 ## Überblick
 
@@ -26,8 +29,10 @@
 | SEAM-MEMORY | Contract/Integration (Temp-Vault) | `memory` Inbox/Vault/Memory-Fns | Dateisystem = real (Tempdir); `ai` bei Dedup | gut | approved |
 | SEAM-PROVIDERS | Boundary-Fakes | `ai`/`synthesize_speech`/`browser_tools`/`clipboard`/`monitors` | jede Grenze spezifisch | gut | approved |
 | SEAM-LAUNCHER | Contract/Integration (TestClient) | Launcher-/Profil-REST + `app_launcher` Helfer | `_start_url`/`_start_process` | gut | approved |
-| SEAM-WINDOWS | Contract (Datenebene) | `monitors.detect_monitors`, `/launcher/monitors` | `monitors._enum_monitors_raw` (ctypes) | teilweise | approved (native Smokes → **Prompt 7**) |
-| SEAM-BROWSER-UI | — | sichtbares Browserverhalten, Rollen/Labels | — | — | **deferred → Prompt 7** |
+| SEAM-WINDOWS | Contract (Datenebene) + native Smokes | `monitors.detect_monitors`, `/launcher/monitors` | `monitors._enum_monitors_raw` (ctypes) | gut | approved (native Smokes seit Prompt 7) |
+| SEAM-BROWSER-UI | E2E/Visual/A11y (Playwright) | sichtbares Browserverhalten, Rollen/Labels | gestubbter E2E-Server (`server.app`, Fake-Provider) | gut | approved (seit Prompt 7) |
+| SEAM-WIRE | Contract (pur) | `wire_protocol` (Codecs/Decode/Negotiation, voll serialisiert) | Clock/ID über injizierte Seams | sehr gut | approved (RFC-0005, Phase 4H) |
+| SEAM-MIXED-WIRE | Integration (parallele WS) | gleichzeitige Legacy+V1-Verbindungen, versionsgerechte Broadcasts | `ai`/`synthesize_speech` (Provider) | gut | approved (RFC-0005, Phase 4H) |
 
 Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Seam).
 
@@ -279,20 +284,86 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
 - **Kontrollierte externe Grenze:** `monitors._enum_monitors_raw` (ctypes),
   `sys.platform`-Guard.
 - **Verbotene interne Prüfungen:** keine echten ctypes-/Fensteraufrufe.
-- **Testebene:** Contract (Datenebene). **Echte Windows-Native-Smokes und
-  pywebview-Fensterverhalten → Prompt 7.**
+- **Testebene:** Contract (Datenebene) **+ echte Windows-Native-Smokes** (seit Prompt 7).
 - **Aktuelle Abdeckung:** `test_monitors.py`, `test_launcher_api.py`
-  (Monitor-Route).
-- **Bestehende Testschuld:** native Smokes fehlen (bewusst, Prompt 7).
-- **Status:** approved (bestätigt 2026-07-14; nativer Anteil deferred → Prompt 7).
+  (Monitor-Route), `tests/native/windows_native_smoke.py`.
+- **Bestehende Testschuld:** keine gravierende (native Smokes seit Prompt 7 vorhanden).
+- **Status:** approved (bestätigt 2026-07-14; nativer Anteil seit Prompt 7 umgesetzt).
 
 ## SEAM-BROWSER-UI
 
-- **Reserviert für Prompt 7:** sichtbares Browserverhalten, Nutzerrollen/Labels
-  (Accessibility), Visual Regression. **Keine** CSS-/Implementierungsselektoren als
-  primäre Testoberfläche.
-- **Testebene:** E2E/Visual/A11y (nicht in Prompt 6).
-- **Status:** deferred → Prompt 7.
+- **Nutzer-/Caller-Verhalten:** sichtbares Browserverhalten, Nutzerrollen/Labels
+  (Accessibility), Reduced-Motion, Visual Regression über echte Playwright-Flows.
+- **Öffentliches Interface:** der gestubbte E2E-Server (`tests/browser/e2e_server.py`,
+  nutzt den realen `server.app` mit Fake-Providern); Beobachtung über sichtbare
+  Rollen/Labels/`window.__*`-Signale, **nicht** über CSS-/Implementierungsselektoren.
+- **Kontrollierte externe Grenze:** LLM/TTS/Browser-Provider (gestubbt); der Server
+  selbst ist real.
+- **Testebene:** E2E/Visual/A11y/Reduced-Motion (Playwright).
+- **Aktuelle Abdeckung:** `tests/browser/e2e_functional.py` (inkl. `protocol_v1`),
+  `e2e_a11y.py`, `e2e_reduced_motion.py`, `e2e_visual.py`.
+- **Bestehende Testschuld:** Visual-Baseline nur nach ausdrücklicher Nutzerfreigabe
+  aktualisieren (nie blind).
+- **Status:** approved (seit Prompt 7 / Phase 3B).
+
+## SEAM-WIRE
+
+- **Nutzer-/Caller-Verhalten:** `server`/`assistant_core` erzeugen keine Wire-Dicts mehr,
+  sondern emittieren **semantische Events** und decodieren **typisierte Commands** über
+  ein transportneutrales Modul; Legacy und V1 sind zwei Codecs am selben Seam.
+- **Öffentliches Interface:** `wire_protocol` (RFC-0005) — `WireProtocol`
+  (`encode_event`/`decode_command`/`rest_envelope`/`rest_error`/`new_*`),
+  `ProtocolContext` (`.legacy()`/`.v1(session_id)`/`.is_v1`), die typisierten Events
+  (`Health`/`SpokenResponse`/`ActionLifecycle`/`ErrorEvent`/`StopAck`/`MusicChanged`/
+  `AppEvent`/`LauncherChanged`) und Commands (`SayText`/`Stop`), `negotiate_ws`/
+  `negotiate_rest`, `ConversationChannel`/`EventSink`/`ConnectionRegistry`,
+  Clock/ID-Seams (`SystemClock`/`FixedClock`, `UuidGen`/`SequenceIdGen`).
+- **Eingaben:** typisierte Events + `ProtocolContext`; rohe eingehende dict-Frames;
+  Zeit/IDs über **injizierte Seams** (in Tests eingefroren → Golden-Vergleich).
+- **Beobachtbare Ausgaben:** vollständig serialisierte Frames (Legacy byte-/shape-exakt;
+  V1-Envelope mit `protocol_version`/`event_id`/`correlation_id`/`session_id`/`timestamp`/
+  `sensitivity`/`payload`); Decode-Ergebnis `SayText|Stop|ProtocolError|None`.
+- **Security-Invarianten:** `secret` nie encodierbar (kein `str()/repr()`); fail-closed
+  Redaction; Client kann `event_id`/`session_id`/`timestamp`/`sensitivity` nie setzen
+  (`reserved_field`); falsche Major → `unsupported_version`/Close 1002; Übergröße →
+  `too_large`; Health-V1 = öffentliche `warnings_count`-Projektion; sensible
+  `action.detail` unter V1 minimiert.
+- **Reale eigene Infrastruktur:** das gesamte Codec-/Decode-/Negotiation-/Channel-Modul
+  (pur, ohne Netz/Config/I/O — import-sicher).
+- **Kontrollierte externe Grenze:** nur Zeit/ID (Clock/ID-Seams). Sonst keine.
+- **Verbotene interne Prüfungen:** keine privaten Codec-/Validator-/Redaction-Helfer
+  isoliert testen — nur über den serialisierten Output beobachten.
+- **Testebene:** Contract (pur, Golden mit eingefrorener Clock/ID).
+- **Aktuelle Abdeckung:** `test_wire_core.py`, `test_wire_legacy_golden.py`,
+  `test_wire_channel.py` (Send-Lock/Registry/Broadcast).
+- **Bestehende Testschuld:** keine.
+- **Status:** approved (RFC-0005, Phase 4H).
+
+## SEAM-MIXED-WIRE
+
+- **Nutzer-/Caller-Verhalten:** Legacy- und V1-Clients hängen **gleichzeitig** am selben
+  `/ws`; ein REST-getriggerter Broadcast erreicht jeden versionsgerecht; ein semantischer
+  Broadcast teilt `event_id`+`correlation_id`, je Empfänger aber eigene `session_id`; eine
+  tote Verbindung wird entfernt, andere empfangen weiter.
+- **Öffentliches Interface:** echte parallele `TestClient`-WS gegen eine eigene Runtime
+  (Temp-Config, Fixture unberührt); WS-Frames + REST-Response/Header.
+- **Eingaben:** parallele Handshakes (mit/ohne `jarvis.v1`), REST-Requests mit optionalem
+  `X-Jarvis-Correlation-ID`.
+- **Beobachtbare Ausgaben:** byte-/shape-exaktes Legacy-`app_event` **und** V1-Envelope
+  nebeneinander; gemeinsame Broadcast-`event_id`/`correlation_id`; verschiedene
+  `session_id`; REST-Response ↔ Broadcast teilen die Request-Correlation.
+- **Security-Invarianten:** Send-Lock je Kanal (kein konkurrierender Sendefehler);
+  Legacy-Empfänger sehen nie V1-Metadaten; kein `secret` auf dem Wire.
+- **Reale eigene Infrastruktur:** WS-Endpunkt, `ConnectionRegistry`-Broadcast,
+  per-Empfänger-Encode, Dead-Connection-Removal.
+- **Kontrollierte externe Grenze:** `ai`/`synthesize_speech` (Provider).
+- **Verbotene interne Prüfungen:** kein Zugriff auf interne Registry-Strukturen — nur
+  Frames/Verbindungszustand beobachten.
+- **Testebene:** Integration (parallele echte WS).
+- **Aktuelle Abdeckung:** `test_wire_mixed.py`, `test_wire_v1_ws.py`, `test_wire_rest_v1.py`,
+  `test_wire_fault.py`.
+- **Bestehende Testschuld:** keine.
+- **Status:** approved (RFC-0005, Phase 4H).
 
 ---
 
