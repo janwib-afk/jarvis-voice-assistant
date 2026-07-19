@@ -53,11 +53,17 @@ from ._pilots import (  # noqa: F401
     build_registry,
     pilot_contracts,
 )
+from ._legacy import (  # noqa: F401
+    MIGRATED_ACTIONS,
+    is_migrated,
+    run_migrated,
+)
 
 __all__ = [
     "ACTIVE_RULES", "DATED_RULES", "Rule", "decide",
     "AttemptContext", "Cancelled", "Coordinator",
     "CapabilityDeps", "build_registry", "pilot_contracts",
+    "MIGRATED_ACTIONS", "is_migrated", "run_migrated",
     "AUDIT_FIELDS",
     "CapabilityContract", "CapabilityRequest", "CapabilityView",
     "DataClass", "Decision", "EffectClass", "Evidence", "Health",

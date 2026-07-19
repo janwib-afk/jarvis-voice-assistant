@@ -31,11 +31,13 @@ class CapabilityDeps:
 
 def pilot_contracts(deps: CapabilityDeps) -> list:
     """Die Pilot-Vertraege dieser Phase. Waechst Slice fuer Slice (5/7/8/9)."""
-    contracts: list = []
-    # Slice 5: web.search  — hier ergaenzt, wenn der Pilot verdrahtet wird.
-    # Slice 7: memory.forget
-    # Slice 8: launcher.profile.rename
-    # Slice 9: context.refresh
+    from . import _legacy
+    contracts: list = [
+        _legacy.web_search_contract(deps),   # Slice 5
+        # Slice 7: memory.forget
+        # Slice 8: launcher.profile.rename
+        # Slice 9: context.refresh
+    ]
     return contracts
 
 

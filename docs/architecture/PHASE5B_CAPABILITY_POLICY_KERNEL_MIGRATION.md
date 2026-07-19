@@ -386,3 +386,69 @@ leere Pilot-Registry bedeutet, dass `run_action_and_respond` das `capabilities`-
 noch nicht nutzt. Der erste tatsaechliche Dispatch kommt mit Slice 5 (`web.search`). Bis
 dahin ist die Verdrahtung belegt, aber ohne Wirkung auf einen Produktionspfad — genau die
 Grenze, die dieser Slice zieht.
+
+---
+
+## Slice 5 — Pilot web.search
+
+**Ziel.** `[ACTION:SEARCH]` byte- und shape-exakt lassen, aber `web.search` ueber
+**denselben** Coordinator fuehren. Der Legacy-Adapter setzt Provenance `derived`; das rohe
+Ergebnis wird byte-identisch in die bestehende Action-/Summary-/TTS-Orchestrierung
+projiziert.
+
+**Oeffentlicher Seam.** `SEAM-CAPABILITY` (web.search im Zensus) + `SEAM-CAPABILITY-COORDINATION`
+(Dispatch). `capability.is_migrated`, `capability.run_migrated`, `capability.MIGRATED_ACTIONS`.
+Kontrollierte Grenze: `browser_tools.search_and_read` (Provider) — nie echtes Netz.
+
+**Ausgangsverhalten.** `SEARCH` lief ueber `run_action_and_respond` ->
+`asyncio.wait_for(execute_action(...), spec.timeout)` -> `actions._exec_search` ->
+`browser_tools.search_and_read`. Kein Vertrag, keine Provenance, kein Kernel.
+
+**RED (tatsaechlich beobachtet).** `Ran 9 tests ... FAILED (failures=1, errors=7)` mit
+`AssertionError: 'web.search' not found in <Registry ...>`.
+
+**GREEN (minimal).**
+* `capability/_legacy.py` — `web.search`-Vertrag (Version 1), `is_migrated`,
+  `run_migrated`. `execute` importiert `browser_tools` **lazy** und formatiert das
+  Ergebnis deckungsgleich mit `actions._exec_search`.
+* `capability/_pilots.py` — `web.search` in `pilot_contracts`.
+* `assistant_core.run_action_and_respond` — dispatcht `SEARCH` bei vorhandenem
+  `capabilities` ueber `capability.run_migrated`; alle anderen Actions unveraendert ueber
+  `execute_action`. **Nur genau ein Timeout-Owner**: der migrierte Pfad hat **kein** aeusseres
+  `asyncio.wait_for`, weil der Coordinator den Timeout traegt (Amendment 1 §A1.6 F1).
+
+**Vollstaendige Effekt-Deklaration (Amendment 1 §A1.2).** `web.search.effects =
+{network-read, local-execute}`: network-read fuer Suche + Summary-LLM + TTS, local-execute
+fuer den sichtbaren Chromium-Prozess und den PowerShell-`SetForegroundWindow`-Fokus.
+Damit ist der Vertrag `GOVERNED` — die Folgewirkungen laufen nicht mehr unsichtbar an einer
+Ausfuehrungsfunktion vorbei.
+
+**Byte-Identitaet belegt.** Ein Test faehrt dieselbe gefakte Suchantwort durch den
+Alt-Pfad (`actions._exec_search`) **und** den migrierten Pfad und vergleicht das rohe
+Ergebnis — identisch. Damit bleiben Summary-LLM-Eingabe und gesprochene Frames unveraendert.
+
+**Mutationsnachweis (ausgefuehrt).** Fuenf Mutationen, alle **ROT**:
+
+| Mutation | Ergebnis |
+|---|---|
+| Provenance `operator` statt `derived` | **ROT** |
+| Zensus: `local-execute` weggelassen (Unter-Deklaration) | **ROT** |
+| Ergebnis nicht mehr byte-identisch (`[:2000]`→`[:1000]`) | **ROT** |
+| `SEARCH` nicht mehr als migriert markiert | **ROT** |
+| Dispatch entfernt (`SEARCH` zurueck auf `execute_action`) | **ROT** |
+
+**Regression.** Suite **973** grün (vorher 964, +9). Smoke **Exit 0**. Fixture
+`a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` — bytegleich.
+
+**Commit.** Slice 4 war `366046a`; die SHA dieses Slices traegt der Folge-Slice nach.
+
+**Rueckrollweg.** Commit reverten: `web.search` faellt aus `pilot_contracts`, der Dispatch
+in `run_action_and_respond` entfaellt, `SEARCH` laeuft wieder ueber `execute_action`. Der
+Alt-Pfad (`_exec_search`) blieb die ganze Zeit unangetastet daneben — reiner Rueckbau ohne
+Datenmigration.
+
+**Offene Restrisiken (ehrlich).** In diesem Slice ist die `safe-target`-Evidenz von
+`web.search` fest auf `True` gesetzt: sie spiegelt den **festen** Suchmaschinen-Host, nicht
+den geklickten Ergebnis-Link. **Die SSRF-Durchsetzung auf jede tatsaechliche Navigation
+(Ergebnis-Klick, Redirect) ist Slice 6** und hier noch nicht vorhanden. Slice 5 behauptet
+**keine** TM-002-Mitigation.

@@ -18,6 +18,7 @@ import time
 import anthropic
 
 import actions
+import capability
 import obslog
 import wire_protocol as wp
 import app_launcher
@@ -325,9 +326,15 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
     spec = actions.spec_for(action.type)
     await send_action_event(sink, "start", action.type, (action.payload or "")[:80])
     try:
-        # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
-        action_result = await asyncio.wait_for(
-            execute_action(action, ctx, mutate_launcher), timeout=spec.timeout)
+        if capabilities is not None and capability.is_migrated(action.type):
+            # Migrierter Pilot-Pfad (RFC-0007): der Coordinator ist der EINZIGE
+            # Timeout-Owner (Amendment 1 §A1.6 F1) — daher hier KEIN wait_for.
+            # CancelledError reicht der Coordinator unveraendert durch.
+            action_result = await capability.run_migrated(capabilities, action, ctx)
+        else:
+            # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
+            action_result = await asyncio.wait_for(
+                execute_action(action, ctx, mutate_launcher), timeout=spec.timeout)
         obslog.event("action.finished", action=action.type, result_len=len(action_result))
         await send_action_event(sink, "done", action.type)
     except asyncio.CancelledError:
