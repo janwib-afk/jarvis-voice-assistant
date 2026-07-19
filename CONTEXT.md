@@ -188,19 +188,20 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
 Diese Begriffe stammen aus dem Masterplan und sind **im aktuellen Code nicht
 vorhanden**. Nicht mit dem Ist-Stand vermischen.
 
-- **Capability** — geplanter Nachfolger des Action-Typs mit typisiertem
-  Schema/Preview/Autorisierung/Verify (Phase 5). Heute nur `Action`/`ActionSpec`.
-- **Policy** — geplante Datenklassen-/Wirkungsklassen-/Presence-Regeln (Phase 2/5).
+- **Capability** und **Policy** — mit [RFC-0007](docs/architecture/RFC-0007-capability-policy-kernel.md)
+  akzeptiert; die Begriffe stehen im eigenen Abschnitt weiter unten. Im Code heute nur
+  `Action`/`ActionSpec` mit zweiwertigem `risk`.
 - **Job / Workflow** — geplante dauerhafte, wiederaufnehmbare Abläufe mit SQLite
   (Phase 6). Heute laufen Nachrichten nur als flüchtige asyncio-Tasks.
 - **Outbox / Saga** — geplante Crash-Sicherheit für externe Wirkungen (Phase 6).
 - **Scheduler / Briefing / Workspace-Szene** — geplant (Phase 8).
 
-## Laufzeit-Zustandsbegriffe (RFC-0006 akzeptiert — Umsetzung ab Prompt 17)
+## Laufzeit-Zustandsbegriffe (RFC-0006 — IMPLEMENTIERT, Phase 4J)
 
 Diese Begriffe sind mit [RFC-0006](docs/architecture/RFC-0006-explicit-runtime-state-machines.md)
-(inkl. Amendment 1) **akzeptiert**, aber **noch nicht implementiert**: der Code nutzt weiterhin
-verstreute Flags, Modul-Dicts und `asyncio.Task`-Zustände. Nicht mit dem Ist-Stand vermischen.
+(inkl. Amendment 1) akzeptiert **und seit Phase 4J umgesetzt**: die früheren verstreuten Flags,
+Modul-Dicts und `asyncio.Task`-Zustände gibt es nicht mehr. Der Conversation-Zustand gehört der
+`ConversationSession`, der Browser-Zustand dem reinen Reducer in `frontend/voice.js`.
 Allgemeines Zustandsmaschinen-Vokabular (Transition, Effect) steht bewusst **nicht** hier, sondern
 im RFC — dieses Glossar führt nur Jarvis-eigene Begriffe.
 
@@ -252,6 +253,88 @@ im RFC — dieses Glossar führt nur Jarvis-eigene Begriffe.
   und eigenem Lifecycle.
 - **Abgrenzung:** **Kein** `asyncio.Task`, **keine** Obsidian-Aufgabe, **kein** Browser Task.
   Existiert heute nicht; ein Conversation-Stop ist kein Job-Cancel.
+
+## Capability- und Policy-Begriffe (RFC-0007 akzeptiert — Umsetzung ab Prompt 19)
+
+Diese Begriffe sind mit [RFC-0007](docs/architecture/RFC-0007-capability-policy-kernel.md)
+**akzeptiert**, aber **noch nicht implementiert**. In der Laufzeit gibt es heute weder
+Datenklassen noch Wirkungsklassen noch Scopes noch Presence — die gesamte
+Autorisierungslogik ist `ActionSpec.risk` mit den zwei Werten `low` und `confirm`. Nicht mit
+dem Ist-Stand vermischen. Allgemeines Vokabular (Adapter, Interface, Lifecycle) steht
+bewusst **nicht** hier, sondern im RFC.
+
+### Capability
+
+- **Bedeutung:** Eine benannte, versionierte Fähigkeit von Jarvis mit **deklarierten**
+  Wirkungen — einschließlich der Folgewirkungen, die heute unsichtbar sind.
+- **Verantwortung:** Vollständig beschreiben, was eine Fähigkeit tut und anfasst.
+- **Abgrenzung:** Nicht die `Action` (das ist der `[ACTION:…]`-Adapter) und nicht die
+  Ausführungsfunktion. Eine Capability kann ohne Action existieren — `launcher.profile.delete`
+  und `context.refresh` haben keine.
+- **Quellen:** RFC-0007 §8/§9.
+
+### Capability Attempt
+
+- **Bedeutung:** Ein einzelner Ausführungsversuch einer Capability.
+- **Verantwortung:** Einen Lifecycle-Durchlauf zusammenhalten und genau einen Ausgang liefern.
+- **Abgrenzung:** **Weder** Conversation Turn (der gehört der `ConversationSession`) **noch**
+  Job (dauerhaft, Phase 6). Überlebt keinen Prozessneustart.
+- **Quellen:** RFC-0007 §10/§11.
+
+### Policy Decision
+
+- **Bedeutung:** Das Ergebnis der reinen Entscheidungsfunktion — erlauben, verweigern oder
+  Anforderungen stellen.
+- **Verantwortung:** Die Frage „darf das jetzt, aus dieser Quelle, mit dieser Provenance und
+  dieser Präsenz?" an genau einer Stelle beantworten.
+- **Abgrenzung:** Nicht die Ausführung, nicht die Confirmation, nicht die Token-Prüfung.
+- **Quellen:** RFC-0007 §12.
+
+### Effect Class
+
+- **Bedeutung:** Was eine Wirkung *tut* — `read-local`, `read-sensitive`, `network-read`,
+  `local-write`, `local-execute`, `external-write`, `destructive`.
+- **Abgrenzung:** Nicht was sie *anfasst* (Data Class) und nicht *woran* (Scope).
+- **Quellen:** `docs/security/SECURITY_REQUIREMENTS.md` §3, RFC-0007 §13.
+
+### Data Class
+
+- **Bedeutung:** Wie schutzbedürftig die berührten Daten sind — `public`, `local`,
+  `personal`, `sensitive`, `secret`.
+- **Abgrenzung:** Nicht die Wirkungsklasse. `secret` ist strukturell nicht als
+  Capability-Ein- oder -Ausgabe darstellbar (SI-5).
+- **Quellen:** `docs/security/SECURITY_REQUIREMENTS.md` §2, RFC-0007 §13.
+
+### Provenance
+
+- **Bedeutung:** Ob eine Eingabe vom Bediener stammt (`operator`) oder aus untrusted Inhalt
+  abgeleitet ist (`derived`) — Web, Vault, Clipboard, Screen, Recherche, Verlauf, LLM-Ausgabe.
+- **Verantwortung:** SI-1 durchsetzbar machen: untrusted Inhalt darf nie eine Wirkungsklasse,
+  einen Scope, die Präsenz oder eine Autorisierung erhöhen.
+- **Abgrenzung:** **Nicht** Identität und **nicht** Präsenz. Ein `[ACTION:…]` aus einer
+  LLM-Antwort ist immer `derived`, auch wenn der Nutzer es wörtlich so gesagt hat — zwischen
+  Nutzer und Tag liegt das Modell.
+- **Quellen:** RFC-0007 §14, SI-1.
+
+### Presence Evidence
+
+- **Bedeutung:** Beobachtete Aussage über den Zustand des lokalen Desktops — `unknown`,
+  `unlocked`, `locked`, `remote`.
+- **Verantwortung:** Fail-closed sein. `unknown` ist Default und Nullwert.
+- **Abgrenzung:** **Nicht** Identität. Audio-Nutzergeste, WS-Verbindung, Session-Token,
+  Voice State und UI-Token sind **keine** belastbare Presence.
+- **Quellen:** RFC-0007 §15, `docs/security/IDENTITY_AND_PRESENCE_MODEL.md`.
+
+### Authorization Grant
+
+- **Bedeutung:** Eine an Preview-Hash, TTL und Single-Use gebundene Freigabe durch die
+  lokale UI.
+- **Verantwortung:** Eine Freigabe an genau die vorab gezeigte Wirkung binden und verfallen
+  lassen.
+- **Abgrenzung:** **Nicht die Confirmation.** Die Confirmation ist eine mündliche Rückfrage
+  und beweist Absicht, nicht den Principal; **Voice kann einen Grant nie erfüllen** (SI-2).
+  `MEMORY_FORGET` bleibt Confirmation und wird nicht umetikettiert.
+- **Quellen:** RFC-0007 §16.
 
 ## Wire-Contracts (RFC-0005 — IMPLEMENTIERT, Phase 4H)
 

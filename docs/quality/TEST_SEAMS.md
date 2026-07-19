@@ -372,6 +372,32 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
 
 ---
 
+## SEAM-CAPABILITY / SEAM-POLICY / SEAM-CAPABILITY-COORDINATION (RFC-0007, proposed)
+
+Mit [RFC-0007](../architecture/RFC-0007-capability-policy-kernel.md) akzeptiert, **noch
+nicht implementiert** — Umsetzung ab Prompt 19. Hier vorab festgehalten, damit Prompt 19
+nicht beiläufig neue Seams erfindet.
+
+| Seam | Ebene | Was geprüft wird | Kontrollierte Grenze | Status |
+|---|---|---|---|---|
+| **SEAM-POLICY** | Contract (rein) | `decide` als **Tabellentest** über Vertrag × Anfrage × Evidenz; deny-by-default; jede aktive Regel mit Erlaubnis- und Ablehnungsfall | keine — rein, I/O-frei | proposed |
+| **SEAM-CAPABILITY** | Contract (rein) | Registry-Bau, Schemavalidierung, abgeleiteter `tier()`, **Wirkungs-Zensus** | keine — rein | proposed |
+| **SEAM-CAPABILITY-COORDINATION** | Integration | Lifecycle-Reihenfolge und Nicht-Überspringbarkeit, geschlossenes Ergebnismodell, Cancel-Durchreichung, Idempotency | Fake-Verträge (kein Provider) | proposed |
+| **SSRF-Transport** | Ports & Adapters | Denylist je Hop, Redirect-Revalidierung, Selbstzugriff auf `127.0.0.1:8340` blockiert | Test-Transport, **kein echtes Netz** | proposed |
+
+**Verbotene interne Prüfungen:** kein Zugriff auf Registry-Interna, keine Assertions auf
+Regel-Reihenfolge (die Komposition ist ausdrücklich reihenfolgeunabhängig), keine
+Call-Count-Assertions auf `decide`.
+
+**Der Wirkungs-Zensus** nagelt für jede Capability die deklarierten Wirkungsklassen gegen
+eine überprüfte Liste fest. Eine Herabstufung erscheint dann als fehlschlagender Test im
+Diff statt als stille Feldänderung. Vorbild im Repo:
+`tests/test_action_deep_module.py:778` (`len(actions.REGISTRY) == 22`).
+
+**Presence bekommt in Phase 5 keinen Seam:** es gäbe genau einen Adapter, der immer
+`unknown` liefert. Der fail-closed-Default lebt im Feld, nicht in einem Port — ein Adapter
+ist ein hypothetischer Seam, kein echter.
+
 ## Bestehende implementation-coupled Tests (Legacy-Testschuld)
 
 | Test | Gepatchter privater Zustand | Ersetzende bestätigte Seam | Entfernen frühestens |

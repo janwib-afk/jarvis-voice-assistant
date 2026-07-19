@@ -15,6 +15,14 @@
 - **Autorisierung heute:** Voice/UI-Utterance (implizit) · Allowlist · URL-Policy ·
   Token (X-Jarvis-Token) · **Confirm** (mündliche Ja/Nein-Rückfrage).
 
+> **Ergänzung 2026-07-19 (RFC-0007 akzeptiert).** Diese Matrix bleibt die Bestandsaufnahme
+> der Actions. Das **vollständige Wirkungsinventar** — einschließlich der 10 zustandsändernden
+> REST-Routen ohne Action-Pfad, der nativen Pfade und der Wirkungen, die an `spec.execute()`
+> vorbeilaufen — steht in
+> [RFC-0007 §2.6](../architecture/RFC-0007-capability-policy-kernel.md). Dort ist auch belegt,
+> dass die unten vorläufig eingeordneten Daten- und Wirkungsklassen in der **Laufzeit nicht
+> existieren**: `ActionSpec.risk` kennt nur `low` und `confirm`.
+
 ## 1. Action-Capabilities (`[ACTION:...]`, 22 Typen)
 
 > Seit RFC-0001 (Phase 4B, 2026-07-15) beschreibt und fuehrt sich jede Action selbst
