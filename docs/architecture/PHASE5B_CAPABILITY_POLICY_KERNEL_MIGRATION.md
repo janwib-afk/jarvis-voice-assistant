@@ -702,3 +702,64 @@ die ganze Zeit unveraendert erreichbar.
 
 **Offene Restrisiken.** `launcher.profile.delete` bleibt ungeschuetzt (Amendment 1 §A1.4) —
 erst ein serverseitig nachweisbarer Preview-/Grant-Vertrag (Phase 10) schliesst sie.
+
+---
+
+## Slice 9 — Pilot context.refresh
+
+**Ziel.** Startup **und** Post-Settings-Save laufen ueber **dieselbe** Capability. Die
+bestehende Lifespan-, Commit- und Degraded-Semantik bleibt erhalten; Wetterzugriff und
+Vault-Scan sind vollstaendig deklariert. Kein Config-File, kein Vault, kein Netz in Tests;
+keine zusaetzlichen Startup-Aufrufe oder Providerkosten.
+
+**Oeffentlicher Seam.** `SEAM-CAPABILITY-COORDINATION` — `runtime.refresh_context`,
+`capability.context.refresh`. Kontrollierte Grenze: `assistant_core.refresh_data`
+(wttr.in + Vault) — im Test ein No-Op.
+
+**Ausgangsverhalten.** Zwei Nicht-Nutzer-Ausloeser riefen direkt
+`asyncio.to_thread(assistant_core.refresh_data)`: `runtime.aopen` (Serverstart,
+fire-and-forget-Task) und `server._post_commit` (nach jedem Settings-Save, mit
+Degraded-Behandlung).
+
+**RED (tatsaechlich beobachtet).** `Ran 6 tests ... FAILED (failures=2, errors=3)` mit
+`AssertionError: False is not true` (context.refresh nicht in der Registry; kein
+Capability-Dispatch).
+
+**GREEN (minimal).**
+* `capability/_legacy.py` — `context.refresh`-Vertrag (Version 1), leere Ein-/Ausgabe;
+  `execute` = `await asyncio.to_thread(assistant_core.refresh_data)`. Vollstaendig
+  deklariert: `effects={network-read, read-sensitive}` (wttr.in + Vault-Scan, §2.6.3).
+  Provenance `operator` (systeminitiiert, nicht aus untrusted Inhalt).
+* `runtime.py` — `refresh_context()` dispatcht ueber den Coordinator; `aopen` startet den
+  Task damit (weiterhin fire-and-forget: ein Fehler wird `FAILED`, crasht den Startup
+  nicht). **Kein zusaetzlicher Aufruf** — derselbe eine Refresh.
+* `server._post_commit` — nutzt `rt.refresh_context()`; ein nicht erfolgreicher Ausgang
+  rollt die persistierte Configuration NIE zurueck, sondern erzeugt den
+  **Degraded**-Zustand (Semantik unveraendert, inkl. `context.refresh_failed`-Log).
+
+**Semantik-Erhalt belegt.** Ein Test faehrt den echten Lifespan-Startup und weist nach,
+dass `refresh_data` **genau einmal** ueber die Capability laeuft (keine Extra-Kosten). Ein
+zweiter Test setzt `refresh_data` nach dem Startup auf Fehler und weist nach, dass
+`POST /settings` weiterhin **200 + `degraded`** liefert (Configuration bleibt gespeichert).
+
+**Mutationsnachweis (ausgefuehrt).** Drei Mutationen, alle **ROT**:
+
+| Mutation | Ergebnis |
+|---|---|
+| Zensus: `read-sensitive` weggelassen | **ROT** |
+| Startup-Refresh umgeht die Capability (Alt-Pfad) | **ROT** |
+| Post-Commit umgeht die Capability (direkter `refresh_data`) | **ROT** |
+
+**Regression.** Suite **1024** grün (vorher 1018, +6). Smoke **Exit 0**. Fixture
+`a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` — bytegleich.
+
+**Commit.** Slice 8 war `9dc52da`; die SHA dieses Slices traegt der Abschluss-Slice nach.
+
+**Rueckrollweg.** Commit reverten: `aopen` und `_post_commit` rufen wieder direkt
+`asyncio.to_thread(assistant_core.refresh_data)`; `refresh_context`, der Vertrag und der
+Registry-Eintrag entfallen. Kein Datenformat betroffen.
+
+**Offene Restrisiken.** Keine neuen. Damit sind **vier** Produktionspfade migriert
+(`web.search`, `memory.forget`, `launcher.profile.rename`, `context.refresh`); die
+verbleibenden **20** Actions und **neun** REST-Routen folgen erst in Prompt 20
+(Amendment 1 §A1.1). **Phase 5 ist mit diesem Prompt nicht abgeschlossen.**

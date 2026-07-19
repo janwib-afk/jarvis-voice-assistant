@@ -366,12 +366,14 @@ async def _post_commit(rt, needs_refresh: bool) -> list[str]:
     Configuration NIE zurueckrollen — ihr Fehler erzeugt einen Degraded-Zustand."""
     degraded: list[str] = []
     if needs_refresh:
-        try:
-            # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop.
-            await asyncio.to_thread(assistant_core.refresh_data)
-        except Exception as e:
+        # Post-Settings-Save-Refresh ueber die context.refresh-Capability (RFC-0007
+        # Slice 9) — derselbe Pfad wie beim Startup. Ein nicht erfolgreicher Ausgang
+        # rollt die gueltig persistierte Configuration NIE zurueck, sondern erzeugt
+        # den Degraded-Zustand (Semantik unveraendert).
+        outcome = await rt.refresh_context()
+        if outcome.status is not capability.OutcomeStatus.OK:
             obslog.event("context.refresh_failed", stage="settings",
-                         error_type=type(e).__name__)
+                         error_type=outcome.error_type or outcome.status.value)
             degraded.append("Kontextdaten (Wetter/Vault) konnten nicht neu geladen "
                             "werden — die Einstellungen sind gespeichert.")
     try:

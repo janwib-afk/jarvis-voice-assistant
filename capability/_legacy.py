@@ -142,6 +142,41 @@ def launcher_profile_rename_contract(deps=None) -> CapabilityContract:
     )
 
 
+async def _exec_context_refresh(payload, ctx):
+    """Kein Nutzerausloeser: Wetter (wttr.in) + Vault-Scan neu laden.
+
+    Deckungsgleich mit dem bisherigen ``asyncio.to_thread(assistant_core.refresh_data)``;
+    die blockierende Arbeit laeuft im Thread und blockiert die Event-Loop nicht.
+    """
+    import asyncio
+    import assistant_core
+    await asyncio.to_thread(assistant_core.refresh_data)
+    return {}
+
+
+def context_refresh_contract(deps=None) -> CapabilityContract:
+    """Der Pilot ``context.refresh`` (Version 1) — Serverstart und Post-Settings-Save.
+
+    Vollstaendig deklariert (Amendment 1 §A1.2): network-read (wttr.in) und
+    read-sensitive (Vault-Scan). Kein Nutzerausloeser (§2.6.3); Provenance ``operator``
+    (systeminitiiert, nicht aus untrusted Inhalt abgeleitet).
+    """
+    return CapabilityContract(
+        name="context.refresh", version=1, title="Kontextdaten aktualisieren",
+        inputs=InputSchema(fields=()),
+        output=OutputSchema(fields=()),
+        effects=(EffectClass.NETWORK_READ, EffectClass.READ_SENSITIVE),
+        reads=(DataClass.PUBLIC, DataClass.PERSONAL), writes=(),
+        scopes=(Scope.WEB, Scope.VAULT),
+        timeout_s=30,
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture={},
+        execute=_exec_context_refresh,
+    )
+
+
 #: Sprechbare Fehlerform je migrierter Capability, falls das Outcome nicht ``ok`` ist —
 #: bewahrt das beobachtbare Verhalten des jeweiligen Alt-Pfades.
 _FALLBACK_TEXT = {

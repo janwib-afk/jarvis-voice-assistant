@@ -36,7 +36,7 @@ def pilot_contracts(deps: CapabilityDeps) -> list:
         _legacy.web_search_contract(deps),               # Slice 5
         _legacy.memory_forget_contract(deps),            # Slice 7
         _legacy.launcher_profile_rename_contract(deps),  # Slice 8
-        # Slice 9: context.refresh
+        _legacy.context_refresh_contract(deps),          # Slice 9
     ]
     return contracts
 

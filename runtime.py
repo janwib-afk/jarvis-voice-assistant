@@ -110,6 +110,17 @@ class Runtime:
             raise RuntimeError("launcher persist nicht konfiguriert")
         return await self._launcher_persist(self, intent, kind, correlation_id)
 
+    async def refresh_context(self):
+        """Kontextdaten (Wetter + Vault-Scan) ueber den Coordinator neu laden.
+
+        Startup und Post-Settings-Save nutzen denselben Pfad (RFC-0007 Slice 9). Kein
+        Nutzerausloeser (§2.6.3); der Coordinator ist der Timeout-Owner. Gibt das
+        ``Outcome`` zurueck — der Aufrufer entscheidet ueber Degraded/Ignorieren."""
+        return await self.capabilities.attempt(
+            capability.CapabilityRequest(
+                "context.refresh", capability.Provenance.OPERATOR, {}),
+            capability.Evidence(target_allowed=True))
+
     @property
     def config(self) -> dict | None:
         """Read-only/defensive Projektion des aktuellen Configuration-Snapshots.
@@ -182,9 +193,10 @@ class Runtime:
                 api_key=self.config["anthropic_api_key"], timeout=30.0, max_retries=2)
         self.wire()
         if not os.environ.get("JARVIS_SKIP_STARTUP_REFRESH"):
-            import assistant_core
-            self._refresh_task = asyncio.create_task(
-                asyncio.to_thread(assistant_core.refresh_data))
+            # Startup-Refresh ueber die context.refresh-Capability (RFC-0007 Slice 9):
+            # weiterhin fire-and-forget (ein Fehler wird zum FAILED-Outcome und crasht
+            # den Startup nicht). Kein zusaetzlicher Aufruf — derselbe eine Refresh.
+            self._refresh_task = asyncio.create_task(self.refresh_context())
 
     async def aclose(self) -> None:
         """Lifespan-Shutdown: idempotent, partial-failure-fest. Refresh-Task
