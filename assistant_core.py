@@ -309,39 +309,69 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
     return f"{summary}\n\n{quellen_block}"
 
 
+async def _report_capability_denial(sink, spec, action, projection) -> None:
+    """Nicht-Erfolg einer Capability auf den BESTEHENDEN Fehlerpfad projizieren.
+
+    Gleiche Form wie der Exception-Zweig: ``action.failed``-Log, ``error``-Frame
+    und strukturierter Client-Fehler. Es entsteht kein neues Wire-Feld und keine
+    neue Protokollversion — nur der bisher faelschlich gesendete ``done`` bleibt
+    aus (Amendment 2 §A2.7).
+    """
+    component = "browser" if spec.is_browser else "action"
+    detail = projection.error_type or projection.status.value
+    obslog.event("action.failed", action=action.type,
+                 error_type=detail, component=component)
+    await send_action_event(sink, "error", action.type, detail)
+    await send_error(sink, component,
+                     f"Aktion '{spec.label}' fehlgeschlagen.", detail)
+
+
 async def run_action_and_respond(ctx, action: actions.Action, sink,
-                                 mutate_launcher=None, capabilities=None,
+                                 mutate_launcher=None, *, capabilities,
                                  confirmed=False):
     """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events).
 
-    ``capabilities``: der runtime-eigene Coordinator (RFC-0007 §17). In der Pilotphase
-    dispatchen die migrierten Pfade (Slices 5/7) hierueber; nicht migrierte Actions
-    laufen unveraendert ueber ``execute_action``.
+    ``capabilities``: der runtime-eigene Coordinator (RFC-0007 §17) — **erforderlich**.
+    Seit Phase 5C laufen ALLE 22 Actions hierueber; ein Aufruf ohne Coordinator waere
+    genau der Bypass, den Slice 12 entfernt hat, und ist deshalb kein zulaessiger
+    Zustand mehr (Amendment 2 §A2.9).
     ``confirmed``: die **echte** Operator-Bestaetigung desselben offenen Turns (das
     gesprochene „Ja") — nur sie erfuellt die ``needs:confirmation`` einer destruktiven
     Capability (§16). Modellinhalt setzt sie nie.
     """
     obslog.event("action.started", action=action.type)
 
-    # Quick voice feedback for SCREEN so user knows Jarvis is working
-    if action.type == "SCREEN":
-        await send_spoken_response(sink, "Ich werfe kurz einen Blick auf deinen Bildschirm.")
+    # Die kurze SCREEN-Rueckmeldung stand hier frueher VOR jeder Entscheidung —
+    # eine Wirkung ohne Freigabe. Sie laeuft jetzt im Capability-Execute, also
+    # nach dem Policy-Allow und weiterhin vor Aufnahme/Upload (Amendment 2 §A2.5).
+    async def _feedback(text: str) -> None:
+        await send_spoken_response(sink, text)
 
     spec = actions.spec_for(action.type)
     await send_action_event(sink, "start", action.type, (action.payload or "")[:80])
+    # Ein Nicht-Erfolg der Capability ist KEINE Exception — er darf aber auch nie
+    # den Erfolgs-Nachlauf ausloesen (Amendment 2 §A2.5/§A2.7).
+    denied = False
     try:
-        if capabilities is not None and capability.is_migrated(action.type):
-            # Migrierter Pilot-Pfad (RFC-0007): der Coordinator ist der EINZIGE
-            # Timeout-Owner (Amendment 1 §A1.6 F1) — daher hier KEIN wait_for.
-            # CancelledError reicht der Coordinator unveraendert durch.
-            action_result = await capability.run_migrated(
-                capabilities, action, ctx, confirmed=confirmed)
-        else:
-            # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
-            action_result = await asyncio.wait_for(
-                execute_action(action, ctx, mutate_launcher), timeout=spec.timeout)
-        obslog.event("action.finished", action=action.type, result_len=len(action_result))
-        await send_action_event(sink, "done", action.type)
+        # ALLE 22 Actions laufen ueber den Coordinator (Amendment 2 §A2.1/§A2.9).
+        # Der Coordinator ist der EINZIGE Timeout-Owner (Amendment 1 §A1.6 F1) —
+        # daher hier KEIN wait_for. CancelledError reicht er unveraendert durch.
+        # Der frueher hier stehende execute_action-Fallback ist entfallen: mit
+        # 22/22 hatte er keinen Nutzer mehr, und solange er existierte, war ein
+        # Rueckfall an Policy und Timeout-Ownership vorbei einen Tippfehler
+        # entfernt. Die ActionSpec-Executoren laufen weiterhin — aber
+        # ausschliesslich HINTER den Capability-Adaptern (RFC-0001 bleibt gueltig).
+        projection = await capability.run_migrated(
+            capabilities, action, _action_context(ctx, mutate_launcher),
+            confirmed=confirmed, feedback=_feedback)
+        action_result = projection.text
+        denied = not projection.ok
+        if denied:
+            await _report_capability_denial(sink, spec, action, projection)
+        if not denied:
+            obslog.event("action.finished", action=action.type,
+                         result_len=len(action_result))
+            await send_action_event(sink, "done", action.type)
     except asyncio.CancelledError:
         # Nutzer hat "Stopp" gesagt: Historie markieren, Abbruch weiterreichen.
         obslog.event("action.cancelled", action=action.type)
@@ -354,6 +384,15 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
         await send_action_event(sink, "error", action.type, type(e).__name__)
         await send_error(sink, component, f"Aktion '{spec.label}' fehlgeschlagen.", type(e).__name__)
         action_result = f"Fehler: {e}"
+
+    if denied:
+        # Kein Erfolgs-Nachlauf: weder Summary-LLM noch Quellen noch Autosave.
+        # Gesprochen wird die bestehende Fehlerform — nur der falsche ``done``
+        # und der Erfolgspfad dahinter entfallen (Amendment 2 §A2.5).
+        msg = f"Das hat leider nicht funktioniert, {USER_ADDRESS}."
+        ctx.remember("assistant", msg)
+        await send_spoken_response(sink, msg)
+        return
 
     if action.type == "OPEN":
         # Just opened browser, nothing to summarize
@@ -395,15 +434,16 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
     await send_spoken_response(sink, summary, display_text)
 
 
-async def process_message(ctx, user_text: str, sink, mutate_launcher=None,
-                          capabilities=None):
+async def process_message(ctx, user_text: str, sink, mutate_launcher=None, *,
+                          capabilities):
     """Process message and send responses via WebSocket.
 
     ``mutate_launcher``: semantischer Launcher-Hook der KONKRETEN App-Runtime,
     vom WS-Endpoint injiziert (RFC-0003) — keine Runtime-/server-Abhaengigkeit hier.
     ``capabilities``: der runtime-eigene Capability-Coordinator (RFC-0007 §17),
-    identisch vom WS-Endpoint injiziert. In der Pilotphase reichen wir ihn nur an die
-    Ausfuehrung durch; die Piloten (Slices 5/7) dispatchen migrierte Pfade darueber.
+    identisch vom WS-Endpoint injiziert — **erforderlich**. Seit Phase 5C laufen alle
+    22 Actions und der Kontext-Refresh hierueber; ein Turn ohne Coordinator waere
+    genau der Bypass, den Slice 12 entfernt hat (Amendment 2 §A2.9).
     ``assistant_core`` haelt keine Rueckreferenz auf ``server`` oder eine globale Runtime.
     """
     # Wartet eine riskante Aktion auf Bestätigung? Ja => ausführen, Nein => verwerfen,
@@ -427,9 +467,16 @@ async def process_message(ctx, user_text: str, sink, mutate_launcher=None,
                 await send_spoken_response(sink, msg)
             return
 
-    # Refresh weather + tasks on activate — blockiert die Event-Loop nicht.
+    # Refresh weather + tasks on activate — ueber DIESELBE Capability wie Startup
+    # und Settings-Save (Amendment 2 §A2.8). Vorher lief hier ein direkter
+    # ``to_thread(refresh_data)`` an Policy, Timeout und Audit vorbei. Position
+    # unveraendert: vor History und Prompt-Bau, damit der Refresh auf DIESEN
+    # Prompt wirkt. Die blockierende Arbeit bleibt im Thread.
     if "activate" in user_text.lower():
-        await asyncio.to_thread(refresh_data)
+        await capabilities.attempt(
+            capability.CapabilityRequest(
+                "context.refresh", capability.Provenance.OPERATOR, {}),
+            capability.Evidence(target_allowed=True))
 
     ctx.remember("user", user_text)
     history = ctx.recent()

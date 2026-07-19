@@ -117,8 +117,15 @@ class CapabilityHookInjectionTests(unittest.TestCase):
         import assistant_core
         params = _inspect.signature(assistant_core.process_message).parameters
         self.assertIn("capabilities", params)
-        self.assertIsNone(params["capabilities"].default,
-                          "capabilities muss optional sein (Default None)")
+        # Phase 5C Slice 12 kehrt die Prompt-19-Zusage um: der Coordinator war in
+        # der Pilotphase optional (Default None), weil die meisten Actions noch
+        # den Fallback nahmen. Mit 22/22 und ohne Fallback ist ein Turn OHNE
+        # Coordinator kein zulaessiger Zustand mehr — er ist genau der entfernte
+        # Bypass (Amendment 2 §A2.9).
+        import inspect as _i
+        self.assertIs(_i.Parameter.empty, params["capabilities"].default,
+                      "capabilities muss erforderlich sein (kein Default)")
+        self.assertIs(_i.Parameter.KEYWORD_ONLY, params["capabilities"].kind)
 
     def test_run_action_and_respond_accepts_a_capabilities_hook(self):
         import assistant_core

@@ -43,6 +43,14 @@ jobs:
         run: python scripts/smoke-test.py
       - name: Gate 2-4 - Full unittest suite
         run: python -m unittest discover -s tests
+      - name: Gate 8 - Phase-5C Capability-Audit (deterministisch)
+        # Laeuft zusaetzlich EINZELN, damit ein Rueckschritt bei den sieben
+        # Zusagen aus RFC-0007 Amendment 2 sofort und benannt auffaellt statt in
+        # der Gesamtsuite unterzugehen: 22/22 Actions, alle Contracts
+        # registrierbar, 9/10 Routen geschuetzt, Profile-Delete als einzige
+        # Ausnahme, kein gespeichertes risk, kein execute_action-Fallback, keine
+        # ungeprueften Browser-/HTTP-Callsites.
+        run: python -m unittest tests.test_phase5c_audit tests.test_capability_route_audit -v
       - name: Gate 7 - Safe Windows-native adapter smokes
         run: python tests/native/windows_native_smoke.py
 

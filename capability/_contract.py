@@ -48,9 +48,17 @@ class DataClass(enum.Enum):
 
 
 class Scope(enum.Enum):
-    """Ressourcenbereich — WORAN, nicht WAS."""
+    """Ressourcenbereich — WORAN, nicht WAS.
+
+    Die drei ``config.settings``/``config.music``/``conversation`` kommen mit
+    Amendment 2 §A2.4 hinzu, weil sie durch die Vollmigration **belegt** sind:
+    ``config.launcher`` wird nicht fuer fachfremde Daten missbraucht.
+    """
     VAULT = "vault"
     CONFIG_LAUNCHER = "config.launcher"
+    CONFIG_SETTINGS = "config.settings"
+    CONFIG_MUSIC = "config.music"
+    CONVERSATION = "conversation"
     WEB = "web"
     SCREEN = "screen"
     CLIPBOARD = "clipboard"
@@ -143,14 +151,101 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*)+$")
 
 
 @dataclass(frozen=True)
-class InputSchema:
-    """Deklarative Eingabeform. Adapter wandeln um, der Core validiert (§8)."""
-    fields: tuple[str, ...]
+class Field:
+    """Ein typisiertes Schemafeld (Amendment 2 §A2.4).
+
+    ``type=None`` bedeutet **untypisiert** — das ist genau die Form, die ein
+    schlichter ``str`` im Schema erzeugt, und haelt die Pilotvertraege aus
+    Prompt 19 unveraendert gueltig.
+    """
+    name: str
+    type: type | tuple[type, ...] | None = None
+    required: bool = True
 
     def __post_init__(self):
-        object.__setattr__(self, "fields", tuple(self.fields))
-        if len(set(self.fields)) != len(self.fields):
-            raise ValueError("Doppeltes Eingabefeld im Schema.")
+        if not isinstance(self.name, str) or not self.name:
+            raise ValueError("Feldname muss ein nichtleerer String sein.")
+        if not isinstance(self.required, bool):
+            raise TypeError("required muss bool sein.")
+
+    def check(self, value: Any) -> str | None:
+        """``None`` = in Ordnung, sonst der Grund. Rein, ohne Seiteneffekt."""
+        if self.type is None:
+            return None
+        # ``bool`` ist in Python ein ``int``. Fachlich ist es das nie — ein
+        # Zahlenfeld darf kein True annehmen (keine implizite Umwandlung).
+        if isinstance(value, bool) and self.type is not bool:
+            return f"{self.name}: erwartet {_type_name(self.type)}, erhielt bool"
+        if not isinstance(value, self.type):
+            return (f"{self.name}: erwartet {_type_name(self.type)}, "
+                    f"erhielt {type(value).__name__}")
+        return None
+
+
+def _type_name(t) -> str:
+    if isinstance(t, tuple):
+        return "|".join(sorted(x.__name__ for x in t))
+    return t.__name__
+
+
+def _as_fields(raw) -> tuple[Field, ...]:
+    """Nimmt Strings (untypisiert, required) **und** ``Field`` — rueckwaertskompatibel."""
+    out = []
+    for f in raw:
+        out.append(f if isinstance(f, Field) else Field(f))
+    names = [f.name for f in out]
+    if len(set(names)) != len(names):
+        raise ValueError("Doppeltes Feld im Schema.")
+    return tuple(out)
+
+
+class _TypedSchema:
+    """Gemeinsame Validierung von Ein- und Ausgabe (Amendment 2 §A2.4).
+
+    Die Fehlermeldungen sind **deterministisch**: alle Verletzungen werden
+    sortiert gesammelt, nie in Iterationsreihenfolge eines Dicts gemeldet.
+    """
+    _MISSING = "Fehlende Eingabefelder"
+    _NOUN = "Eingabe"
+    _CHECK_UNKNOWN = True
+
+    def _validate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, Mapping):
+            raise SchemaError(f"{self._NOUN} ist keine Abbildung.")
+        missing = sorted(f.name for f in self.fields
+                         if f.required and f.name not in payload)
+        if missing:
+            raise SchemaError(f"{self._MISSING}: {', '.join(missing)}")
+        if self._CHECK_UNKNOWN:
+            declared = {f.name for f in self.fields}
+            unknown = sorted(k for k in payload if k not in declared)
+            if unknown:
+                raise SchemaError(
+                    f"Unbekannte Eingabefelder: {', '.join(unknown)}")
+        problems = sorted(
+            p for p in (f.check(payload[f.name])
+                        for f in self.fields if f.name in payload)
+            if p is not None)
+        if problems:
+            raise SchemaError(f"Typfehler: {'; '.join(problems)}")
+        return {f.name: payload[f.name] for f in self.fields if f.name in payload}
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(f.name for f in self.fields)
+
+
+@dataclass(frozen=True)
+class InputSchema(_TypedSchema):
+    """Deklarative Eingabeform. Adapter wandeln um, der Core validiert (§8).
+
+    ``fields`` nimmt Strings (untypisiert/required, die Pilotform) **oder**
+    ``Field``-Eintraege mit Typ und required/optional.
+    """
+    fields: tuple
+
+    def __post_init__(self):
+        object.__setattr__(self, "fields", _as_fields(self.fields))
 
     def validate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """Wirft bei Schemaverstoss — ein Adapter, der Unsinn schickt, ist ein Fehler.
@@ -158,32 +253,27 @@ class InputSchema:
         Der Rueckgabewert ist die kanonische Projektion auf die deklarierten Felder;
         alles Unbekannte wird abgelehnt, nicht stillschweigend mitgeschleppt.
         """
-        if not isinstance(payload, Mapping):
-            raise SchemaError("Eingabe ist keine Abbildung.")
-        missing = [f for f in self.fields if f not in payload]
-        if missing:
-            raise SchemaError(f"Fehlende Eingabefelder: {', '.join(sorted(missing))}")
-        unknown = [k for k in payload if k not in self.fields]
-        if unknown:
-            raise SchemaError(f"Unbekannte Eingabefelder: {', '.join(sorted(unknown))}")
-        return {f: payload[f] for f in self.fields}
+        return self._validate(payload)
 
 
 @dataclass(frozen=True)
-class OutputSchema:
-    """Deklarative Ergebnisform."""
-    fields: tuple[str, ...]
+class OutputSchema(_TypedSchema):
+    """Deklarative Ergebnisform.
+
+    Unbekannte Felder werden hier **nicht** abgelehnt: das Ergebnis eines
+    Executors darf mehr tragen, als der Vertrag verspricht — die Projektion
+    schneidet es ohnehin auf die deklarierten Felder zu.
+    """
+    fields: tuple
+    _MISSING = "Fehlende Ergebnisfelder"
+    _NOUN = "Ergebnis"
+    _CHECK_UNKNOWN = False
 
     def __post_init__(self):
-        object.__setattr__(self, "fields", tuple(self.fields))
+        object.__setattr__(self, "fields", _as_fields(self.fields))
 
     def validate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        if not isinstance(payload, Mapping):
-            raise SchemaError("Ergebnis ist keine Abbildung.")
-        missing = [f for f in self.fields if f not in payload]
-        if missing:
-            raise SchemaError(f"Fehlende Ergebnisfelder: {', '.join(sorted(missing))}")
-        return {f: payload[f] for f in self.fields}
+        return self._validate(payload)
 
 
 class SchemaError(Exception):
@@ -311,6 +401,34 @@ class CapabilityRequest:
         if not isinstance(self.provenance, Provenance):
             raise TypeError("provenance muss ein Provenance-Wert sein.")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+
+
+@dataclass(frozen=True)
+class InvocationBindings:
+    """Request-spezifische Ports eines Versuchs (Amendment 2 §A2.4).
+
+    Bewusst **winzig, unveraenderlich und abgeschlossen**: genau vier schmale
+    Ports, die eine Capability nicht selbst besitzen darf. Es gibt hier
+    ausdruecklich **kein** Runtime-/Server-Objekt, **keinen** Service Locator,
+    **kein** frei erweiterbares Dependency-Dict, **kein** Session-Dictionary und
+    **keine** globale Rueckreferenz.
+
+    * ``ai``              — LLM-Client-Port (prod: Anthropic, Test: Fake)
+    * ``history``         — unveraenderlicher Snapshot des Sitzungsverlaufs
+    * ``mutate_launcher`` — semantischer Launcher-Mutationsport ``(intent, kind)``
+    * ``feedback``        — schmaler autorisierter Rueckmeldeport (nur SCREEN)
+
+    Die Bindings sind **nicht** Teil von ``CapabilityRequest``, Input-Schema,
+    Payload, ``meta``, Preview-/Idempotency-Hash, Policy-Entscheidung oder
+    Auditdaten. Sie werden nie serialisiert.
+    """
+    ai: Any = None
+    history: tuple = ()
+    mutate_launcher: Callable | None = None
+    feedback: Callable | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "history", tuple(self.history))
 
 
 @dataclass(frozen=True)

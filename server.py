@@ -16,6 +16,8 @@ import json
 import os
 import re
 import secrets
+from types import MappingProxyType
+from typing import Mapping
 
 import anthropic
 import httpx
@@ -341,24 +343,15 @@ async def broadcast_health(rt):
 
 
 def _live_apply(rt, merged: dict) -> bool:
-    """NOTWENDIGES Live-Apply (RFC-0003 D9): deterministisch, ohne Netz/Broadcast.
+    """Duennes Kompat-Alias auf ``Runtime.apply_document`` (Phase 5C Slice 9).
 
-    Laeuft INNERHALB der Transaktion — wirft es, stellt der Writer Datei und
-    Snapshot wieder her. Gibt zurueck, ob ein Post-Commit-Refresh noetig ist.
+    Das Live-Apply ist Runtime-Zustand, keine HTTP-Sache: es setzt Persona,
+    Vault-Pfade, Launcher-Registry und Startwarnungen des laufenden Prozesses.
+    Es liegt deshalb jetzt auf der Runtime, damit der Capability-Execute es ohne
+    einen zusaetzlichen Binding-Port erreicht (Amendment 2 §A2.4 nennt genau vier
+    Ports — ein fuenfter waere nicht gedeckt).
     """
-    needs_refresh = (
-        merged.get("city", assistant_core.CITY) != assistant_core.CITY
-        or merged.get("obsidian_inbox_path", memory.VAULT_PATH) != memory.VAULT_PATH
-        or merged.get("obsidian_inbox_folder", memory.INBOX_PATH) != memory.INBOX_PATH
-    )
-    assistant_core.configure(merged)
-    memory.configure(
-        vault_path=merged.get("obsidian_inbox_path", ""),
-        inbox_path=merged.get("obsidian_inbox_folder", ""),
-    )
-    app_launcher.configure(merged.get("apps", []), merged.get("launcher"))
-    rt.startup_warnings = config_loader.check_runtime_environment(merged)
-    return needs_refresh
+    return rt.apply_document(merged)
 
 
 async def _post_commit(rt, needs_refresh: bool) -> list[str]:
@@ -410,27 +403,32 @@ async def post_settings(request: Request):
     # If-Match ist OPTIONAL (Kompatibilitaet): fehlt er, wird gegen die frisch
     # gelesene Basis gearbeitet. Ist er vorhanden und ueberholt -> 409 (D6).
     expected = request.headers.get("if-match") or None
-    needs_refresh = False
-
-    def _apply(document):
-        nonlocal needs_refresh
-        needs_refresh = _live_apply(rt, document)
-
-    try:
-        await rt.configuration.mutate(
-            configuration.SetSettings(updates), expected_revision=expected, apply=_apply)
-    except configuration.ConfigConflict as e:
-        return JSONResponse({"ok": False, "errors": [str(e)], "conflict": True},
-                            status_code=409)
-    except config_loader.ConfigError as e:
+    # Ueber den Coordinator (RFC-0007 A2 §A2.3). Konflikt und Validierungsfehler
+    # sind Domaenen-ERGEBNISSE, keine Exceptions — die Route unterscheidet
+    # 409/500 daher aus Feldern statt aus Ausnahmen.
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(
+            "settings.update", capability.Provenance.OPERATOR,
+            {"updates": updates, "expected_revision": expected}),
+        capability.Evidence(),
+        meta={"correlation_id": _rest_correlation(request)})
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return JSONResponse({"ok": False, "errors": ["Speichern fehlgeschlagen."]},
+                            status_code=500)
+    result = outcome.value
+    if not result["ok"]:
+        if result["conflict"]:
+            return JSONResponse({"ok": False, "errors": [result["error"]],
+                                 "conflict": True}, status_code=409)
         # ConfigError-Meldungen nennen nur Schluesselnamen, nie Werte.
-        return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
+        return JSONResponse({"ok": False, "errors": [result["error"]]},
+                            status_code=500)
 
-    degraded = await _post_commit(rt, needs_refresh)
+    degraded = await _post_commit(rt, result["needs_refresh"])
     obslog.event("settings.saved", changed=len(updates))
     body = {"ok": True, "applied": sorted(updates.keys()),
             "warnings": rt.startup_warnings,
-            "revision": rt.configuration.snapshot().revision}
+            "revision": result["revision"]}
     if degraded:
         body["degraded"] = degraded
     return body
@@ -514,20 +512,21 @@ async def music_selection(request: Request):
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
 
     rt = request.app.state.runtime
-    needs_refresh = False
-
-    def _apply(document):
-        nonlocal needs_refresh
-        needs_refresh = _live_apply(rt, document)
-
-    try:
-        await rt.configuration.mutate(configuration.SelectMusic(file), apply=_apply)
-    except config_loader.ConfigError as e:
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(
+            "music.selection.set", capability.Provenance.OPERATOR, {"file": file}),
+        capability.Evidence(),
+        meta={"correlation_id": _rest_correlation(request)})
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return JSONResponse({"ok": False, "errors": ["Speichern fehlgeschlagen."]},
+                            status_code=500)
+    result = outcome.value
+    if not result["ok"]:
         # Ordner fehlt/Datei nicht gefunden -> wie bisher 400 (Nutzerfehler).
-        message = str(e)
+        message = result["error"]
         status = 400 if ("Musikordner" in message or "Datei nicht" in message) else 500
         return JSONResponse({"ok": False, "errors": [message]}, status_code=status)
-    await _post_commit(rt, needs_refresh)
+    await _post_commit(rt, result["needs_refresh"])
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
     await rt.connections.broadcast(wp.MusicChanged(selected=file),
@@ -576,7 +575,21 @@ async def command_app_open(request: Request):
     if not isinstance(app_query, str) or not app_query.strip():
         return JSONResponse({"ok": False, "errors": ["Feld 'app' fehlt."]}, status_code=400)
 
-    result = await asyncio.to_thread(app_launcher.launch, app_query)
+    rt = request.app.state.runtime
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(
+            "launcher.app.open", capability.Provenance.OPERATOR,
+            {"app_query": app_query}),
+        capability.Evidence(target_allowed=await capability.target_evidence(
+            rt.capabilities, "launcher.app.open", {"app_query": app_query})),
+        meta={"correlation_id": _rest_correlation(request)})
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return JSONResponse({"ok": False, "errors": ["App-Start fehlgeschlagen."]},
+                            status_code=500)
+    # Dieselbe Ausfuehrung, zwei Projektionen: die Stimme nutzt ``text``, die
+    # Route den vollen Befund. Der Body bleibt byte-/shape-identisch.
+    result = {"ok": outcome.value["ok"], "app": outcome.value["app"],
+              "name": outcome.value["name"], "message": outcome.value["text"]}
     await request.app.state.runtime.connections.broadcast(
         wp.AppEvent(ok=result["ok"], app=result["app"], name=result["name"],
                     message=result["message"]),
@@ -655,6 +668,68 @@ async def launcher_list_apps(request: Request):
             "apps": app_launcher.list_apps()}
 
 
+#: Audit-Register aller MUTIERENDEN REST-Routen (Phase 5C Slice 11).
+#:
+#: Schluessel ist ``(Methode, Pfad)``, Wert der Capability-Vertrag, ueber den die
+#: Route laeuft — oder ``None`` fuer eine **datierte, begruendete** Ausnahme.
+#: Eine neue mutierende Route, die hier fehlt, macht den Audit-Test rot; damit
+#: kann kein Wirkungspfad still am Coordinator vorbei entstehen.
+MUTATING_ROUTE_CAPABILITIES: Mapping[tuple[str, str], str | None] = MappingProxyType({
+    ("POST", "/settings"): "settings.update",
+    ("POST", "/music/selection"): "music.selection.set",
+    ("POST", "/commands/app/open"): "launcher.app.open",
+    ("POST", "/launcher/apps/{app_id}/toggle"): "launcher.app.autostart.set",
+    ("POST", "/launcher/apps/{app_id}/placement"): "launcher.app.placement.set",
+    ("POST", "/launcher/profiles"): "launcher.profile.create",
+    ("POST", "/launcher/profiles/{profile_id}/activate"): "launcher.profile.activate",
+    ("POST", "/launcher/profiles/{profile_id}/duplicate"): "launcher.profile.duplicate",
+    ("POST", "/launcher/profiles/{profile_id}/rename"): "launcher.profile.rename",
+    # ── Die EINZIGE Ausnahme (RFC-0007 Amendment 2 §A2.1) ───────────────────
+    # ``launcher.profile.delete`` bleibt bis Phase 10 offen: der Zwei-Klick-Dialog
+    # ist browserlokal und serverseitig NICHT ueberpruefbar. Es gibt bisher keine
+    # Preview-/Grant-Laufzeit, die eine echte Bestaetigung belegen koennte. Die
+    # Route wird ausdruecklich NICHT mit einer Schein-Confirmation versehen.
+    ("DELETE", "/launcher/profiles/{profile_id}"): None,
+})
+
+#: Die datierte Ausnahme, einzeln benannt — damit ein Test sie NAMENTLICH pruefen
+#: kann statt nur zu zaehlen.
+DELETE_EXCEPTION = ("DELETE", "/launcher/profiles/{profile_id}")
+
+
+async def _launcher_capability(request, name: str, payload: dict):
+    """REST-Adapter vor den GETEILTEN Capability-Vertrag (RFC-0007 A2 §A2.3).
+
+    Voice und REST benutzen bei derselben fachlichen Operation denselben Vertrag;
+    die Route projiziert nur anders. Der semantische Mutationsport wird als
+    Invocation-Binding uebergeben — Configuration bleibt der einzige Writer, und
+    Broadcast wie Correlation laufen unveraendert ueber ``persist_launcher_intent``.
+
+    Rueckgabe: ``(value, error_response)`` — genau eines ist gesetzt.
+    """
+    rt = request.app.state.runtime
+    correlation_id = _rest_correlation(request)
+
+    async def _port(intent, kind):
+        return await persist_launcher_intent(rt, intent, kind, correlation_id)
+
+    # Dieselbe Evidenz-Logik wie der Sprachpfad: feste, im Code stehende Ziele
+    # (hier der TTS-Provider) sind belegt, modellgesteuerte URLs nicht.
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(name, capability.Provenance.OPERATOR, payload),
+        capability.Evidence(target_allowed=await capability.target_evidence(
+            rt.capabilities, name, payload)),
+        meta={"correlation_id": correlation_id},
+        bindings=capability.InvocationBindings(mutate_launcher=_port))
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return None, JSONResponse({"ok": False, "errors": ["Aktion fehlgeschlagen."]},
+                                  status_code=500)
+    errors = list(outcome.value.get("errors") or ())
+    if errors:
+        return None, JSONResponse({"ok": False, "errors": errors}, status_code=500)
+    return outcome.value, None
+
+
 @router.post("/launcher/apps/{app_id}/toggle")
 async def launcher_toggle_autostart(app_id: str, request: Request):
     """Autostart einer bekannten App setzen — expliziter Boolean statt Flip,
@@ -674,8 +749,9 @@ async def launcher_toggle_autostart(app_id: str, request: Request):
 
     if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
-    _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.SetAutostart(app_id, value), "autostart", _rest_correlation(request))
+    _value, err = await _launcher_capability(
+        request, "launcher.app.autostart.set",
+        {"app_query": app_id, "enabled": value})
     if err is not None:
         return err
     obslog.event("autostart.changed", app=app_id, enabled=value)
@@ -712,9 +788,9 @@ async def launcher_set_placement(app_id: str, request: Request):
 
     if app_launcher.find_app(app_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekannte App."]}, status_code=404)
-    _merged, err = await _persist_launcher(
-        request.app.state.runtime,
-        configuration.SetPlacement(app_id, body["monitor"], body["zone"]), "placement", _rest_correlation(request))
+    _value, err = await _launcher_capability(
+        request, "launcher.app.placement.set",
+        {"placement": f"{app_id} | {body['monitor']} | {body['zone']}"})
     if err is not None:
         return err
     # Zu diesem Zeitpunkt sind monitor/zone Allowlist-Konstanten, keine Nutzerdaten.
@@ -769,7 +845,9 @@ async def launcher_create_profile(request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
+    _value, err = await _launcher_capability(
+        request, "launcher.profile.create",
+        {"profile_id": body.get("id"), "name": name})
     if err is not None:
         return err
     obslog.event("profile.changed", kind="created", active=app_launcher.ACTIVE_PROFILE)
@@ -782,8 +860,11 @@ async def launcher_activate_profile(profile_id: str, request: Request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
     if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.ActivateProfile(profile_id), "profile", _rest_correlation(request))
+    _value, err = await _launcher_capability(
+        request, "launcher.profile.activate",
+        # force=True: die Route hat schon immer unbedingt persistiert und
+        # ``launcher_changed`` gebroadcastet — auch beim erneuten Aktivieren.
+        {"profile_query": profile_id, "force": True})
     if err is not None:
         return err
     obslog.event("profile.changed", kind="activated", active=app_launcher.ACTIVE_PROFILE)
@@ -806,7 +887,9 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
+    _value, err = await _launcher_capability(
+        request, "launcher.profile.duplicate",
+        {"source_id": profile_id, "profile_id": body.get("id"), "name": name})
     if err is not None:
         return err
     obslog.event("profile.changed", kind="duplicated", active=app_launcher.ACTIVE_PROFILE)

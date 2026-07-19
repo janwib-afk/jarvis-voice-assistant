@@ -37,6 +37,30 @@ def pilot_contracts(deps: CapabilityDeps) -> list:
         _legacy.memory_forget_contract(deps),            # Slice 7
         _legacy.launcher_profile_rename_contract(deps),  # Slice 8
         _legacy.context_refresh_contract(deps),          # Slice 9
+        # ── Phase 5C (Prompt 20) ────────────────────────────────────────────
+        _legacy.launcher_profile_status_contract(deps),   # 5C Slice 1
+        _legacy.conversation_summary_contract(deps),      # 5C Slice 1
+        _legacy.web_browse_contract(deps),                # 5C Slice 3
+        _legacy.web_open_contract(deps),                  # 5C Slice 3
+        _legacy.web_news_contract(deps),                  # 5C Slice 3
+        _legacy.web_research_contract(deps),              # 5C Slice 3
+        _legacy.vault_inbox_read_contract(deps),          # 5C Slice 4
+        _legacy.memory_read_contract(deps),               # 5C Slice 4
+        _legacy.vault_notes_recent_contract(deps),        # 5C Slice 4
+        _legacy.vault_project_context_contract(deps),     # 5C Slice 4
+        _legacy.vault_inbox_write_contract(deps),         # 5C Slice 5
+        _legacy.memory_write_contract(deps),              # 5C Slice 5
+        _legacy.clipboard_note_contract(deps),            # 5C Slice 5
+        _legacy.clipboard_process_contract(deps),         # 5C Slice 6
+        _legacy.screen_describe_contract(deps),           # 5C Slice 6
+        _legacy.launcher_app_open_contract(deps),         # 5C Slice 7
+        _legacy.launcher_profile_activate_contract(deps), # 5C Slice 7
+        _legacy.launcher_autostart_set_contract(deps),    # 5C Slice 7
+        _legacy.launcher_placement_set_contract(deps),    # 5C Slice 7
+        _legacy.settings_update_contract(deps),           # 5C Slice 9
+        _legacy.music_selection_contract(deps),           # 5C Slice 9
+        _legacy.launcher_profile_create_contract(deps),   # 5C Slice 9
+        _legacy.launcher_profile_duplicate_contract(deps),# 5C Slice 9
     ]
     return contracts
 

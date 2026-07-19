@@ -120,3 +120,45 @@ emittiert `[ACTION:TYP]`. Stop/Cancel gilt global: laufende Nachrichten laufen a
 - Nur eine Confirm-Aktion (`MEMORY_FORGET`); riskante Wirkungen sonst implizit — **Phase 5**.
 - Untertrusted Web-/Screen-/Clipboard-/Vault-Inhalte fließen ungefiltert ins LLM — **Phase 2/7**.
 - Kein Audit mit Korrelations-IDs, keine Job-Persistenz/Outbox — **Phase 4/6/11**.
+
+## Phase 5C — Wirkungsinventar aller 22 Actions (Prompt 20)
+
+Diese Tabelle ist **aus der laufenden Registry erzeugt**, nicht handgepflegt. Der
+Phase-5C-Audit (`tests/test_phase5c_audit.py`) hält sie ehrlich.
+
+| Action | Capability | Effects | Reads | Writes | Scopes | Timeout | Tier |
+|---|---|---|---|---|---|---|---|
+| `APP_AUTOSTART_OFF` | `launcher.app.autostart.set` | local-write/network-read | local | local | apps/config.launcher | 15s | governed |
+| `APP_AUTOSTART_ON` | `launcher.app.autostart.set` | local-write/network-read | local | local | apps/config.launcher | 15s | governed |
+| `APP_OPEN` | `launcher.app.open` | local-execute/network-read | local | — | apps | 15s | governed |
+| `APP_PLACE` | `launcher.app.placement.set` | local-write/network-read | local | local | apps/config.launcher | 15s | governed |
+| `BROWSE` | `web.browse` | local-execute/network-read | public | — | web | 60s | governed |
+| `CLIPBOARD` | `clipboard.process` | network-read/read-sensitive | sensitive | — | clipboard | 60s | governed |
+| `CLIPBOARD_NOTE` | `clipboard.note.create` | local-write/network-read/read-sensitive | personal | personal | clipboard/vault | 60s | governed |
+| `INBOX_READ` | `vault.inbox.read` | network-read/read-sensitive | personal | — | vault | 60s | governed |
+| `INBOX_WRITE` | `vault.inbox.write` | local-write/network-read/read-sensitive | personal | personal | vault | 60s | governed |
+| `MEMORY_FORGET` | `memory.forget` | destructive/network-read | personal | personal | vault | 60s | governed |
+| `MEMORY_READ` | `memory.read` | network-read/read-sensitive | personal | — | vault | 60s | governed |
+| `MEMORY_WRITE` | `memory.write` | local-write/network-read | personal | personal | vault | 60s | governed |
+| `NEWS` | `web.news` | local-execute/network-read | public | — | web | 60s | governed |
+| `NOTES_RECENT` | `vault.notes.recent` | network-read/read-sensitive | personal | — | vault | 60s | governed |
+| `OPEN` | `web.open` | local-execute/network-read | public | — | web | 60s | governed |
+| `PROFILE_ACTIVATE` | `launcher.profile.activate` | local-write/network-read | local | local | config.launcher | 15s | governed |
+| `PROFILE_STATUS` | `launcher.profile.status` | network-read/read-local | local | — | apps/config.launcher | 15s | trivial |
+| `PROJECT_CONTEXT` | `vault.project.context` | network-read/read-sensitive | personal | — | vault | 60s | governed |
+| `RESEARCH` | `web.research` | local-execute/local-write/network-read | public | personal | vault/web | 180s | governed |
+| `SCREEN` | `screen.describe` | network-read/read-sensitive | sensitive | — | screen | 60s | governed |
+| `SEARCH` | `web.search` | local-execute/network-read | public | — | web | 60s | governed |
+| `SESSION_SUMMARY` | `conversation.summary` | network-read/read-local | personal | — | conversation | 60s | governed |
+
+**Lesehinweise.**
+* `network-read` erscheint bei fast jedem Pfad: 15 Actions schicken ihr Ergebnis durch den
+  Summary-LLM, sechs Launcher-Actions sprechen es direkt über TTS, `OPEN` ist selbst ein
+  Browserpfad. Das ist keine Vorsicht, sondern der belegte Folgeeffekt.
+* `APP_AUTOSTART_ON` und `APP_AUTOSTART_OFF` teilen einen Vertrag — 22 Actions auf 21 Namen.
+* `vault.inbox.write` und `clipboard.note.create` tragen `read-sensitive`, weil
+  `memory.write_inbox_entry` beim Dedup vorhandene persönliche Inbox-Inhalte liest **und**
+  an das LLM sendet.
+* `memory.forget` ist der einzige `destructive`-Vertrag — daraus wird `CONFIRM_ACTIONS`
+  abgeleitet; ein gespeichertes `risk` existiert nicht mehr.
+

@@ -20,8 +20,10 @@ from ._contract import (  # noqa: F401
     Decision,
     EffectClass,
     Evidence,
+    Field,
     Health,
     InputSchema,
+    InvocationBindings,
     Outcome,
     OutcomeStatus,
     OutputSchema,
@@ -55,8 +57,10 @@ from ._pilots import (  # noqa: F401
 )
 from ._legacy import (  # noqa: F401
     MIGRATED_ACTIONS,
+    LegacyResult,
     is_migrated,
     run_migrated,
+    target_evidence,
 )
 from ._ssrf import (  # noqa: F401
     SSRFBlocked,
@@ -71,13 +75,15 @@ __all__ = [
     "ACTIVE_RULES", "DATED_RULES", "Rule", "decide",
     "AttemptContext", "Cancelled", "Coordinator",
     "CapabilityDeps", "build_registry", "pilot_contracts",
-    "MIGRATED_ACTIONS", "is_migrated", "run_migrated",
+    "MIGRATED_ACTIONS", "LegacyResult", "is_migrated", "run_migrated",
+    "target_evidence",
     "SSRFBlocked", "TargetGuard", "Verdict",
     "guarded_goto", "httpx_guarded_get", "install_page_guard",
     "AUDIT_FIELDS",
     "CapabilityContract", "CapabilityRequest", "CapabilityView",
     "DataClass", "Decision", "EffectClass", "Evidence", "Health",
-    "InputSchema", "Outcome", "OutcomeStatus", "OutputSchema",
+    "Field", "InputSchema", "InvocationBindings",
+    "Outcome", "OutcomeStatus", "OutputSchema",
     "Presence", "Preview", "Provenance", "Registry", "Requirement",
     "Retry", "SchemaError", "Scope", "Tier", "UnknownCapability", "Verify",
 ]

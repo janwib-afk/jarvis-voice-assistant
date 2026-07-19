@@ -66,7 +66,8 @@ class ActionSpec:
 
     - ``payload``: "required" | "optional" | "none"
     - ``is_url``: Payload muss eine gueltige http(s)-URL sein
-    - ``risk``: "low" | "confirm" — confirm-Aktionen brauchen ein muendliches Ja
+    - ``risk``: **abgeleitete** read-only Property (kein gespeicherter Wert):
+      "confirm" genau bei einer ``destructive``-Capability, sonst "low"
     - ``timeout``: Gesamt-Cap in Sekunden fuer die Ausfuehrung
     - ``is_browser``: Fehler werden dem Frontend als Browser-Problem gemeldet
     - ``speaks_result``: Ergebnis ist bereits ein kurzer deutscher Satz und wird
@@ -85,7 +86,6 @@ class ActionSpec:
     label: str
     payload: str = "required"
     is_url: bool = False
-    risk: str = "low"
     timeout: int = 60
     is_browser: bool = False
     speaks_result: bool = False
@@ -95,6 +95,17 @@ class ActionSpec:
     describe: Callable | None = None
     prompt_order: int | None = None
     prompt_group: str = "core"
+
+    @property
+    def risk(self) -> str:
+        """**Abgeleitet**, nie gespeichert (RFC-0007 Amendment 2 §A2.9).
+
+        Nur fuer bestehende interne Konsumenten. Der Wert kommt ausschliesslich
+        aus demselben kanonischen Action-zu-Capability-Katalog wie
+        ``CONFIRM_ACTIONS`` — es gibt keine zweite Risikotabelle und keinen
+        gespeicherten Risikowert mehr.
+        """
+        return "confirm" if self.type in CONFIRM_ACTIONS else "low"
 
 
 DEFAULT_SUMMARY_TASK = "Fasse die folgenden Informationen KURZ zusammen, maximal 3 Sätze."
@@ -563,7 +574,7 @@ REGISTRY: dict[str, ActionSpec] = {spec.type: spec for spec in (
         execute=_exec_memory_read, describe=_d_memory_read, prompt_order=9,
     ),
     ActionSpec(
-        "MEMORY_FORGET", "Vergessen", risk="confirm",
+        "MEMORY_FORGET", "Vergessen",
         summary_task=(
             "Bestätige kurz und freundlich, was du aus dem Langzeit-Gedächtnis gelöscht "
             "hast (oder dass es nichts Passendes gab). Maximal 2 Sätze."
@@ -625,8 +636,24 @@ BROWSER_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.is_browser)
 
 # Aktionen, die erst nach muendlicher Bestaetigung ausgefuehrt werden.
 # Aktuell: MEMORY_FORGET (loescht dauerhaft). Weitere riskante Aktionen bekommen
-# einfach risk="confirm" in der Registry und sind damit automatisch abgesichert.
-CONFIRM_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.risk == "confirm")
+# einfach den destructive-Effekt in ihrem Capability-Vertrag und sind damit
+# automatisch abgesichert.
+def _confirm_actions() -> frozenset:
+    """Confirmation folgt aus dem ``destructive``-Effekt des kanonischen Vertrags.
+
+    Genau EINE Sicherheitswahrheit (Amendment 2 §A2.9): frueher stand hier eine
+    handgepflegte Risikospalte, die von den tatsaechlichen Wirkungen abweichen
+    konnte. Der Aufruf ist I/O-frei — ``build_registry`` konstruiert nur Vertraege.
+    """
+    import capability
+    registry = capability.build_registry(capability.CapabilityDeps())
+    return frozenset(
+        action_type for action_type, name in capability.MIGRATED_ACTIONS.items()
+        if capability.EffectClass.DESTRUCTIVE in registry.get(name).effects
+    )
+
+
+CONFIRM_ACTIONS = _confirm_actions()
 
 # Aktionen, deren Ergebnis direkt gesprochen wird (kein Zusammenfassungs-LLM).
 SPEAK_RESULT_ACTIONS = frozenset(t for t, s in REGISTRY.items() if s.speaks_result)

@@ -80,12 +80,12 @@ class ConfirmFlowTests(unittest.TestCase):
             p.stop()
 
     def test_yes_executes_pending_action(self):
-        asyncio.run(assistant_core.process_message(self.ctx, "Ja bitte", wt.legacy_sink(self.ws.send_json)))
+        asyncio.run(assistant_core.process_message(self.ctx, "Ja bitte", wt.legacy_sink(self.ws.send_json), capabilities=_coord()))
         self.assertEqual(self.executed, [self.pending])
         self.assertEqual(self.requested, [])   # keine NEUE Rueckfrage eroeffnet
 
     def test_no_discards_pending_action(self):
-        asyncio.run(assistant_core.process_message(self.ctx, "Nein, lieber nicht", wt.legacy_sink(self.ws.send_json)))
+        asyncio.run(assistant_core.process_message(self.ctx, "Nein, lieber nicht", wt.legacy_sink(self.ws.send_json), capabilities=_coord()))
         self.assertEqual(self.executed, [])
         self.assertEqual(self.requested, [])   # keine NEUE Rueckfrage eroeffnet
         self.assertTrue(any("lasse es bleiben" in t for t in self.spoken))
@@ -93,7 +93,7 @@ class ConfirmFlowTests(unittest.TestCase):
     def test_unrelated_text_discards_pending_and_processes_normally(self):
         # Weder Ja noch Nein: Aktion verfaellt, die Nachricht geht den normalen
         # Weg (hier: der gestubbte LLM-Call schlaegt fehl => error-Frame).
-        asyncio.run(assistant_core.process_message(self.ctx, "Wie ist das Wetter morgen in Hamburg?", wt.legacy_sink(self.ws.send_json)))
+        asyncio.run(assistant_core.process_message(self.ctx, "Wie ist das Wetter morgen in Hamburg?", wt.legacy_sink(self.ws.send_json), capabilities=_coord()))
         self.assertEqual(self.executed, [])
         self.assertEqual(self.requested, [])   # keine NEUE Rueckfrage eroeffnet
         self.assertTrue(any(f.get("type") == "error" for f in self.ws.sent))
@@ -101,3 +101,10 @@ class ConfirmFlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _coord():
+    """Seit Phase 5C Slice 12 ist der Coordinator erforderlich (Amendment 2 §A2.9)."""
+    import capability as _cap
+    return _cap.Coordinator(_cap.build_registry(_cap.CapabilityDeps()),
+                            _cap.ACTIVE_RULES, audit=lambda *a, **k: None)

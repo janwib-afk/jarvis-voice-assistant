@@ -55,7 +55,7 @@ class ConfirmationGateTests(unittest.TestCase):
                                                _Action("MEMORY_FORGET", "urlaub"),
                                                None, confirmed=False))
         self.assertEqual(touched, [], "Vergessen lief OHNE Bestaetigung")
-        self.assertNotIn("geloescht", out)
+        self.assertNotIn("geloescht", out.text)
 
     def test_confirmed_attempt_executes_and_is_byte_identical(self):
         def _forget(q):
@@ -68,7 +68,7 @@ class ConfirmationGateTests(unittest.TestCase):
             migrated = asyncio.run(cap.run_migrated(self._coord(_forget),
                                                     _Action("MEMORY_FORGET", "urlaub"),
                                                     None, confirmed=True))
-        self.assertEqual(migrated, legacy)
+        self.assertEqual(migrated.text, legacy)
 
     def test_model_content_can_never_self_confirm(self):
         # Ein [ACTION:MEMORY_FORGET] aus der LLM-Antwort ist derived; ohne echte
@@ -102,10 +102,10 @@ class OrchestrationTests(unittest.TestCase):
         seen = {}
         real_run = cap.run_migrated
 
-        async def _spy(coord, action, ctx, confirmed=False):
+        async def _spy(coord, action, ctx, confirmed=False, **kw):
             seen["confirmed"] = confirmed
             seen["action"] = action.type
-            return await real_run(coord, action, ctx, confirmed=confirmed)
+            return await real_run(coord, action, ctx, confirmed=confirmed, **kw)
 
         class _FakeMessages:
             async def create(self, **kw):

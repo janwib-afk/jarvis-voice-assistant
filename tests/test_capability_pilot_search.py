@@ -12,6 +12,7 @@ from unittest import mock
 
 import tests  # noqa: F401
 
+import actions
 import capability as cap
 
 
@@ -42,11 +43,16 @@ class WebSearchCensusTests(unittest.TestCase):
 class LegacyAdapterTests(unittest.TestCase):
     """Der Adapter setzt derived und projiziert das Ergebnis byte-identisch."""
 
-    def test_search_is_the_only_migrated_voice_action(self):
+    def test_search_maps_to_web_search(self):
+        """Phase 5C loest die Pilotgrenze ab.
+
+        Bis Prompt 19 behauptete dieser Test zusaetzlich, SEARCH sei die EINZIGE
+        migrierte Voice-Action. Diese Praemisse faellt mit Amendment 2 §A2.1
+        planmaessig weg; die Vollstaendigkeit (22/22) belegt seither der
+        Phase-5C-Audit, nicht mehr eine Negativliste an dieser Stelle.
+        """
         self.assertTrue(cap.is_migrated("SEARCH"))
-        for other in ("BROWSE", "NEWS", "OPEN", "RESEARCH", "MEMORY_READ",
-                      "SCREEN", "CLIPBOARD"):
-            self.assertFalse(cap.is_migrated(other), f"{other} darf noch nicht migriert sein")
+        self.assertEqual("web.search", cap.MIGRATED_ACTIONS["SEARCH"])
 
     def test_migrated_result_is_byte_identical_to_the_legacy_path(self):
         fake = {"title": "Wetter Hamburg", "url": "https://x.test/w",
@@ -64,7 +70,7 @@ class LegacyAdapterTests(unittest.TestCase):
             coord = _coord()
             action = _Action("SEARCH", "wetter hamburg")
             migrated = asyncio.run(cap.run_migrated(coord, action, None))
-        self.assertEqual(migrated, legacy)
+        self.assertEqual(migrated.text, legacy)
 
     def test_adapter_uses_derived_provenance(self):
         seen = {}
@@ -74,10 +80,12 @@ class LegacyAdapterTests(unittest.TestCase):
 
         real_attempt = cap.Coordinator.attempt
 
-        async def _spy(self, request, evidence=None):
+        async def _spy(self, request, evidence=None, **kw):
+            # ``**kw`` spiegelt die erweiterte Coordinator-Signatur (meta/bindings,
+            # Amendment 2 §A2.4) — das geprueffte Verhalten bleibt unveraendert.
             seen["provenance"] = request.provenance
             seen["capability"] = request.capability
-            return await real_attempt(self, request, evidence)
+            return await real_attempt(self, request, evidence, **kw)
 
         with mock.patch("browser_tools.search_and_read", _search), \
                 mock.patch.object(cap.Coordinator, "attempt", _spy):
@@ -91,7 +99,7 @@ class LegacyAdapterTests(unittest.TestCase):
 
         with mock.patch("browser_tools.search_and_read", _search):
             out = asyncio.run(cap.run_migrated(_coord(), _Action("SEARCH", "x"), None))
-        self.assertIn("fehlgeschlagen", out)
+        self.assertIn("fehlgeschlagen", out.text)
 
 
 class OrchestrationIntegrationTests(unittest.TestCase):
@@ -103,9 +111,9 @@ class OrchestrationIntegrationTests(unittest.TestCase):
         dispatched = {}
         real_run = cap.run_migrated
 
-        async def _spy(coord, action, ctx, confirmed=False):
+        async def _spy(coord, action, ctx, confirmed=False, **kw):
             dispatched["action"] = action.type
-            return await real_run(coord, action, ctx, confirmed=confirmed)
+            return await real_run(coord, action, ctx, confirmed=confirmed, **kw)
 
         async def _search(q):
             return {"title": "T", "url": "U", "content": "C"}
@@ -131,36 +139,21 @@ class OrchestrationIntegrationTests(unittest.TestCase):
             assistant_core.ai = orig_ai
         self.assertEqual(dispatched.get("action"), "SEARCH")
 
-    def test_non_migrated_action_still_uses_execute_action(self):
-        import assistant_core
+    def test_no_action_falls_back_to_execute_action_anymore(self):
+        """Die Umkehrung des frueheren Fallback-Tests.
 
-        called = {"legacy": False}
-        real_exec = assistant_core.execute_action
-
-        async def _spy_exec(action, ctx, mutate_launcher=None):
-            called["legacy"] = True
-            return await real_exec(action, ctx, mutate_launcher)
-
-        async def _news():
-            return "Weltnachrichten heute."
-
-        class _FakeMessages:
-            async def create(self, **kw):
-                class _R:
-                    content = [type("C", (), {"text": "Zusammenfassung."})()]
-                return _R()
-
-        orig_ai = assistant_core.ai
-        assistant_core.ai = type("AI", (), {"messages": _FakeMessages()})()
-        try:
-            with mock.patch("browser_tools.fetch_news", _news), \
-                    mock.patch.object(assistant_core, "execute_action", _spy_exec):
-                asyncio.run(assistant_core.run_action_and_respond(
-                    _turn_ctx(), _Action("NEWS", ""), _CollectingSink().sink(),
-                    capabilities=_coord()))
-        finally:
-            assistant_core.ai = orig_ai
-        self.assertTrue(called["legacy"], "NEWS darf nicht ueber den Coordinator laufen")
+        Bis Prompt 19 belegte dieser Test, dass eine **nicht** migrierte Action
+        ueber ``execute_action`` laeuft — zuerst am Beispiel NEWS, dann APP_PLACE.
+        Seit Slice 7 ist die Zuordnung mit 22/22 vollstaendig; es gibt kein
+        Beispiel mehr. Statt den Test zu streichen, prueft er jetzt die staerkere
+        Aussage: **keine** Action nimmt den Fallback noch. Der Fallback-Code selbst
+        faellt in Slice 12.
+        """
+        offen = sorted(set(actions.REGISTRY) - set(cap.MIGRATED_ACTIONS))
+        self.assertEqual([], offen, f"nicht migriert: {offen}")
+        for action_type in actions.REGISTRY:
+            with self.subTest(action_type=action_type):
+                self.assertTrue(cap.is_migrated(action_type))
 
 
 # ── Helfer ──────────────────────────────────────────────────────────────────

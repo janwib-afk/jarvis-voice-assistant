@@ -446,3 +446,20 @@ bleibt offen und wird nicht vorgetäuscht.
 
 **Abdeckung.** 19 Prüfungen, mutationsgeprüft. Der Mutationsnachweis deckte dabei einen
 echten Produktionsfehler auf (stale Rückruf leerte den lokalen Puffer), der behoben wurde.
+
+## Phase-5C-Nachtrag (Prompt 20)
+
+Die vier in Phase 5B bestätigten Seams (`SEAM-CAPABILITY`, `SEAM-POLICY`,
+`SEAM-CAPABILITY-COORDINATION`, `SSRF-Transport`) tragen jetzt **alle** Wirkungspfade,
+nicht mehr nur vier Piloten. Neu hinzugekommen und mit grüner Evidenz `approved`:
+
+| Seam | Bedeutung | Status |
+|---|---|---|
+| `SEAM-INVOCATION-BINDINGS` | vier schmale request-spezifische Ports (`ai`, `history`, `mutate_launcher`, `feedback`); nie in Request, Payload, `meta`, Hash, Policy oder Audit | approved |
+| `SEAM-LEGACY-PROJECTION` | interne typisierte `LegacyResult`-Projektion; **kein** Wire-Format | approved |
+| `SEAM-ROUTE-AUDIT` | Register mutierender Routen gegen die tatsächlichen FastAPI-Routen | approved |
+
+Die Fakes liegen ausschließlich an bestätigten Grenzen: Provider (`browser_tools`,
+LLM-Client), DNS-Resolver, Dateisystem (`memory`), Betriebssystem (`clipboard_tools`,
+`app_launcher`), Bildschirm (`screen_capture`) und Zeit.
+

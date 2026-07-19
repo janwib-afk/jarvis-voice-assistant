@@ -6,6 +6,16 @@
 > Critical-Risiko** (lokal, kein Public-Exposure, kein external-write). Jedes High trägt
 > konkrete Mitigation + Zielphase + messbares Gate.
 >
+> **Phase-5C-Nachtrag (2026-07-19, Prompt 20).** Die Vollmigration aller derzeit
+> durchsetzbaren Pfade ist abgeschlossen: **22/22 Voice-Actions** und **9/10 mutierende
+> REST-Routen** laufen ueber den Coordinator, das gespeicherte `ActionSpec.risk` und der
+> `execute_action`-Fallback sind entfernt. **TM-001 und TM-002 bleiben trotzdem `high`.**
+> TM-001 ist nicht geloest, sondern nur **flaechendeckend durchsetzbar** geworden — die
+> zentrale SI-1-Regel greift jetzt fuer alle Pfade, aber untrusted Inhalt erreicht das
+> Modell unveraendert. TM-002 bleibt **ohne IP-Pinning** nur teilweise mitigiert;
+> **DNS-Rebinding zwischen Evidenz und Navigation ist weiterhin offen**.
+> `launcher.profile.delete` ist die **einzige** ungeschuetzte mutierende Route (Phase 10).
+>
 > **Phase-5B-Nachtrag (2026-07-19).** Der Capability-/Policy-Kernel (RFC-0007 Pilotphase) ist
 > implementiert. **TM-001 und TM-002 sind NICHT behoben** — nur teilweise bearbeitet: die
 > zentrale SI-1-Durchsetzung und der SSRF-`TargetGuard` existieren, greifen aber erst für die
@@ -14,7 +24,7 @@
 
 | Threat ID | Risiko | Priority | Status | Vorhandene Kontrolle (Evidence) | Erforderliche Mitigation | Zielphase | Owner-Rolle | Nachweis/Gate | Restrisiko | Nutzerentscheidung |
 |---|---|---|---|---|---|---|---|---|---|---|
-| TM-001 | Untrusted Inhalt → LLM → Aktion (Prompt Injection) | **high** | mitigation-in-progress (Phase 5B: **teilweise**) | `parse_action` (`actions.py:210`), Allowlist (`app_launcher.py:479`), OPEN http/https (`actions.py:171`), FORGET confirm; **NEU (Phase 5B):** reiner Policy Kernel setzt SI-1 zentral durch (`derived` autorisiert nie), `[ACTION:…]` aus LLM-Antwort ist immer `derived` — für die **vier migrierten Piloten** | Restliche 20 Actions + neun REST-Routen migrieren (Prompt 20); untrusted Inhalt vollständig als Vorschlag; Preview für wirkende Aktionen | Phase 5B (Pilot) → Prompt 20 (vollständig) | Architektur+Security | Contract-Test: `derived` kann keine `[ACTION:…]` autorisieren (`test_capability_policy`); Wirkungs-Zensus grün | medium (nur 4 Pfade migriert) | Delegation: konservative Nutzung bis Vollmigration |
+| TM-001 | Untrusted Inhalt → LLM → Aktion (Prompt Injection) | **high** | mitigation-in-progress (Phase 5C: **flaechendeckend durchsetzbar, nicht geloest**) | `parse_action` (`actions.py:210`), Allowlist (`app_launcher.py:479`), OPEN http/https (`actions.py:171`), FORGET confirm; **NEU (Phase 5B):** reiner Policy Kernel setzt SI-1 zentral durch (`derived` autorisiert nie), `[ACTION:…]` aus LLM-Antwort ist immer `derived` — für **alle 22 Actions und 9 von 10 mutierenden Routen** (Phase 5C) | **erledigt (Prompt 20)**; verbleibend: untrusted Inhalt vollständig als Vorschlag; Preview für wirkende Aktionen | Phase 5B (Pilot) → Prompt 20 (vollständig) | Architektur+Security | Contract-Test: `derived` kann keine `[ACTION:…]` autorisieren (`test_capability_policy`); Wirkungs-Zensus grün | medium (alle Pfade migriert, aber Injection selbst unveraendert moeglich) | Delegation: konservative Nutzung bis Vollmigration |
 | TM-002 | SSRF über Browser/HTTP (nur Schema geprüft, Redirects offen) | **high** | mitigation-in-progress (Phase 5B: **teilweise mitigiert**) | http/https (`actions.py:171`), Size-Cap, Timeout; **NEU (Phase 5B):** reiner `TargetGuard` + zwei Produktionsadapter (httpx mit gepruefter Redirect-Kette **und** Playwright-Navigations-/Route-Guard + Nachprüfung der verbundenen IP); Denylist Loopback/RFC1918/link-local/ULA/metadata + Selbstzugriff `127.0.0.1:8340` (`test_capability_ssrf`) | **IP-Pinning gegen DNS-Rebinding** (eigene Verbindungsschicht) — bleibt offen | Phase 9 (IP-Pinning) | Security | Test: private/loopback/metadata blockiert je Hop; verbundene IP nachgeprüft — **grün** | **DNS-Rebinding bleibt Restrisiko** (kein IP-Pinning) | Delegation: Host-Policy umgesetzt, Rebinding-Rest datiert |
 | TM-003 | Lokaler Prozess liest Token via `GET /` | medium | mitigation-planned | Token-Gate (`server.py:236`), Bind 127.0.0.1 (`:746`) | Token nicht in HTML einbetten (Fenster-Nonce/Handshake); `Sec-Fetch`/Origin prüfen; UI-Bestätigung für Hochrisiko | Phase 4/9 | Architektur | Test: `GET /` liefert kein nutzbares Token; Hochrisiko braucht UI-Confirm | niedrig (lokaler Zugriff teils out-of-scope) | accepted-interim (Malware=Benutzerrechte out-of-scope) |
 | TM-004 | Voice-Spoofing / unauthentifizierte Voice-Aktion | medium | mitigation-planned | FORGET confirm; Wirkungen heute begrenzt | Invariante „Voice ≠ Identität"; Hochrisiko/destruktiv/external-write nur mit UI-Confirm; Push-to-Talk-Option | Phase 5/9 | Security+UX | Test: Voice allein autorisiert kein Hochrisiko | medium | Delegation: UI-Confirm für Hochrisiko |
