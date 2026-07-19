@@ -15,6 +15,14 @@
 - **Autorisierung heute:** Voice/UI-Utterance (implizit) · Allowlist · URL-Policy ·
   Token (X-Jarvis-Token) · **Confirm** (mündliche Ja/Nein-Rückfrage).
 
+> **Ergänzung 2026-07-19 (RFC-0007 akzeptiert).** Diese Matrix bleibt die Bestandsaufnahme
+> der Actions. Das **vollständige Wirkungsinventar** — einschließlich der 10 zustandsändernden
+> REST-Routen ohne Action-Pfad, der nativen Pfade und der Wirkungen, die an `spec.execute()`
+> vorbeilaufen — steht in
+> [RFC-0007 §2.6](../architecture/RFC-0007-capability-policy-kernel.md). Dort ist auch belegt,
+> dass die unten vorläufig eingeordneten Daten- und Wirkungsklassen in der **Laufzeit nicht
+> existieren**: `ActionSpec.risk` kennt nur `low` und `confirm`.
+
 ## 1. Action-Capabilities (`[ACTION:...]`, 22 Typen)
 
 > Seit RFC-0001 (Phase 4B, 2026-07-15) beschreibt und fuehrt sich jede Action selbst
@@ -45,7 +53,7 @@ emittiert `[ACTION:TYP]`. Stop/Cancel gilt global: laufende Nachrichten laufen a
 | INBOX_WRITE | Inbox-Eintrag | `memory.write_inbox_entry` | Vault | persönlich | local-write | Voice/UI | – | Bestätigungssatz | `test_inbox` | – | 7 |
 | MEMORY_WRITE | Merken | `memory.append_memory` | Vault/Workspace | persönlich | local-write | Voice (ausdrücklich) | – | Bestätigungssatz | `test_memory` | – | 7 |
 | MEMORY_READ | Gedächtnis lesen | `memory.read_memory_sync` | Vault/Workspace | persönlich | read-sensitive | Voice/UI | – | Summary | `test_memory` | – | 7 |
-| MEMORY_FORGET | Vergessen | `memory` + `pending_confirm` | Vault/Workspace | persönlich | **destructive** | **Confirm** | – | Bestätigt gelöschte Einträge | `test_memory`, `test_confirm_flow` | einzige Confirm-Aktion | 5 |
+| MEMORY_FORGET | Vergessen | `memory` + `ctx.request_confirmation` (Session-`suspended`) | Vault/Workspace | persönlich | **destructive** | **Confirm** | – | Bestätigt gelöschte Einträge | `test_memory`, `test_confirm_flow` | einzige Confirm-Aktion | 5 |
 | RESEARCH | Recherche | `assistant_core.run_research`, `browser_tools.search_links` | Web → Vault | öffentlich→persönlich | network-read + local-write | Voice/UI | ✅ (180 s) | Summary + Quellen im Transcript, Autosave | `test_integration_research` | keine Quellenbewertung/Preview | 6 |
 | CLIPBOARD | Zwischenablage verarbeiten | `clipboard_tools`, `assistant_core` | Clipboard | **sensibel** | read-sensitive (+ network-read LLM) | Voice/UI | ✅ | Antwortsatz | `test_actions` | keine Übertragungsvorschau | 2/9 |
 | CLIPBOARD_NOTE | Clipboard als Notiz | `clipboard_tools`, `memory` | Clipboard→Vault | sensibel→persönlich | local-write | Voice/UI | – | Bestätigungssatz | `test_actions` | dito | 2/7 |

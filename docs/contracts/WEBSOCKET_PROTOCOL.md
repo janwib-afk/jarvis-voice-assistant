@@ -80,22 +80,27 @@ Es gibt **kein** eigenes „ack" pro Nachricht; die Antwort ist der `response`-F
 ## Stop-Semantik
 
 Bei `{"type":"stop"}` **oder** erkanntem Stop-Wort (`server.py:180`):
-1. laufende Child-Task (falls aktiv) wird gecancelt;
+1. eine laufende Verarbeitung (falls aktiv) wird abgebrochen;
 2. die Queue wird geleert (wartende Nachrichten verworfen);
-3. `pending_confirm` der Session wird entfernt;
+3. die offene Rückfrage der Session verfällt;
 4. ein `stop`-Frame wird gesendet;
 5. war eine Aktion aktiv, folgt zusätzlich `{"type":"response","text":"Okay,
    gestoppt.","audio":""}`.
 
-Der Worker **lebt weiter**: eine nach dem Stop gesendete Nachricht wird normal
+Die **Session lebt weiter**: eine nach dem Stop gesendete Nachricht wird normal
 verarbeitet. Ein reiner Stopp beendet die Verbindung nicht.
+
+> Seit RFC-0006 (Phase 4J) entscheidet über diese Reihenfolge der reine
+> Transitionskern der `ConversationSession` (`conversation/_core.py`); der WS-Endpunkt
+> ist ein dünner Adapter ohne eigene Queue-, Worker- oder Task-Wahrheit. Das beobachtbare
+> Frame-Verhalten ist unverändert.
 
 ## Disconnect & Fehlerverhalten
 
-- **Disconnect** (`WebSocketDisconnect`): das `finally` setzt `stopping=True`,
-  cancelt den Worker und nimmt eine laufende Child-Task garantiert mit (kein
-  Task-Leak), räumt `ws_clients` auf und ruft `assistant_core.end_session`
-  (`server.py:200`).
+- **Disconnect** (`WebSocketDisconnect`): das `finally` schließt die Session über den
+  `ConversationManager` — eine laufende Verarbeitung wird garantiert mitgenommen (kein
+  Task-Leak) — und meldet den Kanal von der Verbindungsregistry ab. Das frühere
+  `assistant_core.end_session` existiert seit RFC-0006 nicht mehr.
 - **Unerwartete Verarbeitungsfehler** beenden **nie** die Verbindung: der Worker
   loggt und sendet `{"type":"error","component":"llm","text":"Interner Fehler bei
   der Verarbeitung."}` (`server.py:161`).

@@ -69,8 +69,9 @@ Wirkungsklasse freischalten oder Präsenz vortäuschen (SI-1).
 
 - **Desktop-Lock (geplant):** keine wirkenden Aktionen; nur passiver Status; Mikrofon-
   Verarbeitung für Wirkung ausgesetzt.
-- **WS-Disconnect (heute):** Session-Zustand wird verworfen (`assistant_core.end_session`,
-  `server.py:211`), laufender Task abgebrochen.
+- **WS-Disconnect (heute):** Der `ConversationManager` schließt die Session, ihr Zustand
+  wird verworfen und eine laufende Verarbeitung garantiert abgebrochen (RFC-0006; das
+  frühere `assistant_core.end_session` existiert nicht mehr).
 - **Stop (heute):** bricht Wiedergabe + laufende Aktion ab (`server.py:180`).
 - **Panic Lock (geplant):** Mikro aus, Jobs stoppen, neue Jobs/Connectoren/`external-write`
   blockiert, sichtbarer Zustand, manuelle Reaktivierung.

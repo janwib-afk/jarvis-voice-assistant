@@ -2,6 +2,23 @@
 
 Ein Zustand zur Zeit (globaler Assistentenzustand). `muted` ist ein **Modifikator** des Hör-Kanals, kein Parallelzustand des Sprechens — Matrix unten. Orb-Paare: DESIGN.md §10.
 
+> **Ist-Stand seit RFC-0006 (Phase 4J, 2026-07-19).** Dieses Dokument bleibt der
+> **UX-Vertrag** — es beschreibt, was der Nutzer sieht. Die Laufzeit erzeugt diese Anzeige
+> seit Phase 4J jedoch nicht mehr durch Setzen eines flachen Zustands: `setOrbState()` ist
+> entfernt, und die Anzeige wird aus fünf **orthogonalen Regionen** (Connection, Capture,
+> Playback, Interaction, Overlays) plus der Client-Session-Ebene **abgeleitet**
+> (`JarvisVoice.presentation`, `frontend/voice.js`). Das DOM ist Ausgabe, nie Zustandsquelle.
+>
+> Damit lösen sich zwei alte Ungenauigkeiten dieses Dokuments auf:
+> `muted` und `degraded` sind tatsächlich Modifikatoren beziehungsweise Overlays und keine
+> Zustände derselben Ebene — genau wie hier beschrieben; und `confirmation-required` pausiert
+> weiterhin keine globale Zustandsmaschine, weil es die offene Rückfrage der
+> `ConversationSession` ist und keine Region der Anzeige.
+>
+> Die abgeleiteten Anzeigewerte und ihre CSS-Abbildung stehen im
+> [Phase-4J-Migrationsbericht](../architecture/PHASE4J_EXPLICIT_RUNTIME_STATE_MACHINES_MIGRATION.md).
+> Die sichtbaren Bezeichnungen, Übergänge und die Escape-Kaskade unten sind unverändert gültig.
+
 ## Zustände
 
 | Zustand | Sichtbare Bezeichnung | Orb | Primäraktion | Erlaubte Eingaben | Stop bewirkt | Mute bewirkt | Statusfarbe | Live-Region | Übergänge nach | Fehler-/Recovery-Pfad |

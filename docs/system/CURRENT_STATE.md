@@ -4,6 +4,28 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-19 (Phase 5A, RFC-0007 AKZEPTIERT — nur Architektur):** Für den
+> Capability- und Policy-Kernel wurde
+> [RFC-0007](../architecture/RFC-0007-capability-policy-kernel.md)
+> `Accepted for incremental implementation` (Variante C: transportneutraler Capability Core +
+> **reiner** Policy Kernel + runtime-eigener Coordinator; `[ACTION:…]`, REST/UI und ggf.
+> strukturierte Tool Calls werden Adapter vor demselben Core). **Kein Produktionscode.**
+> Belegtes Ist-Inventar: **22** Actions, aber die Wirkungsfläche ist rund doppelt so groß —
+> **10** zustandsändernde REST-Routen ohne Action-Pfad (Profile anlegen/löschen/umbenennen/
+> duplizieren haben gar keinen), native Pfade teils **außerhalb des Serverprozesses**, und
+> Wirkungen, die an `spec.execute()` vorbeilaufen (Summary-LLM bei 8 Actions, TTS,
+> Recherche-Autosave, `refresh_data` beim **Serverstart** und nach **jedem Settings-Save**).
+> **Zentraler Befund:** `ActionSpec.risk` ist zweiwertig (`low`/`confirm`) — die in den
+> Sicherheitsdokumenten definierten 5 Datenklassen, 7 Wirkungsklassen und 6 Präsenzzustände
+> existieren in der Laufzeit **nicht**; `SCREEN` und `CLIPBOARD` sind von `SEARCH` nicht
+> unterscheidbar. Zehn Entscheidungen (D1–D10) sind im RFC protokolliert, darunter: native
+> Pfade als **dokumentierte Ausnahme mit Grenzvertrag**; Authorization Grant **nur als
+> Vertrag, keine Laufzeit**; **nur erfüllbare Regeln aktivieren** (Presence bleibt bis
+> Phase 9 datiert statt fail-open getarnt); SSRF **im Transport** pro Verbindung und pro
+> Redirect-Hop; **keine neuen Wire-Typen**; `ActionSpec.risk` wird abgeleitete Projektion.
+> **RFC-0005 und RFC-0006 bleiben unverändert — kein Amendment nötig.** TM-001 und TM-002
+> bleiben **offen** (Architektur ist keine Mitigation). Umsetzung frühestens Prompt 19.
+
 > **Status 2026-07-18 (Phase 4J, RFC-0006 VOLLSTÄNDIG IMPLEMENTIERT):** Die Umsetzung von
 > [RFC-0006](../architecture/RFC-0006-explicit-runtime-state-machines.md) inkl. Amendment 1
 > ist abgeschlossen. **Backend:** neues tiefes Modul [`conversation/`](../../conversation/)
