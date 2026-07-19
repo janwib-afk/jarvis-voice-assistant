@@ -61,6 +61,11 @@ MIGRATED_ACTIONS: Mapping[str, str] = MappingProxyType({
     "CLIPBOARD_NOTE": "clipboard.note.create",
     "CLIPBOARD": "clipboard.process",
     "SCREEN": "screen.describe",
+    "APP_OPEN": "launcher.app.open",
+    "PROFILE_ACTIVATE": "launcher.profile.activate",
+    "APP_AUTOSTART_ON": "launcher.app.autostart.set",
+    "APP_AUTOSTART_OFF": "launcher.app.autostart.set",
+    "APP_PLACE": "launcher.app.placement.set",
 })
 
 
@@ -494,6 +499,95 @@ def screen_describe_contract(deps=None) -> CapabilityContract:
         announce=SCREEN_ANNOUNCEMENT)
 
 
+# ── Launcher-Sprachsteuerung (Phase 5C Slice 7) ─────────────────────────────
+
+
+@dataclass(frozen=True)
+class _DelegatedAutostart:
+    """Ein Vertrag, zwei Actions (Amendment 2 §A2.2).
+
+    ``APP_AUTOSTART_ON`` und ``APP_AUTOSTART_OFF`` sind fachlich **dieselbe**
+    Operation; sie unterscheiden sich nur im booleschen Eingabewert. Der Adapter
+    waehlt danach den passenden Legacy-Executor — das Rohergebnis bleibt
+    byte-identisch, und es entsteht kein zweiter Capability-Name.
+    """
+
+    async def __call__(self, payload, ctx):
+        import actions
+        action_type = ("APP_AUTOSTART_ON" if payload["enabled"]
+                       else "APP_AUTOSTART_OFF")
+        text = await actions.spec_for(action_type).execute(
+            payload["app_query"],
+            actions.ActionContext(
+                ai=ctx.bindings.ai, history=ctx.bindings.history,
+                mutate_launcher=ctx.bindings.mutate_launcher),
+        )
+        return {"text": text}
+
+
+def _launcher_contract(name, title, action_type, *, field, effects, scopes,
+                       fixture, execute=None, inputs=None) -> CapabilityContract:
+    """Ein Launcher-Sprachpfad.
+
+    Alle fuenf haben ``speaks_result=True``: das Ergebnis geht direkt als
+    ElevenLabs-TTS hinaus — ein deklarierter Netz-Folgeeffekt (§A2.5).
+    """
+    return CapabilityContract(
+        name=name, version=1, title=title,
+        inputs=inputs if inputs is not None else InputSchema(
+            fields=(Field(field, str),)),
+        output=OutputSchema(fields=(Field("text", str),)),
+        effects=effects,
+        reads=(DataClass.LOCAL,),
+        writes=(DataClass.LOCAL,) if EffectClass.LOCAL_WRITE in effects else (),
+        scopes=scopes,
+        timeout_s=15,
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture=fixture,
+        execute=execute if execute is not None else _Delegated(action_type, field),
+    )
+
+
+def launcher_app_open_contract(deps=None) -> CapabilityContract:
+    """``APP_OPEN`` — startet einen lokalen Prozess aus der Allowlist."""
+    return _launcher_contract(
+        "launcher.app.open", "App öffnen", "APP_OPEN", field="app_query",
+        effects=(EffectClass.LOCAL_EXECUTE, EffectClass.NETWORK_READ),
+        scopes=(Scope.APPS,), fixture={"app_query": "obsidian"})
+
+
+def launcher_profile_activate_contract(deps=None) -> CapabilityContract:
+    return _launcher_contract(
+        "launcher.profile.activate", "Profil aktivieren", "PROFILE_ACTIVATE",
+        field="profile_query",
+        effects=(EffectClass.LOCAL_WRITE, EffectClass.NETWORK_READ),
+        scopes=(Scope.CONFIG_LAUNCHER,), fixture={"profile_query": "Standard"})
+
+
+def launcher_autostart_set_contract(deps=None) -> CapabilityContract:
+    """Der GETEILTE Vertrag beider Autostart-Actions."""
+    return _launcher_contract(
+        "launcher.app.autostart.set", "Clap-Start setzen", "APP_AUTOSTART_ON",
+        field=None,
+        inputs=InputSchema(fields=(Field("app_query", str),
+                                   Field("enabled", bool))),
+        effects=(EffectClass.LOCAL_WRITE, EffectClass.NETWORK_READ),
+        scopes=(Scope.CONFIG_LAUNCHER, Scope.APPS),
+        fixture={"app_query": "obsidian", "enabled": True},
+        execute=_DelegatedAutostart())
+
+
+def launcher_placement_set_contract(deps=None) -> CapabilityContract:
+    return _launcher_contract(
+        "launcher.app.placement.set", "App platzieren", "APP_PLACE",
+        field="placement",
+        effects=(EffectClass.LOCAL_WRITE, EffectClass.NETWORK_READ),
+        scopes=(Scope.CONFIG_LAUNCHER, Scope.APPS),
+        fixture={"placement": "Obsidian | left | right_half"})
+
+
 #: Capabilities mit **festen**, im Code stehenden Provider-Zielen. Ihre Ziel-URL
 #: kommt nie aus Eingabe oder Modellinhalt; die SSRF-Pruefung der tatsaechlichen
 #: Navigation erledigt der Transport-Guard (Amendment 2 §A2.6).
@@ -545,6 +639,11 @@ _PAYLOAD_BUILDERS = {
     "CLIPBOARD_NOTE": lambda a: {},
     "CLIPBOARD": lambda a: {"task": a.payload or ""},
     "SCREEN": lambda a: {"question": a.payload or ""},
+    "APP_OPEN": lambda a: {"app_query": a.payload},
+    "PROFILE_ACTIVATE": lambda a: {"profile_query": a.payload},
+    "APP_AUTOSTART_ON": lambda a: {"app_query": a.payload, "enabled": True},
+    "APP_AUTOSTART_OFF": lambda a: {"app_query": a.payload, "enabled": False},
+    "APP_PLACE": lambda a: {"placement": a.payload},
 }
 
 
@@ -573,6 +672,10 @@ _FALLBACK_TEXT = {
     "clipboard.note.create": "Die Notiz konnte ich nicht speichern.",
     "clipboard.process": "Die Zwischenablage konnte ich nicht verarbeiten.",
     "screen.describe": "Ich konnte nicht auf den Bildschirm sehen.",
+    "launcher.app.open": "Die App konnte ich nicht öffnen.",
+    "launcher.profile.activate": "Das Profil konnte ich nicht aktivieren.",
+    "launcher.app.autostart.set": "Den Clap-Start konnte ich nicht ändern.",
+    "launcher.app.placement.set": "Die Platzierung konnte ich nicht ändern.",
 }
 
 #: Letzte Zuflucht: jeder Ausgang hat einen sprechbaren Text — nie ein leerer String.

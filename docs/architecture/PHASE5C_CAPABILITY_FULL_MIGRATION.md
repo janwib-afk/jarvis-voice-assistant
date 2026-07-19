@@ -340,3 +340,38 @@ Signatur.
 
 **Restrisiko.** TM-005/TM-006 bleiben offen: es gibt weiterhin **keine** Vorschau und
 **keine** Regionsauswahl vor dem Upload. Preview bleibt datiert (Phase 9).
+
+---
+
+## Slice 7 — Launcher-Sprachsteuerung
+
+**Ziel und Seam.** `APP_OPEN`, `PROFILE_ACTIVATE`, `APP_AUTOSTART_ON/OFF`, `APP_PLACE`
+migrieren. Seam: der semantische Launcher-Mutationsport der Invocation-Bindings.
+
+**Der geteilte Vertrag.** `APP_AUTOSTART_ON` und `APP_AUTOSTART_OFF` sind fachlich
+**dieselbe** Operation und teilen `launcher.app.autostart.set`; sie unterscheiden sich
+nur im booleschen `enabled`. `_DelegatedAutostart` wählt danach den passenden
+Legacy-Executor. Damit gilt §A2.2 exakt: **22 Actions auf 21 eindeutige Namen** — es
+werden nicht 22 Namen erzwungen.
+
+**Einziger Writer.** Die Tests fangen die Absicht ab und prüfen den **Typ** des Intents
+(`SetAutostart`, `ActivateProfile`, `SetPlacement`) samt `kind`. Ein vorberechneter
+Voll-Block würde diese Zusicherung nicht erfüllen (RFC-0003).
+
+**Erstes beobachtetes ROT.** 27 Fehler (`UnknownCapability`).
+
+**Mutationen.** M32 geteilter Vertrag aufgebrochen · M33 boolescher Eingabewert ignoriert ·
+M34 `OFF` sendet `True` · M35 Profil-Aktivierung ohne `local-write` — **alle vier ROT**.
+
+**Meilenstein.** Nach diesem Slice ist die Action-Zuordnung **22/22 vollständig**.
+Der frühere Test „eine nicht migrierte Action nimmt den Fallback" hat damit kein Subjekt
+mehr. Statt ihn zu streichen, ist er in seine **stärkere** Umkehrung überführt: *keine*
+Action nimmt den Fallback noch. Der Fallback-Code selbst fällt in Slice 12.
+
+**Regression.** 1148 Tests OK.
+
+**Rollback.** `git revert` — die fünf Actions fallen auf `execute_action` zurück, und der
+Umkehrtest müsste mit zurückgenommen werden.
+
+**Restrisiko.** Keines über die bereits genannten hinaus; `app_launcher.launch` bleibt
+allowlist-gebunden wie zuvor.

@@ -12,6 +12,7 @@ from unittest import mock
 
 import tests  # noqa: F401
 
+import actions
 import capability as cap
 
 
@@ -138,30 +139,21 @@ class OrchestrationIntegrationTests(unittest.TestCase):
             assistant_core.ai = orig_ai
         self.assertEqual(dispatched.get("action"), "SEARCH")
 
-    def test_not_yet_migrated_action_still_uses_execute_action(self):
-        """Der Legacy-Fallback traegt weiterhin, was noch nicht migriert ist.
+    def test_no_action_falls_back_to_execute_action_anymore(self):
+        """Die Umkehrung des frueheren Fallback-Tests.
 
-        NEWS war hier bis Prompt 19 das Beispiel; seit Phase 5C Slice 3 laeuft es
-        ueber den Coordinator. Das Beispiel ist deshalb auf eine noch offene
-        Action gewechselt. Der Fallback selbst faellt planmaessig in Slice 12 —
-        dieser Test wird dort durch seine Umkehrung ersetzt.
+        Bis Prompt 19 belegte dieser Test, dass eine **nicht** migrierte Action
+        ueber ``execute_action`` laeuft — zuerst am Beispiel NEWS, dann APP_PLACE.
+        Seit Slice 7 ist die Zuordnung mit 22/22 vollstaendig; es gibt kein
+        Beispiel mehr. Statt den Test zu streichen, prueft er jetzt die staerkere
+        Aussage: **keine** Action nimmt den Fallback noch. Der Fallback-Code selbst
+        faellt in Slice 12.
         """
-        import assistant_core
-
-        called = {"legacy": False}
-        real_exec = assistant_core.execute_action
-
-        async def _spy_exec(action, ctx, mutate_launcher=None):
-            called["legacy"] = True
-            return await real_exec(action, ctx, mutate_launcher)
-
-        self.assertFalse(cap.is_migrated("APP_PLACE"))
-        with mock.patch.object(assistant_core, "execute_action", _spy_exec):
-            asyncio.run(assistant_core.run_action_and_respond(
-                _turn_ctx(), _Action("APP_PLACE", ""), _CollectingSink().sink(),
-                capabilities=_coord()))
-        self.assertTrue(called["legacy"],
-                        "APP_PLACE ist nicht migriert und muss ueber den Fallback laufen")
+        offen = sorted(set(actions.REGISTRY) - set(cap.MIGRATED_ACTIONS))
+        self.assertEqual([], offen, f"nicht migriert: {offen}")
+        for action_type in actions.REGISTRY:
+            with self.subTest(action_type=action_type):
+                self.assertTrue(cap.is_migrated(action_type))
 
 
 # ── Helfer ──────────────────────────────────────────────────────────────────
