@@ -94,8 +94,11 @@ class CanonicalMappingTests(LauncherFixture):
 
 class ByteIdenticalLauncherTests(LauncherFixture):
     def test_app_open_is_byte_identical(self):
-        with mock.patch("app_launcher.launch",
-                        lambda q: {"ok": True, "message": "Obsidian ist offen."}):
+        # Wahrheitsgetreu: app_launcher.launch liefert immer alle vier Felder —
+        # die REST-Route indiziert app/name bereits ungeschuetzt.
+        full = {"ok": True, "app": "obsidian", "name": "Obsidian",
+                "message": "Obsidian ist offen."}
+        with mock.patch("app_launcher.launch", lambda q: dict(full)):
             legacy = asyncio.run(actions.spec_for("APP_OPEN").execute(
                 "obsidian", actions.ActionContext()))
             migrated = _run(_Action("APP_OPEN", "obsidian"))

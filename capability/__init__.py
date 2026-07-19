@@ -60,6 +60,7 @@ from ._legacy import (  # noqa: F401
     LegacyResult,
     is_migrated,
     run_migrated,
+    target_evidence,
 )
 from ._ssrf import (  # noqa: F401
     SSRFBlocked,
@@ -75,6 +76,7 @@ __all__ = [
     "AttemptContext", "Cancelled", "Coordinator",
     "CapabilityDeps", "build_registry", "pilot_contracts",
     "MIGRATED_ACTIONS", "LegacyResult", "is_migrated", "run_migrated",
+    "target_evidence",
     "SSRFBlocked", "TargetGuard", "Verdict",
     "guarded_goto", "httpx_guarded_get", "install_page_guard",
     "AUDIT_FIELDS",

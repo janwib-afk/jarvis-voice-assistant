@@ -503,6 +503,83 @@ def screen_describe_contract(deps=None) -> CapabilityContract:
 
 
 @dataclass(frozen=True)
+class _DelegatedLauncherMutation:
+    """Eine Ausfuehrung, zwei Projektionen (Amendment 2 §A2.3).
+
+    Voice braucht den fertigen deutschen Satz, REST die maschinenlesbare
+    Fehlerliste. Beides entsteht aus **demselben** Lauf: der Adapter legt einen
+    mitschreibenden Wrapper um den semantischen Mutationsport und gibt neben dem
+    Text die aufgefangenen Fehler zurueck. So bleibt der Single Writer der
+    einzige Schreiber und es entsteht keine transportabhaengige zweite Wahrheit.
+    """
+    action_type: str
+    field: str
+
+    async def __call__(self, payload, ctx):
+        import actions
+        captured = {}
+        port = ctx.bindings.mutate_launcher
+
+        async def _recording(intent, kind):
+            errors = await port(intent, kind)
+            captured["errors"] = tuple(errors)
+            return errors
+
+        text = await actions.spec_for(self.action_type).execute(
+            payload[self.field],
+            actions.ActionContext(
+                ai=ctx.bindings.ai, history=ctx.bindings.history,
+                mutate_launcher=_recording if port is not None else None),
+        )
+        return {"text": text, "errors": captured.get("errors", ())}
+
+
+@dataclass(frozen=True)
+class _DelegatedProfileActivate:
+    """Ein Vertrag, zwei belegte Betriebsarten — unterschieden durch ``force``.
+
+    Die beiden Transporte hatten hier schon immer **verschiedenes** Verhalten:
+
+    * Die Stimme bricht ab, wenn das Profil bereits aktiv ist ("… ist bereits
+      aktiv."), und schreibt dann nichts.
+    * Die REST-Route hat **immer** persistiert und ``launcher_changed``
+      gebroadcastet — auch beim erneuten Aktivieren desselben Profils. Der
+      Legacy-Golden-Test pinnt genau dieses Broadcast.
+
+    Das ist ein Unterschied in der **Absicht**, nicht in der Fachlichkeit. Er
+    steht deshalb als typisiertes Eingabefeld im Vertrag und nicht als
+    transportabhaengige zweite Wahrheit (Amendment 2 §A2.3/§A2.4).
+    """
+
+    async def __call__(self, payload, ctx):
+        if not payload["force"]:
+            return await _DelegatedLauncherMutation(
+                "PROFILE_ACTIVATE", "profile_query")(payload, ctx)
+        import configuration
+        errors = await ctx.bindings.mutate_launcher(
+            configuration.ActivateProfile(payload["profile_query"]), "profile")
+        # ``text`` bleibt leer: der erzwingende Aufrufer ist die Route, und die
+        # projiziert ausschliesslich ueber ``errors``.
+        return {"text": "", "errors": tuple(errors)}
+
+
+@dataclass(frozen=True)
+class _DelegatedAppOpen:
+    """``launcher.app.open`` — Voice liest ``text``, REST den vollen Befund.
+
+    ``actions._exec_app_open`` ist genau ``result["message"]``; der Text bleibt
+    damit byte-identisch, waehrend die Route zusaetzlich ok/app/name erhaelt.
+    """
+
+    async def __call__(self, payload, ctx):
+        import asyncio
+        import app_launcher
+        result = await asyncio.to_thread(app_launcher.launch, payload["app_query"])
+        return {"text": result["message"], "ok": result["ok"],
+                "app": result["app"], "name": result["name"]}
+
+
+@dataclass(frozen=True)
 class _DelegatedAutostart:
     """Ein Vertrag, zwei Actions (Amendment 2 §A2.2).
 
@@ -513,16 +590,10 @@ class _DelegatedAutostart:
     """
 
     async def __call__(self, payload, ctx):
-        import actions
         action_type = ("APP_AUTOSTART_ON" if payload["enabled"]
                        else "APP_AUTOSTART_OFF")
-        text = await actions.spec_for(action_type).execute(
-            payload["app_query"],
-            actions.ActionContext(
-                ai=ctx.bindings.ai, history=ctx.bindings.history,
-                mutate_launcher=ctx.bindings.mutate_launcher),
-        )
-        return {"text": text}
+        return await _DelegatedLauncherMutation(action_type, "app_query")(
+            payload, ctx)
 
 
 def _launcher_contract(name, title, action_type, *, field, effects, scopes,
@@ -536,7 +607,14 @@ def _launcher_contract(name, title, action_type, *, field, effects, scopes,
         name=name, version=1, title=title,
         inputs=inputs if inputs is not None else InputSchema(
             fields=(Field(field, str),)),
-        output=OutputSchema(fields=(Field("text", str),)),
+        # ``errors``/``ok``/``app``/``name`` sind OPTIONALE Ergebnisfelder: die
+        # Stimme braucht sie nie, die Route schon. Ein fehlendes optionales Feld
+        # stuft ``ok`` nicht zu ``partial`` herab (§A2.4).
+        output=OutputSchema(fields=(Field("text", str),
+                                    Field("errors", tuple, required=False),
+                                    Field("ok", bool, required=False),
+                                    Field("app", (str, type(None)), required=False),
+                                    Field("name", (str, type(None)), required=False))),
         effects=effects,
         reads=(DataClass.LOCAL,),
         writes=(DataClass.LOCAL,) if EffectClass.LOCAL_WRITE in effects else (),
@@ -555,7 +633,8 @@ def launcher_app_open_contract(deps=None) -> CapabilityContract:
     return _launcher_contract(
         "launcher.app.open", "App öffnen", "APP_OPEN", field="app_query",
         effects=(EffectClass.LOCAL_EXECUTE, EffectClass.NETWORK_READ),
-        scopes=(Scope.APPS,), fixture={"app_query": "obsidian"})
+        scopes=(Scope.APPS,), fixture={"app_query": "obsidian"},
+        execute=_DelegatedAppOpen())
 
 
 def launcher_profile_activate_contract(deps=None) -> CapabilityContract:
@@ -563,7 +642,11 @@ def launcher_profile_activate_contract(deps=None) -> CapabilityContract:
         "launcher.profile.activate", "Profil aktivieren", "PROFILE_ACTIVATE",
         field="profile_query",
         effects=(EffectClass.LOCAL_WRITE, EffectClass.NETWORK_READ),
-        scopes=(Scope.CONFIG_LAUNCHER,), fixture={"profile_query": "Standard"})
+        inputs=InputSchema(fields=(Field("profile_query", str),
+                                   Field("force", bool))),
+        scopes=(Scope.CONFIG_LAUNCHER,),
+        fixture={"profile_query": "Standard", "force": False},
+        execute=_DelegatedProfileActivate())
 
 
 def launcher_autostart_set_contract(deps=None) -> CapabilityContract:
@@ -585,7 +668,8 @@ def launcher_placement_set_contract(deps=None) -> CapabilityContract:
         field="placement",
         effects=(EffectClass.LOCAL_WRITE, EffectClass.NETWORK_READ),
         scopes=(Scope.CONFIG_LAUNCHER, Scope.APPS),
-        fixture={"placement": "Obsidian | left | right_half"})
+        fixture={"placement": "Obsidian | left | right_half"},
+        execute=_DelegatedLauncherMutation("APP_PLACE", "placement"))
 
 
 #: Capabilities mit **festen**, im Code stehenden Provider-Zielen. Ihre Ziel-URL
@@ -598,8 +682,12 @@ _FIXED_TARGET_CAPS = frozenset({"web.search", "web.news", "web.research"})
 _URL_FIELD = {"web.browse": "url", "web.open": "url"}
 
 
-async def _target_evidence(coordinator, name: str, payload: dict) -> bool | None:
+async def target_evidence(coordinator, name: str, payload: dict) -> bool | None:
     """``True`` erlaubt, ``False`` verworfen, ``None`` unbekannt (fail-closed).
+
+    **Oeffentlich**, weil Voice UND REST dieselbe Unterscheidung brauchen: eine
+    zweite Kopie in der HTTP-Schicht waere genau die transportabhaengige zweite
+    Wahrheit, die §A2.3 verbietet.
 
     ``None`` fuehrt in der Policy zu ``needs:safe-target`` und damit zu einem
     Nicht-Erfolg — ohne Guard gibt es keine Evidenz, und ohne Evidenz keine
@@ -640,7 +728,8 @@ _PAYLOAD_BUILDERS = {
     "CLIPBOARD": lambda a: {"task": a.payload or ""},
     "SCREEN": lambda a: {"question": a.payload or ""},
     "APP_OPEN": lambda a: {"app_query": a.payload},
-    "PROFILE_ACTIVATE": lambda a: {"profile_query": a.payload},
+    # Die Stimme bricht bei einem bereits aktiven Profil ab (force=False).
+    "PROFILE_ACTIVATE": lambda a: {"profile_query": a.payload, "force": False},
     "APP_AUTOSTART_ON": lambda a: {"app_query": a.payload, "enabled": True},
     "APP_AUTOSTART_OFF": lambda a: {"app_query": a.payload, "enabled": False},
     "APP_PLACE": lambda a: {"placement": a.payload},
@@ -745,7 +834,7 @@ async def run_migrated(coordinator, action, ctx, confirmed: bool = False,
     # erzwingt der Transport-Guard (Slice 6). ``confirmed`` kommt ausschliesslich aus
     # dem gesprochenen „Ja" (Operator), nie aus Modellinhalt.
     evidence = Evidence(
-        target_allowed=await _target_evidence(coordinator, name, payload),
+        target_allowed=await target_evidence(coordinator, name, payload),
         confirmed=confirmed)
     outcome = await coordinator.attempt(request, evidence, bindings=_bindings(ctx, feedback))
     if outcome.status is OutcomeStatus.OK:

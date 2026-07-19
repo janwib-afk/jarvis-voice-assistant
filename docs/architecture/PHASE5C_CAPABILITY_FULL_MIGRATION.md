@@ -375,3 +375,50 @@ Umkehrtest müsste mit zurückgenommen werden.
 
 **Restrisiko.** Keines über die bereits genannten hinaus; `app_launcher.launch` bleibt
 allowlist-gebunden wie zuvor.
+
+---
+
+## Slice 8 — Gemeinsame Launcher-REST-Adapter
+
+**Ziel und Seam.** Vier Routen (`/commands/app/open`, `/launcher/apps/{id}/toggle`,
+`/launcher/apps/{id}/placement`, `/launcher/profiles/{id}/activate`) über **dieselben**
+Verträge wie die Stimme führen. Seam: `server._launcher_capability`.
+
+**Erstes beobachtetes ROT.** Von 19 Tests scheiterten genau **2** — die beiden, die
+belegen, dass die Routen den Coordinator umgehen. Die übrigen 17 charakterisierten das
+Ist-Verhalten (403/400/404/Body/Status) und mussten grün bleiben, was sie taten.
+
+**Eine Ausführung, zwei Projektionen.** `_DelegatedLauncherMutation` legt einen
+mitschreibenden Wrapper um den semantischen Mutationsport: die Stimme liest den fertigen
+deutschen Satz, die Route die maschinenlesbare Fehlerliste — aus **demselben** Lauf.
+Configuration bleibt einziger Writer; Broadcast und Correlation laufen unverändert über
+`persist_launcher_intent`.
+
+**Zwei echte Befunde während der Umsetzung:**
+
+1. **Ein belegter Transportunterschied.** `_exec_profile_activate` bricht ab, wenn das
+   Profil bereits aktiv ist; die REST-Route hat dagegen **immer** persistiert und
+   `launcher_changed` gebroadcastet. Der Legacy-Golden-Test pinnt genau dieses Broadcast
+   und **hing** nach der naiven Zusammenlegung (er wartete ewig auf das ausbleibende
+   Frame). Das ist ein Unterschied in der **Absicht**, nicht in der Fachlichkeit — er steht
+   jetzt als typisiertes `force`-Eingabefeld im Vertrag, nicht als transportabhängige
+   zweite Wahrheit. Voice sendet `force=False`, die Route `force=True`.
+2. **Die Ziel-Evidenz wird geteilt, nicht kopiert.** Die Launcher-Verträge tragen
+   `network-read` (TTS), womit `_safe_target` greift. `capability.target_evidence` ist
+   deshalb **öffentlich**: eine zweite Kopie der Fest-vs-modellgesteuert-Unterscheidung in
+   der HTTP-Schicht wäre genau die zweite Wahrheit, die §A2.3 verbietet.
+
+**Mutationen.** M36 Route erzwingt nicht mehr (**HANG** = ROT: das Broadcast bleibt aus) ·
+M37 Route nimmt falschen Vertrag · M38 Fehlerliste nicht eingefangen. **M38 blieb zunächst
+grün** und deckte eine ernste Lücke auf: ohne Einfangen hätte die Route **200 OK auf einen
+fehlgeschlagenen Speichervorgang** gemeldet. Nach Ergänzung des Persist-Fehler-Tests sind
+alle drei ROT.
+
+**Regression.** 1170 Tests OK.
+
+**Rollback.** `git revert` — die vier Routen kehren zu `_persist_launcher` zurück.
+
+**Restrisiko.** Die Placement-Route kodiert `app_id | monitor | zone` als String, den der
+Legacy-Parser wieder zerlegt. Das ist byte-identisch, weil `app_id` ein Slug und
+monitor/zone Allowlist-Konstanten sind — ein `|` in einer App-**ID** würde es brechen.
+Als Formwart notiert, nicht als offene Lücke.
