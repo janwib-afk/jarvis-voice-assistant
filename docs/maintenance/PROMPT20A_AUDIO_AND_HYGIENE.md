@@ -104,3 +104,29 @@ unter `discover -s tests` als auch unter `python -m unittest tests.<Modul>`.
 gemischter Reihenfolge grün; Smoke-Env-Integrität grün.
 
 **Rollback.** `git revert`; die Tests kehren zu den pauschalen Pops zurück (Leak).
+
+## Slice 6 — Wetter-Response schliessen + ResourceWarnings
+
+**Belegter Leak.** `assistant_core.get_weather_sync()` rief
+`urllib.request.urlopen(...)` ohne jedes Schliessen: die Response leckte bei
+Erfolg, bei `read()`/JSON-Fehler und — besonders — bei `HTTPError`, den `urlopen`
+bereits beim Aufruf wirft (ein einfaches `with urlopen(...)` bindet dann nie).
+
+**Erstes beobachtetes ROT.** Erfolgs- und JSON-Fehler-Response nicht geschlossen
+(`closed_flag` False); zwei `ResourceWarning: Implicitly cleaning up <HTTPError 503>`.
+
+**Minimales GRÜN.**
+* Erfolg/`read()`/JSON: `with urllib.request.urlopen(...) as resp:`.
+* `except urllib.error.HTTPError as e: e.close()` — separat, weil der Fehler die
+  offene Response selbst ist.
+* Unverändert: genau **zwei** Versuche, **5 s** Timeout, bestehendes Logging (je
+  Versuch ein `context.refresh_failed`), `None`-Fallback, keine zweite Retry-Schicht.
+
+**ResourceWarnings in `tests/test_action_deep_module.py`.** Drei
+`open(...).read()`-Reads liefen ohne Context-Manager (unclosed file). Auf `with
+open(...) as _f:` umgestellt — reine Ressourcenhygiene, keine Verhaltensänderung.
+
+**Grüne Evidenz.** `test_weather_resource.py` 5/5; `test_action_deep_module.py` 64/64
+unter `-W error::ResourceWarning`; volle Suite 1253 OK.
+
+**Rollback.** `git revert`.

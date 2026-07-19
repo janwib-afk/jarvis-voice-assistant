@@ -235,7 +235,8 @@ class InboxWriteActionTests(_TempVaultTestCase):
     def test_writes_entry_with_parsed_category(self):
         result = execute("INBOX_WRITE", "[Termin] Zahnarzt Dienstag 9 Uhr")
         datei = os.path.join(self.inbox, time.strftime("%Y-%m-%d") + " Brain Dump.md")
-        inhalt = open(datei, encoding="utf-8").read()
+        with open(datei, encoding="utf-8") as _f:
+            inhalt = _f.read()
         self.assertIn("Termin", inhalt)
         self.assertIn("Zahnarzt Dienstag 9 Uhr", inhalt)
         self.assertNotIn("[Termin] Zahnarzt", inhalt)  # Kategorie wurde abgetrennt
@@ -244,7 +245,8 @@ class InboxWriteActionTests(_TempVaultTestCase):
     def test_unknown_category_falls_back_to_notiz_without_losing_text(self):
         execute("INBOX_WRITE", "[Quatsch] Wichtiger Text")
         datei = os.path.join(self.inbox, time.strftime("%Y-%m-%d") + " Brain Dump.md")
-        inhalt = open(datei, encoding="utf-8").read()
+        with open(datei, encoding="utf-8") as _f:
+            inhalt = _f.read()
         self.assertIn("Notiz", inhalt)
         self.assertIn("[Quatsch] Wichtiger Text", inhalt)
 
@@ -539,7 +541,8 @@ class ClipboardNoteActionTests(_TempVaultTestCase):
                                lambda: "Merkenswerter Satz."):
             execute("CLIPBOARD_NOTE")
         datei = os.path.join(self.inbox, time.strftime("%Y-%m-%d") + " Brain Dump.md")
-        inhalt = open(datei, encoding="utf-8").read()
+        with open(datei, encoding="utf-8") as _f:
+            inhalt = _f.read()
         self.assertIn("Notiz", inhalt)
         self.assertIn("Merkenswerter Satz.", inhalt)
 
