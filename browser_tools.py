@@ -8,9 +8,10 @@ import html as html_module
 import re
 import webbrowser
 import subprocess
-from urllib.parse import unquote, parse_qs, urlparse, quote_plus
+from urllib.parse import unquote, parse_qs, urlparse, quote_plus, urljoin
 import httpx
 
+import capability
 import obslog
 
 # Maximal so viele Tabs gleichzeitig — der aelteste wird automatisch geschlossen.
@@ -19,6 +20,33 @@ MAX_TABS = 5
 _pw = None
 _browser = None
 _context = None
+
+# SSRF-TargetGuard (RFC-0007 §21): erzwingt die Denylist vor jeder Navigation und
+# jedem Request/Redirect. Fail-closed by default — ist keiner konfiguriert, wird ein
+# strikter Guard mit echtem DNS-Resolver benutzt, damit die Pruefung nie versehentlich
+# fehlt. Die Runtime injiziert denselben Guard ueber ``configure_guard`` (Slice 6).
+_guard = None
+
+
+def configure_guard(guard) -> None:
+    """Runtime-seitige Injektion des TargetGuard (RFC-0002-Wire-Muster)."""
+    global _guard
+    _guard = guard
+
+
+def _active_guard():
+    global _guard
+    if _guard is None:
+        _guard = capability.TargetGuard()
+    return _guard
+
+
+async def _guarded_goto(page, url, **kwargs):
+    """JEDE Navigation laeuft hierueber: Route-Guard installieren, Ziel vorab pruefen,
+    verbundene IP nachpruefen. Kein ungepruefter ``page.goto`` bleibt uebrig."""
+    guard = _active_guard()
+    await capability.install_page_guard(guard, page)
+    return await capability.guarded_goto(guard, page, url, **kwargs)
 
 
 def _bring_chromium_to_front():
@@ -91,7 +119,7 @@ async def search_and_read(query: str) -> dict:
     try:
         # DuckDuckGo search (no cookie banner, no reCAPTCHA)
         search_url = f"https://duckduckgo.com/?q={quote_plus(query)}"
-        await page.goto(search_url, timeout=15000)
+        await _guarded_goto(page, search_url, timeout=15000)
         _bring_chromium_to_front()
         await page.wait_for_timeout(2000)
 
@@ -173,12 +201,17 @@ async def _search_links_fallback(query: str, limit: int) -> list[dict]:
     """
     url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
     try:
+        # follow_redirects=False: die Kette faehrt der TargetGuard und prueft JEDEN
+        # aufgeloesten Hop (RFC-0007 §21, Amendment 1 §A1.3) — kein Auto-Follow.
         async with httpx.AsyncClient(
             timeout=10,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
-            resp = await client.get(url)
+            resp = await capability.httpx_guarded_get(_active_guard(), client, url)
+    except capability.SSRFBlocked as e:
+        obslog.event("browser.request_failed", url=url, error_type="SSRFBlocked")
+        return []
     except Exception as e:
         obslog.event("browser.request_failed", url=url, error_type=type(e).__name__)
         return []
@@ -200,7 +233,7 @@ async def search_links(query: str, limit: int = 4) -> list[dict]:
     try:
         page = await _new_page_capped()
         search_url = f"https://duckduckgo.com/?q={quote_plus(query)}"
-        await page.goto(search_url, timeout=15000)
+        await _guarded_goto(page, search_url, timeout=15000)
         _bring_chromium_to_front()
         await page.wait_for_timeout(2000)
 
@@ -263,23 +296,46 @@ async def fetch_page_text_fallback(url: str, max_chars: int = 5000) -> dict:
     if parsed.scheme not in ("http", "https"):
         return {"error": f"Nicht unterstuetztes Schema: {parsed.scheme or 'kein'}", "url": url}
 
+    guard = _active_guard()
     try:
+        # follow_redirects=False + gepruefte Redirect-Kette: JEDER Hop wird vor dem
+        # Request auf die aufgeloeste IP geprueft; die finale Antwort wird gestreamt
+        # und bei ``_FALLBACK_MAX_BYTES`` gedeckelt (RFC-0007 §21, Amendment 1 §A1.3).
+        import asyncio
         async with httpx.AsyncClient(
             timeout=15,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
-            async with client.stream("GET", url) as resp:
-                if resp.status_code != 200:
-                    return {"error": f"HTTP-Status {resp.status_code}", "url": url}
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in resp.aiter_bytes():
-                    chunks.append(chunk)
-                    total += len(chunk)
-                    if total >= _FALLBACK_MAX_BYTES:
-                        break
-                encoding = resp.encoding or "utf-8"
+            current = url
+            chunks: list[bytes] = []
+            encoding = "utf-8"
+            for _ in range(6):
+                v = await asyncio.to_thread(guard.check_url, current)
+                if not v.allowed:
+                    raise capability.SSRFBlocked(v.reason)
+                async with client.stream("GET", current) as resp:
+                    if resp.is_redirect:
+                        location = resp.headers.get("location")
+                        if not location:
+                            return {"error": f"HTTP-Status {resp.status_code}", "url": url}
+                        current = urljoin(current, location)
+                        continue
+                    if resp.status_code != 200:
+                        return {"error": f"HTTP-Status {resp.status_code}", "url": url}
+                    total = 0
+                    async for chunk in resp.aiter_bytes():
+                        chunks.append(chunk)
+                        total += len(chunk)
+                        if total >= _FALLBACK_MAX_BYTES:
+                            break
+                    encoding = resp.encoding or "utf-8"
+                    break
+            else:
+                raise capability.SSRFBlocked("Zu viele Redirects")
+    except capability.SSRFBlocked:
+        obslog.event("browser.request_failed", url=url, error_type="SSRFBlocked")
+        return {"error": "SSRFBlocked", "url": url}
     except Exception as e:
         obslog.event("browser.request_failed", url=url, error_type=type(e).__name__)
         return {"error": type(e).__name__, "url": url}
@@ -302,7 +358,7 @@ async def visit(url: str, max_chars: int = 5000) -> dict:
         obslog.event("browser.fallback", url=url, reason="no_playwright")
         return await fetch_page_text_fallback(url, max_chars=max_chars)
     try:
-        await page.goto(url, timeout=15000, wait_until="domcontentloaded")
+        await _guarded_goto(page, url, timeout=15000, wait_until="domcontentloaded")
         text = await page.evaluate("""
             () => {
                 const selectors = ['main', 'article', '[role="main"]', '.content', '#content', 'body'];
@@ -332,7 +388,7 @@ async def fetch_news() -> str:
     """Fetch current world news from worldmonitor.app in visible browser."""
     page = await _new_page_capped()
     try:
-        await page.goto("https://www.worldmonitor.app/", timeout=20000)
+        await _guarded_goto(page, "https://www.worldmonitor.app/", timeout=20000)
         _bring_chromium_to_front()
         await page.wait_for_timeout(6000)  # Wait for JS to render
         text = await page.evaluate("() => document.body.innerText")
@@ -348,7 +404,7 @@ async def fetch_news() -> str:
 async def open_url(url: str):
     """Open URL in the Playwright browser and bring it to front."""
     page = await _new_page_capped()
-    await page.goto(url, timeout=15000, wait_until="domcontentloaded")
+    await _guarded_goto(page, url, timeout=15000, wait_until="domcontentloaded")
     _bring_chromium_to_front()
     return {"success": True, "url": url}
 

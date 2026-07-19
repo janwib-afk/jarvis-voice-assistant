@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 import anthropic
 import httpx
 
+import capability
 import config_loader
 import configuration as configuration_mod
 import conversation
@@ -69,10 +70,56 @@ class Runtime:
         # Conversation-Zustand (RFC-0006 D4): genau EIN runtime-eigener Manager,
         # der alle Sessions besitzt. Konstruktion ist I/O-frei (Import-Sicherheit).
         self.conversation_manager = conversation.ConversationManager()
+        # Capability-/Policy-Kernel (RFC-0007 §7): genau EIN runtime-eigener
+        # Coordinator ueber der eingefrorenen Pilot-Registry und den aktiven Regeln.
+        # Konstruktion ist I/O-frei; der Dedupe-Scope ist an diese App gebunden
+        # (§19). Kein Modul-Global, kein Service Locator — deps ist eine konkrete
+        # Objektreferenz auf diese Runtime (§7).
+        # SSRF-TargetGuard (RFC-0007 §21): genau EIN Guard, den Coordinator-Deps und
+        # browser_tools teilen. Konstruktion ist I/O-frei (nur der Resolver wird
+        # gehalten); die Injektion in browser_tools passiert in wire().
+        self._target_guard = capability.TargetGuard()
+        _cap_deps = capability.CapabilityDeps(runtime=self, target_guard=self._target_guard)
+        self.capabilities = capability.Coordinator(
+            capability.build_registry(_cap_deps),
+            capability.ACTIVE_RULES,
+            dedupe_scope=session_token,
+            deps=_cap_deps,
+        )
+        # Launcher-Persist-Adapter (RFC-0007 §17, Slice 8): der Server injiziert seine
+        # ``persist_launcher_intent``-Orchestrierung (configuration.mutate als einziger
+        # Writer + Live-Apply + Broadcast). Explizite Instanz-Injektion, kein
+        # Modul-Global, kein Service Locator; der Kernel/Coordinator kann so eine
+        # REST-Wirkung ausfuehren, ohne dass ``capability`` ``server`` importiert.
+        self._launcher_persist = None
         # intern
         self._wired = False
         self._refresh_task: "asyncio.Task | None" = None
         self._closed = False
+
+    def configure_launcher_persist(self, fn) -> None:
+        """Vom Server (``create_app``) gesetzte Persist-Orchestrierung."""
+        self._launcher_persist = fn
+
+    async def persist_launcher(self, intent, kind: str, correlation_id=None) -> list[str]:
+        """Semantische Launcher-Mutation ueber den EINZIGEN Writer (RFC-0003).
+
+        Delegiert an die injizierte Server-Orchestrierung; ohne Injektion ein Fehler
+        (fail-closed) statt einer stillen Umgehung."""
+        if self._launcher_persist is None:
+            raise RuntimeError("launcher persist nicht konfiguriert")
+        return await self._launcher_persist(self, intent, kind, correlation_id)
+
+    async def refresh_context(self):
+        """Kontextdaten (Wetter + Vault-Scan) ueber den Coordinator neu laden.
+
+        Startup und Post-Settings-Save nutzen denselben Pfad (RFC-0007 Slice 9). Kein
+        Nutzerausloeser (§2.6.3); der Coordinator ist der Timeout-Owner. Gibt das
+        ``Outcome`` zurueck — der Aufrufer entscheidet ueber Degraded/Ignorieren."""
+        return await self.capabilities.attempt(
+            capability.CapabilityRequest(
+                "context.refresh", capability.Provenance.OPERATOR, {}),
+            capability.Evidence(target_allowed=True))
 
     @property
     def config(self) -> dict | None:
@@ -120,6 +167,7 @@ class Runtime:
             return
         import app_launcher
         import assistant_core
+        import browser_tools
         import memory
         cfg = self.config or {}
         memory.configure(
@@ -129,6 +177,8 @@ class Runtime:
         assistant_core.configure(cfg)
         assistant_core.init_clients(self.ai, self.http)
         app_launcher.configure(cfg.get("apps", []), cfg.get("launcher"))
+        # Denselben SSRF-Guard in die Browsersteuerung injizieren (RFC-0007 §21).
+        browser_tools.configure_guard(self._target_guard)
         self._wired = True
 
     async def aopen(self) -> None:
@@ -143,9 +193,10 @@ class Runtime:
                 api_key=self.config["anthropic_api_key"], timeout=30.0, max_retries=2)
         self.wire()
         if not os.environ.get("JARVIS_SKIP_STARTUP_REFRESH"):
-            import assistant_core
-            self._refresh_task = asyncio.create_task(
-                asyncio.to_thread(assistant_core.refresh_data))
+            # Startup-Refresh ueber die context.refresh-Capability (RFC-0007 Slice 9):
+            # weiterhin fire-and-forget (ein Fehler wird zum FAILED-Outcome und crasht
+            # den Startup nicht). Kein zusaetzlicher Aufruf — derselbe eine Refresh.
+            self._refresh_task = asyncio.create_task(self.refresh_context())
 
     async def aclose(self) -> None:
         """Lifespan-Shutdown: idempotent, partial-failure-fest. Refresh-Task

@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import actions
 import app_launcher
+import capability
 import monitors
 import assistant_core
 import config_loader
@@ -130,7 +131,8 @@ async def websocket_endpoint(ws: WebSocket):
     # (RFC-0005-Transportgrenze, Praezisierung 8).
     async def _run_turn(ctx, text, correlation_id, sink):
         await assistant_core.process_message(
-            ctx, text, sink, mutate_launcher=_launcher_hook(rt))
+            ctx, text, sink, mutate_launcher=_launcher_hook(rt),
+            capabilities=rt.capabilities)
 
     session = rt.conversation_manager.open(channel, run_turn=_run_turn)
 
@@ -364,12 +366,14 @@ async def _post_commit(rt, needs_refresh: bool) -> list[str]:
     Configuration NIE zurueckrollen — ihr Fehler erzeugt einen Degraded-Zustand."""
     degraded: list[str] = []
     if needs_refresh:
-        try:
-            # wttr.in/Vault-Scan blockieren bis ~5s — nicht auf der Event-Loop.
-            await asyncio.to_thread(assistant_core.refresh_data)
-        except Exception as e:
+        # Post-Settings-Save-Refresh ueber die context.refresh-Capability (RFC-0007
+        # Slice 9) — derselbe Pfad wie beim Startup. Ein nicht erfolgreicher Ausgang
+        # rollt die gueltig persistierte Configuration NIE zurueck, sondern erzeugt
+        # den Degraded-Zustand (Semantik unveraendert).
+        outcome = await rt.refresh_context()
+        if outcome.status is not capability.OutcomeStatus.OK:
             obslog.event("context.refresh_failed", stage="settings",
-                         error_type=type(e).__name__)
+                         error_type=outcome.error_type or outcome.status.value)
             degraded.append("Kontextdaten (Wetter/Vault) konnten nicht neu geladen "
                             "werden — die Einstellungen sind gespeichert.")
     try:
@@ -821,10 +825,23 @@ async def launcher_rename_profile(profile_id: str, request: Request):
         return err
     if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile", _rest_correlation(request))
-    if err is not None:
-        return err
+    # REST-Pilot (RFC-0007 Slice 8): ueber DENSELBEN Coordinator, Provenance operator.
+    # Keine direkte Mutationsumgehung — die Persistenz laeuft im Capability-Execute
+    # ausschliesslich ueber configuration.mutate (einziger Writer). Status/Body/Broadcast
+    # bleiben byte-/shape-identisch.
+    rt = request.app.state.runtime
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(
+            "launcher.profile.rename", capability.Provenance.OPERATOR,
+            {"profile_id": profile_id, "name": name}),
+        capability.Evidence(),
+        meta={"correlation_id": _rest_correlation(request)})
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return JSONResponse({"ok": False, "errors": ["Profil-Aktion fehlgeschlagen."]},
+                            status_code=500)
+    errors = list(outcome.value["errors"])
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=500)
     obslog.event("profile.changed", kind="renamed", active=app_launcher.ACTIVE_PROFILE)
     return _profiles_response()
 
@@ -886,6 +903,10 @@ def create_app(rt: runtime_mod.Runtime) -> FastAPI:
     Config/Clients öffnen erst im Lifespan (rt.aopen)."""
     app = FastAPI(lifespan=_server_lifespan)
     app.state.runtime = rt
+    # Launcher-Persist in die Runtime injizieren (RFC-0007 §17, Slice 8): der
+    # Capability-Kernel fuehrt REST-Wirkungen ueber DIESE Orchestrierung aus, ohne
+    # dass ``capability`` ``server`` importiert (keine Zyklus-/Locator-Kopplung).
+    rt.configure_launcher_persist(persist_launcher_intent)
     app.add_middleware(RestV1Middleware)   # REST-V1-Presentation (Legacy passiert exakt)
     app.include_router(router)
     app.mount("/static", StaticFiles(

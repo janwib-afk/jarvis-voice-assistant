@@ -38,7 +38,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Gate 1 - Syntax/Import
-        run: python -m compileall -q server.py runtime.py configuration.py obslog.py wire_protocol assistant_core.py actions.py config_loader.py app_launcher.py memory.py browser_tools.py monitors.py tts.py health.py screen_capture.py clipboard_tools.py
+        run: python -m compileall -q server.py runtime.py configuration.py obslog.py wire_protocol capability assistant_core.py actions.py config_loader.py app_launcher.py memory.py browser_tools.py monitors.py tts.py health.py screen_capture.py clipboard_tools.py
       - name: Gate 2-4,6 - Unit + Contract + Integration + Skip-Policy (Smoke)
         run: python scripts/smoke-test.py
       - name: Gate 2-4 - Full unittest suite

@@ -149,7 +149,7 @@ class StopFlowTests(unittest.TestCase):
     def test_stop_frame_cancels_running_task(self):
         record = []
 
-        async def slow_process(session_id, text, ws, mutate_launcher=None):
+        async def slow_process(session_id, text, ws, mutate_launcher=None, capabilities=None):
             record.append("start")
             try:
                 await asyncio.sleep(30)
@@ -178,7 +178,7 @@ class StopFlowTests(unittest.TestCase):
         # muss Worker UND Child sauber beenden (kein stiller Task-Leak).
         record = []
 
-        async def slow_process(session_id, text, ws, mutate_launcher=None):
+        async def slow_process(session_id, text, ws, mutate_launcher=None, capabilities=None):
             record.append("start")
             try:
                 await asyncio.sleep(30)
@@ -204,7 +204,7 @@ class StopFlowTests(unittest.TestCase):
         # eine danach gesendete Nachricht muss normal verarbeitet werden.
         record = []
 
-        async def proc(session_id, text, ws, mutate_launcher=None):
+        async def proc(session_id, text, ws, mutate_launcher=None, capabilities=None):
             record.append(("start", text))
             if text == "erste":
                 await asyncio.sleep(30)  # wird per Stopp abgebrochen
@@ -231,7 +231,7 @@ class StopFlowTests(unittest.TestCase):
         # verworfen (Queue geleert), nicht nachtraeglich abgearbeitet.
         record = []
 
-        async def proc(session_id, text, ws, mutate_launcher=None):
+        async def proc(session_id, text, ws, mutate_launcher=None, capabilities=None):
             record.append(text)
             if text == "lang":
                 await asyncio.sleep(30)

@@ -1,6 +1,7 @@
 # RFC-0007 — Capability- und Policy-Kernel
 
-- **Status:** Accepted for incremental implementation (2026-07-19)
+- **Status:** Accepted for incremental implementation (2026-07-19) — **inkl.
+  [Amendment 1](#amendment-1--pilotphase-wirkungsinventar-ssrf-durchsetzung-und-lifecycle-grenzen)**
 - **Phase:** 5A (Architektur) — Umsetzung frühestens Prompt 19
 - **Datum:** 2026-07-19
 - **Basis:** `master 98244a08` (Post-Merge-Gate `29680320223`, Fast + Browser erfolgreich)
@@ -745,3 +746,236 @@ Eigenes und persistiert nichts.
 | **Rate-/Budget-Grenzen** | Gehören zur Job-Engine | Phase 6 |
 | **Push-to-Talk-Pflicht** | Nutzerentscheidung, offen seit Phase 2 | offen |
 | **`/docs`, `/redoc`, `/openapi.json` ohne Token** | Beim Inventar aufgefallen, kein Capability-/Policy-Thema; lokal gebunden, aber Informationsquelle über alle wirkenden Routen (Klasse TM-003) | eigene Entscheidung |
+
+---
+
+# Amendment 1 — Pilotphase, Wirkungsinventar, SSRF-Durchsetzung und Lifecycle-Grenzen
+
+- **Datum:** 2026-07-19
+- **Anlass:** Prompt 19 (Phase 5B) — verpflichtendes Amendment-Gate vor der Umsetzung
+- **Basis:** `origin/master` `f03e4d63a220e8acd22b24ef3076a828993f7356`;
+  Post-Merge-Hosted-Run **29683333214** (`workflow_dispatch`, Fast-Job `88183275932` und
+  Browser-Job `88183275901` beide `success`)
+- **Status:** vom Nutzer ausdrücklich angenommen (Beschlusspunkte A–G, 2026-07-19)
+
+> **Was sich NICHT ändert:** Die Architekturentscheidungen **D1–D6, D8 und D10** bleiben
+> unverändert. Variante C (Core + Kernel + Coordinator), das Hybrid-Interface, der
+> Grenzvertrag für native Pfade, die Effekt-Zuordnung an die auslösende Capability, „Grant
+> nur Vertrag, keine Laufzeit", „nur erfüllbare Regeln aktivieren" und „der Vertrag ist die
+> Wahrheit" gelten fort. **D7** (SSRF-Durchsetzungspunkt) und **D9** (Wire-Vertrag) werden
+> **präzisiert, nicht umgestoßen**. Es entsteht keine neue Wire-Form; RFC-0005 und RFC-0006
+> bleiben unverändert.
+
+## A1.0 Warum dieses Amendment nötig wurde
+
+Ein Abgleich des akzeptierten RFC mit dem Code auf dem Basis-SHA fand sechs Stellen, an
+denen das Dokument entweder sich selbst oder dem Code widerspricht. Alle sechs sind am
+Code verifiziert, nicht geschätzt. Sie still als Implementierungsdetail zu lösen, hätte
+in drei Fällen zu **Scheinsicherheit** geführt — dem Fehlermodus, den dieses RFC
+ausdrücklich vermeiden will (R3).
+
+| # | Befund | Beleg |
+|---|---|---|
+| 1 | §24 listet elf Slices **bis zur Vollmigration**; §27/§28 begrenzen Prompt 19 auf Core, Kernel, Coordinator, vier Piloten und SSRF | §24 vs. §27/§28 |
+| 2 | §24 Slice 8 sagt „restliche **21** Actions"; nach zwei Piloten bleiben **20** | `len(actions.REGISTRY) == 22` |
+| 3 | §2.4 nennt „Summary-LLM bei **8** Actions" (die mit gesetztem `summary_task`); der Code triggert die Stufe über `not speaks_result` ∧ `!= OPEN` — das sind **15** | `assistant_core.py:341,345,358` + `:240` (Fallback auf `DEFAULT_SUMMARY_TASK`) |
+| 4 | D7 nennt nur eine `httpx`-Transportschicht; die produktiven Browserpfade sind **primär Playwright** | `browser_tools.py:94,335,351` ohne httpx-Weg; httpx nur `:176`/`:267` |
+| 5 | `launcher.profile.delete` ist serverseitig **nicht** bestätigbar — der Zwei-Klick-Dialog ist browserlokal | `server.py:832-846`; `frontend/main.js:1049,1793-1803` |
+| 6 | Provenance-Wirkung, Timeout-Verantwortung, Cancel-vs-Verify und Idempotency-Semantik sind nicht testscharf; §10 und §11 widersprechen sich offen | §10 „verify läuft immer" vs. §11 „CancelledError unverändert" |
+
+## A1.1 (A) Prompt-19-Scope — Pilotphase, nicht Vollmigration
+
+**Beschluss.** Prompt 19 implementiert die **Pilotphase**: Capability Core, reiner Policy
+Kernel, runtime-eigener Coordinator, SSRF-`TargetGuard` mit zwei Transportadaptern und
+**vier repräsentative Produktionspfade**.
+
+Die Vollmigration der verbleibenden **20** Actions, der neun REST-Routen und die
+Entfernung des **gespeicherten** `ActionSpec.risk` folgen in **Prompt 20**.
+
+**§24 wird entsprechend harmonisiert.** Die Slice-Tabelle gilt fort, ihre Zuordnung zu den
+Prompts lautet nun:
+
+| Slice (§24) | Prompt | Anmerkung |
+|---|---|---|
+| 1–7 | **19** | Core, Kernel, Coordinator, vier Piloten, SSRF |
+| 8 | 20 | **20** (nicht 21) restliche Actions in Gruppen |
+| 9 | 20 | restliche neun REST-Routen |
+| 10 | 20 | `risk` auf abgeleitete Projektion umstellen — Deletion Gate aus D10 unverändert |
+| 11 | 19 **und** 20 | Doku/CI je Phase, nicht erst am Ende |
+
+**§27 und §28 gelten unverändert als Beschreibung der Pilotphase.** Ergänzend gilt:
+**Prompt 19 darf nicht als vollständiges Phase-5-Gate bezeichnet werden.** Phase 5 ist
+erst mit Prompt 20 abgeschlossen. Jede Abschlussmeldung aus Prompt 19 muss die vier
+migrierten Pfade, die 20 offenen Actions und die neun offenen REST-Routen benennen.
+
+## A1.2 (B) Wirkungsinventar — die Summary-LLM-Stufe trifft 15 Actions
+
+**Befund.** §2.4 zählte die Actions mit gesetztem `summary_task`. Das ist die
+**Aufgabenbeschreibung**, nicht der **Auslöser**. Der Auslöser steht in der
+Orchestrierung:
+
+```
+assistant_core.py:341   if action.type == "OPEN": return          # Frühabbruch
+assistant_core.py:345   if action.type in actions.SPEAK_RESULT_ACTIONS: ...  # kein Summary
+assistant_core.py:358   summary_resp = await ai.messages.create(...)          # sonst: Summary-LLM
+assistant_core.py:240   task = spec.summary_task or actions.DEFAULT_SUMMARY_TASK
+```
+
+22 Actions − 6 mit `speaks_result` − 1 (`OPEN`) = **15**.
+
+**Beschluss.** Die Angabe wird korrigiert und durch einen **Characterization-Test** gegen
+den tatsächlichen Bestand abgesichert, statt durch eine Zahl im Dokument. Die 15 Actions:
+
+`SEARCH`, `BROWSE`, `SCREEN`, `NEWS`, `INBOX_READ`, `INBOX_WRITE`, `MEMORY_WRITE`,
+`MEMORY_READ`, `MEMORY_FORGET`, `RESEARCH`, `CLIPBOARD`, `CLIPBOARD_NOTE`, `NOTES_RECENT`,
+`PROJECT_CONTEXT`, `SESSION_SUMMARY`.
+
+**Folgeeffekte gehören in den Vertrag der auslösenden Capability** (bekräftigt D4):
+Summary-LLM, TTS, sichtbarer Chromium-Prozess, PowerShell-`SetForegroundWindow`-Fokus und
+Recherche-Autosave. Eine Capability, die eine dieser Wirkungen auslöst, deklariert sie —
+auch wenn sie außerhalb ihrer `execute`-Funktion passiert.
+
+## A1.3 (C) SSRF — ein reiner TargetGuard, zwei Produktionsadapter
+
+**Befund.** D7 nannte eine `httpx`-Transportschicht. Der produktive Hauptpfad ist aber
+Playwright:
+
+| Funktion | Aufrufende Action | Primärpfad | httpx-Fallback |
+|---|---|---|---|
+| `search_and_read` (`:88`) | **`SEARCH`** (Pilot) | `page.goto` `:94` **+ Klick auf das erste Ergebnis** | **keiner** |
+| `fetch_news` (`:331`) | `NEWS` | `page.goto` `:335` | keiner |
+| `open_url` (`:348`) | `OPEN` | `page.goto` `:351` | keiner |
+| `visit` (`:292`) | `BROWSE` | `page.goto` `:305` | `:267`, `follow_redirects=True` `:270` |
+| `search_links` (`:191`) | `RESEARCH` | `page.goto` `:203` | `:176`, `follow_redirects=True` `:179` |
+
+Ein reiner httpx-Schutz würde **ausgerechnet den Piloten `web.search` vollständig
+verfehlen** — und damit Sicherheit vortäuschen, wo keine ist.
+
+**Beschluss.** Ein **gemeinsamer reiner `TargetGuard`** (I/O-frei, mit injiziertem
+Resolver) wird durch **zwei** Produktionsadapter erzwungen:
+
+1. **httpx-Adapter** — Prüfung aller aufgelösten Adressen **vor jedem Request** und **vor
+   jedem manuell behandelten Redirect-Hop**. Kein unkontrolliertes
+   `follow_redirects=True`; die Kette wird selbst gefahren und je Hop revalidiert.
+2. **Playwright-Adapter** — Prüfung **vor jeder Navigation** und **vor jedem Redirect-/
+   Navigation-Request**. Alle aufgelösten Adressen eines Ziels müssen zulässig sein. Wo
+   Playwright die Remote-Adresse offenlegt, wird sie **zusätzlich** geprüft und bei
+   Abweichung abgebrochen.
+
+Damit sind es **zwei Adapter an einem Seam** — nach der Regel aus `DEEPENING.md` ein
+echter Seam, kein hypothetischer.
+
+**Denylist (unverändert aus §21).** Loopback `127.0.0.0/8` und `::1`, RFC1918 `10/8`
+`172.16/12` `192.168/16`, Link-local `169.254/16` und `fe80::/10`, ULA `fc00::/7`,
+Cloud-Metadata `169.254.169.254`, sowie der **harte Selbstzugriffsblock auf
+`127.0.0.1:8340`**. Nur `http`/`https`. Kurze Timeouts, begrenzte Redirect-Kette.
+
+**Ehrlichkeitsklausel.** Ohne IP-Pinning wird **nicht** behauptet, die tatsächlich
+verbundene IP zu binden. **DNS-Rebinding bleibt ausdrücklich als Restrisiko bestehen**
+(R7 unverändert), und **TM-002 wird höchstens als „teilweise mitigiert" bezeichnet** —
+nie als behoben.
+
+**Abbruchbedingung.** Lässt sich der produktive Playwright-Hauptpfad nicht belegbar
+schützen, wird die Umsetzung mit `PROMPT 19 BLOCKIERT – PLAYWRIGHT-SSRF-SEAM NICHT
+BELEGBAR` gestoppt. Dann wird **keine** TM-002-Mitigation behauptet.
+
+## A1.4 (D) REST-Pilot — `launcher.profile.rename` statt `launcher.profile.delete`
+
+**Befund.** `DELETE /launcher/profiles/{id}` (`server.py:832-846`) prüft Token, Existenz
+und Intent-Guards — und löscht dann. Der Zwei-Klick-Dialog existiert **ausschließlich im
+Browser** (`profileDeleteMode`, `frontend/main.js:1049`, `:1793-1803`): der erste Klick
+schaltet den Löschmodus scharf, der zweite Klick auf einen Profil-Tab sendet das `DELETE`.
+
+**Der Server sieht genau einen `DELETE`-Request** — nicht unterscheidbar von einem
+direkten Aufruf mit gültigem Token. Er hat keine Evidenz über den vorausgegangenen
+Dialog. Da **D5** die Grant-Laufzeit und **D9** neue REST-/Wire-Formen ausschließt, gibt
+es in Prompt 19 **keinen ehrlichen Weg**, hier ein `needs:confirmation` zu erfüllen.
+
+**Beschluss.**
+
+- Der REST-Pilot ist **`launcher.profile.rename`** (`server.py:812-829`). Er hat dieselbe
+  Adapterform (Token, Body, Namensvalidierung, 404, `_persist_launcher` mit
+  `configuration`-Intent, `obslog`-Event, `_profiles_response`), ist aber `local-write`
+  statt `destructive` und beweist den REST-Adapter **ohne** neue UI, Wire-Form oder
+  Grant-Runtime.
+- **`launcher.profile.delete` bleibt unverändert** und wird als **bekannte destructive
+  Lücke** dokumentiert. Migriert wird sie erst mit einem **serverseitig nachweisbaren
+  Preview-/Grant-Vertrag** (Phase 10, D5).
+- **Ein direkter `DELETE` darf nicht als „Confirmation" umetikettiert werden.** Das wäre
+  fail-open unter fail-closed-Namen — genau die Umetikettierung, die §16 für
+  `MEMORY_FORGET` in die Gegenrichtung verbietet.
+
+Die in §2.6.2 belegte Asymmetrie — ein Gedächtniseintrag verlangt eine Rückfrage, ein
+ganzes Profil nicht — **bleibt damit bestehen und wird ehrlich als offen ausgewiesen**,
+statt durch eine Scheinabsicherung verdeckt zu werden.
+
+## A1.5 (E) Provenance — Präzisierung von §14
+
+**Beschluss.**
+
+1. **Wirkungen, Scopes und Tier stammen ausschließlich aus der eingefrorenen Registry.**
+   Adapter, LLM-Ausgaben und Nutzdaten können sie weder setzen noch abschwächen. Eine
+   Anfrage trägt Provenance und Eingabe — sonst nichts, was die Policy beeinflusst.
+2. **`derived` liefert niemals Confirmation, Presence oder Authorization.** Es gibt im
+   Kernel keinen Zweig, in dem eine dieser Anforderungen durch Provenance erfüllt wird.
+3. **`derived` darf eine bestehende Anforderung nur beibehalten oder verschärfen** — nie
+   entfernen und nie abschwächen.
+4. **`web.search` läuft mit sicherem Ziel weiter.** Die Provenance-Regel erzeugt für
+   `network-read` **keine** zusätzliche Anforderung; andernfalls würde jede Sprachsuche
+   bestätigungspflichtig, was das beobachtbare Verhalten ändern würde (§28.4).
+5. **`memory.forget` liefert im ersten Attempt `needs:confirmation`.** Erfüllt wird diese
+   Anforderung **ausschließlich** durch die nachfolgende echte Operator-Bestätigung
+   **desselben offenen Conversation-Turns** über den bestehenden Pfad
+   (`ctx.request_confirmation` → Session `awaiting-confirmation`, RFC-0006 §11).
+
+## A1.6 (F) Lifecycle-Grenzen — Auflösung des Widerspruchs zwischen §10 und §11
+
+**Befund.** §10 sagt „`verify` läuft **immer** — auch wenn `execute` geworfen hat". §11
+sagt „`asyncio.CancelledError` wird **unverändert weitergereicht**; kein `finally` darf
+den Abbruch schlucken". Beides zugleich ist nicht implementierbar: ein Verify nach einer
+`CancelledError` verzögert oder verschluckt den Abbruch.
+
+**Beschluss.**
+
+1. **Timeout.** Der Coordinator ist für migrierte Pfade der **alleinige** Timeout-Owner.
+   **Kein doppeltes `asyncio.wait_for`.** Heute liegt der einzige Timeout in
+   `assistant_core.py:324-325`; für einen migrierten Pfad geht diese Verantwortung an den
+   Coordinator über, statt sich zu addieren.
+2. **Cancellation.** `asyncio.CancelledError` wird **sofort und unverändert**
+   weitergereicht. **Cancellation ist die ausdrückliche Ausnahme von „verify läuft
+   immer"** — nach einer `CancelledError` läuft **kein** Verify. §10 gilt damit für alle
+   Ausgänge des geschlossenen Ergebnismodells, nicht für den Abbruch.
+3. **Abgrenzung `cancelled`.** Der Ausgang `cancelled` bezeichnet **nur** eine vom
+   Executor **normal gemeldete kooperative Domänenstornierung**. Eine propagierte
+   `CancelledError` erzeugt **kein** `Outcome` — sie verlässt den Coordinator als
+   Exception (unverändert §11: geworfen wird nur bei `CancelledError`, unbekannter
+   Capability und Schemaverletzung).
+4. **Idempotency.** Der Schlüssel wird **deterministisch** aus `(Capability-Name,
+   Version, kanonisierte Eingabe, lokaler Dedupe-Scope)` erzeugt und **an die Ausführung
+   übergeben**. **Prompt 19 baut keinen Ergebnis-Cache, keine automatische
+   Deduplizierung und keine Retry-Schleife** — das folgt frühestens mit Phase 6. Der
+   Schlüssel ist in Prompt 19 also ein *übergebener Wert*, kein *wirksamer Mechanismus*.
+5. **Audit.** Es werden **ausschließlich** Metadaten aus der Allowlist emittiert: Name,
+   Version, Wirkungsklassen, Ausgang, Dauer. **Keine** Payloads, Inhalte, URLs,
+   Preview-Hashes oder Secrets. **Keine neue durchgehende Korrelation vor Phase 11**
+   (unverändert §20).
+
+## A1.7 (G) Identitäten und Test-Seams
+
+1. **`SEARCH` erhält den stabilen Capability-Namen `web.search`, Version 1.**
+2. Die konkreten **typisierten Ein- und Ausgaben der vier Piloten** werden **vor dem
+   Einfrieren** durch Characterization-Tests gegen das heutige Verhalten festgelegt —
+   nicht aus dem Dokument abgeleitet.
+3. Folgende Seams sind mit diesem Amendment **bestätigt**:
+   `SEAM-CAPABILITY`, `SEAM-POLICY`, `SEAM-CAPABILITY-COORDINATION`,
+   `SSRF-Transport/TargetGuard`.
+4. Ihr Status in `docs/quality/TEST_SEAMS.md` wechselt **erst nach vorhandener grüner
+   Evidenz** von `proposed` auf `approved` — nicht mit dieser Bestätigung.
+
+## A1.8 Unverändert gültig
+
+Keine neue Wire-Form · RFC-0005 und RFC-0006 unverändert · Legacy byte-/shape-exakt ·
+keine Persistenz · keine Job-Engine · kein Scheduler · keine Grant-Laufzeit · kein
+`awaiting-authorization` · keine neue Dependency · **TM-001 nur teilweise bearbeitet**,
+**TM-002 höchstens teilweise mitigiert**, **DNS-Rebinding offen**, **`profile.delete`
+offen** · **Phase 5 ist mit Prompt 19 nicht abgeschlossen.**
