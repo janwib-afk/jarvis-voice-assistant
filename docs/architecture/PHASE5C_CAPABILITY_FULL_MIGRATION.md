@@ -469,3 +469,37 @@ für Settings missbraucht · M43 Konflikt liefert 200 — **alle vier ROT**.
 müsste mit zurückgenommen werden.
 
 **Restrisiko.** Keines über die bereits genannten hinaus.
+
+---
+
+## Slice 10 — Context-Refresh vollständig machen
+
+**Ziel und Seam.** Den letzten direkten Refresh-Bypass schließen. Seam:
+`assistant_core.process_message`.
+
+**Ausgangsverhalten.** Startup und Settings-Save liefen seit Prompt 19 über
+`context.refresh`. Der dritte Auslöser — die Aktivierungsnachricht — rief
+[assistant_core.py:431](assistant_core.py#L431) `await asyncio.to_thread(refresh_data)`
+**direkt** auf und lief damit an Policy, Timeout, Wirkungsdeklaration und Audit vorbei.
+
+**Erstes beobachtetes ROT.** 2 von 8 Tests: der Capability-Nachweis und der
+Quelltext-Wächter. Die übrigen sechs (genau ein Refresh, keine Refresh bei normalen
+Nachrichten, Position vor dem Prompt-Bau, kein zusätzlicher Provider-Aufruf) waren bereits
+grün — das Ausgangsverhalten war korrekt, nur ungeschützt.
+
+**Minimales GRÜN.** Ein `capabilities.attempt("context.refresh", …)` an **derselben
+Stelle**: vor History und Prompt-Bau, damit der Refresh auf *diesen* Prompt wirkt. Die
+blockierende Arbeit bleibt im Thread (der Executor selbst nutzt `to_thread`).
+
+**Ein Testbefund.** Der Quelltext-Wächter schlug zunächst auf meinen eigenen **Kommentar**
+an, der den alten Aufruf zitiert. Statt den Kommentar umzuformulieren, prüft der Wächter
+jetzt nur noch Code — Dokumentation ist kein Bypass.
+
+**Mutationen.** M44 Activate-Refresh entfällt · M45 falscher Vertrag — **beide ROT**.
+
+**Regression.** 1203 Tests OK.
+
+**Rollback.** `git revert`.
+
+**Restrisiko.** Ohne Coordinator (`capabilities is None`, nur in Tests konstruierbar)
+findet kein Refresh statt. Produktiv reicht `_run_turn` immer `rt.capabilities` durch.

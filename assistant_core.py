@@ -468,9 +468,16 @@ async def process_message(ctx, user_text: str, sink, mutate_launcher=None,
                 await send_spoken_response(sink, msg)
             return
 
-    # Refresh weather + tasks on activate — blockiert die Event-Loop nicht.
-    if "activate" in user_text.lower():
-        await asyncio.to_thread(refresh_data)
+    # Refresh weather + tasks on activate — ueber DIESELBE Capability wie Startup
+    # und Settings-Save (Amendment 2 §A2.8). Vorher lief hier ein direkter
+    # ``to_thread(refresh_data)`` an Policy, Timeout und Audit vorbei. Position
+    # unveraendert: vor History und Prompt-Bau, damit der Refresh auf DIESEN
+    # Prompt wirkt. Die blockierende Arbeit bleibt im Thread.
+    if "activate" in user_text.lower() and capabilities is not None:
+        await capabilities.attempt(
+            capability.CapabilityRequest(
+                "context.refresh", capability.Provenance.OPERATOR, {}),
+            capability.Evidence(target_allowed=True))
 
     ctx.remember("user", user_text)
     history = ctx.recent()
