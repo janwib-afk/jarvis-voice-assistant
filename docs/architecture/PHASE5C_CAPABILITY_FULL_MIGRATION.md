@@ -298,3 +298,45 @@ echte Vault des Nutzers wird nie angefasst.
 **Restrisiko.** Der Dedup-Prompt überträgt weiterhin persönliche Inhalte an den Provider —
 das ist bestehendes Produktverhalten. Die Migration macht es **sichtbar und
 klassifiziert**, sie unterbindet es nicht (Preview/Transfer bleibt datiert, Phase 9).
+
+---
+
+## Slice 6 — Sensitive Eingaben (CLIPBOARD, SCREEN)
+
+**Ziel und Seam.** Beide Pfade migrieren **und** die in §A2.5 geforderte
+Reihenfolge-Korrektur durchführen. Seam: der `feedback`-Port der Invocation-Bindings.
+
+**Belegter Defekt.** [assistant_core.py:345](assistant_core.py#L345) sprach
+„Ich werfe kurz einen Blick auf deinen Bildschirm." **vor** dem Registry-Lookup und vor
+jeder Entscheidung — eine Wirkung ohne Freigabe. Kein Test deckte das ab (die Formulierung
+kam im ganzen Repo genau einmal vor, ohne Zusicherung).
+
+**Neue Reihenfolge.** `Policy-Allow → autorisierte kurze Rückmeldung → Capture →
+Verarbeitung`. Die Ansage läuft jetzt im Capability-Execute über
+`ctx.bindings.feedback` — also **hinter** der Freigabe und weiterhin **vor** Aufnahme und
+Upload. Der Wortlaut ist unverändert. `PROMPT 20 BLOCKIERT – PRE-AUTH-WIRKUNG BEI SCREEN`
+trifft damit **nicht** zu: die Verschiebung war ohne Vertragsbruch möglich, weil der
+`feedback`-Port aus Slice 1 genau dafür vorgesehen war.
+
+**Beleg.** Der Test ordnet Rückmeldung und Capture in einer gemeinsamen Liste und prüft
+die Reihenfolge; bei einer Deny-Regel muss die Liste **leer** bleiben — eine abgelehnte
+Wirkung darf sich nicht einmal ankündigen.
+
+**Klassifikation.** Beide lesen `sensitive` (nicht `personal`): Bildschirm und
+Zwischenablage können alles enthalten, was gerade offen ist. `secret` bleibt strukturell
+nicht darstellbar (SI-5, geprüft).
+
+**Presence bleibt datiert.** Die Tests belegen, dass `presence-unlocked` **nicht** in
+`ACTIVE_RULES` steht und `Evidence().presence` weiterhin `UNKNOWN` ist — es wird
+nirgends behauptet, `unknown` sei eine bestätigte Anwesenheit.
+
+**Mutationen.** M28 Ankündigung entfällt · M29 Ankündigung nicht verdrahtet ·
+M30 sensitive Eingaben als harmlos · M31 Mapping verbogen — **alle vier ROT**.
+
+**Regression.** 1130 Tests OK. Zwei Test-Doubles spiegeln die um `feedback` erweiterte
+Signatur.
+
+**Rollback.** `git revert` — die Ansage kehrt an ihre alte Stelle vor der Policy zurück.
+
+**Restrisiko.** TM-005/TM-006 bleiben offen: es gibt weiterhin **keine** Vorschau und
+**keine** Regionsauswahl vor dem Upload. Preview bleibt datiert (Phase 9).

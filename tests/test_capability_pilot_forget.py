@@ -102,10 +102,10 @@ class OrchestrationTests(unittest.TestCase):
         seen = {}
         real_run = cap.run_migrated
 
-        async def _spy(coord, action, ctx, confirmed=False):
+        async def _spy(coord, action, ctx, confirmed=False, **kw):
             seen["confirmed"] = confirmed
             seen["action"] = action.type
-            return await real_run(coord, action, ctx, confirmed=confirmed)
+            return await real_run(coord, action, ctx, confirmed=confirmed, **kw)
 
         class _FakeMessages:
             async def create(self, **kw):

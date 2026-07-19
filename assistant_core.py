@@ -340,9 +340,11 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
     """
     obslog.event("action.started", action=action.type)
 
-    # Quick voice feedback for SCREEN so user knows Jarvis is working
-    if action.type == "SCREEN":
-        await send_spoken_response(sink, "Ich werfe kurz einen Blick auf deinen Bildschirm.")
+    # Die kurze SCREEN-Rueckmeldung stand hier frueher VOR jeder Entscheidung —
+    # eine Wirkung ohne Freigabe. Sie laeuft jetzt im Capability-Execute, also
+    # nach dem Policy-Allow und weiterhin vor Aufnahme/Upload (Amendment 2 §A2.5).
+    async def _feedback(text: str) -> None:
+        await send_spoken_response(sink, text)
 
     spec = actions.spec_for(action.type)
     await send_action_event(sink, "start", action.type, (action.payload or "")[:80])
@@ -359,7 +361,7 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
             # der Legacy-Pfad benutzt ihn unveraendert wie bisher.
             projection = await capability.run_migrated(
                 capabilities, action, _action_context(ctx, mutate_launcher),
-                confirmed=confirmed)
+                confirmed=confirmed, feedback=_feedback)
             action_result = projection.text
             denied = not projection.ok
             if denied:

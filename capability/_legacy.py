@@ -59,6 +59,8 @@ MIGRATED_ACTIONS: Mapping[str, str] = MappingProxyType({
     "INBOX_WRITE": "vault.inbox.write",
     "MEMORY_WRITE": "memory.write",
     "CLIPBOARD_NOTE": "clipboard.note.create",
+    "CLIPBOARD": "clipboard.process",
+    "SCREEN": "screen.describe",
 })
 
 
@@ -80,9 +82,15 @@ class _Delegated:
     """
     action_type: str
     field: str | None = None
+    announce: str | None = None
 
     async def __call__(self, payload, ctx):
         import actions
+        # Die kurze Rueckmeldung laeuft HIER — also nach der Policy-Freigabe und
+        # trotzdem vor Aufnahme/Upload (Amendment 2 §A2.5). Vorher stand sie vor
+        # jeder Entscheidung und war damit eine Wirkung ohne Freigabe.
+        if self.announce and ctx.bindings.feedback is not None:
+            await ctx.bindings.feedback(self.announce)
         text = await actions.spec_for(self.action_type).execute(
             payload.get(self.field, "") if self.field else "",
             actions.ActionContext(
@@ -443,6 +451,49 @@ def clipboard_note_contract(deps=None) -> CapabilityContract:
         fixture={})
 
 
+# ── Sensitive Eingaben (Phase 5C Slice 6) ───────────────────────────────────
+
+#: Wortlaut unveraendert — nur der Zeitpunkt wandert hinter die Freigabe.
+SCREEN_ANNOUNCEMENT = "Ich werfe kurz einen Blick auf deinen Bildschirm."
+
+
+def _sensitive_contract(name, title, action_type, *, field, scope,
+                        fixture, announce=None) -> CapabilityContract:
+    """Ein Pfad, der SENSITIVE lokale Daten liest und an das LLM sendet.
+
+    ``reads=sensitive`` (nicht ``personal``): Bildschirm und Zwischenablage
+    koennen alles enthalten, was gerade offen ist. ``secret`` bleibt strukturell
+    nicht darstellbar (SI-5).
+    """
+    return CapabilityContract(
+        name=name, version=1, title=title,
+        inputs=InputSchema(fields=(Field(field, str, required=False),)
+                           if field else ()),
+        output=OutputSchema(fields=(Field("text", str),)),
+        effects=(EffectClass.READ_SENSITIVE, EffectClass.NETWORK_READ),
+        reads=(DataClass.SENSITIVE,), writes=(), scopes=(scope,),
+        timeout_s=60,
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture=fixture,
+        execute=_Delegated(action_type, field, announce),
+    )
+
+
+def clipboard_process_contract(deps=None) -> CapabilityContract:
+    return _sensitive_contract(
+        "clipboard.process", "Zwischenablage", "CLIPBOARD",
+        field="task", scope=Scope.CLIPBOARD, fixture={"task": ""})
+
+
+def screen_describe_contract(deps=None) -> CapabilityContract:
+    return _sensitive_contract(
+        "screen.describe", "Bildschirm ansehen", "SCREEN",
+        field="question", scope=Scope.SCREEN, fixture={"question": ""},
+        announce=SCREEN_ANNOUNCEMENT)
+
+
 #: Capabilities mit **festen**, im Code stehenden Provider-Zielen. Ihre Ziel-URL
 #: kommt nie aus Eingabe oder Modellinhalt; die SSRF-Pruefung der tatsaechlichen
 #: Navigation erledigt der Transport-Guard (Amendment 2 §A2.6).
@@ -492,6 +543,8 @@ _PAYLOAD_BUILDERS = {
     "INBOX_WRITE": lambda a: {"entry": a.payload},
     "MEMORY_WRITE": lambda a: {"entry": a.payload},
     "CLIPBOARD_NOTE": lambda a: {},
+    "CLIPBOARD": lambda a: {"task": a.payload or ""},
+    "SCREEN": lambda a: {"question": a.payload or ""},
 }
 
 
@@ -518,6 +571,8 @@ _FALLBACK_TEXT = {
     "vault.inbox.write": "Den Eintrag konnte ich nicht speichern.",
     "memory.write": "Das konnte ich mir nicht merken.",
     "clipboard.note.create": "Die Notiz konnte ich nicht speichern.",
+    "clipboard.process": "Die Zwischenablage konnte ich nicht verarbeiten.",
+    "screen.describe": "Ich konnte nicht auf den Bildschirm sehen.",
 }
 
 #: Letzte Zuflucht: jeder Ausgang hat einen sprechbaren Text — nie ein leerer String.
@@ -528,7 +583,7 @@ def _fallback_text(name: str) -> str:
     return _FALLBACK_TEXT.get(name) or _GENERIC_FALLBACK
 
 
-def _bindings(ctx) -> InvocationBindings:
+def _bindings(ctx, feedback=None) -> InvocationBindings:
     """Die schmalen Ports aus dem request-scoped ``ActionContext`` (Amendment 2 §A2.4).
 
     Ausschliesslich die vier deklarierten Ports werden uebernommen — die Runtime,
@@ -538,7 +593,7 @@ def _bindings(ctx) -> InvocationBindings:
         ai=getattr(ctx, "ai", None),
         history=getattr(ctx, "history", ()),
         mutate_launcher=getattr(ctx, "mutate_launcher", None),
-        feedback=getattr(ctx, "feedback", None),
+        feedback=feedback,
     )
 
 
@@ -565,8 +620,8 @@ class LegacyResult:
         return self.status is OutcomeStatus.PARTIAL
 
 
-async def run_migrated(coordinator, action, ctx,
-                       confirmed: bool = False) -> LegacyResult:
+async def run_migrated(coordinator, action, ctx, confirmed: bool = False,
+                       feedback=None) -> LegacyResult:
     """Eine migrierte Action ueber den Coordinator fuehren; ``Outcome`` -> roher String.
 
     Provenance ist **derived**: ein ``[ACTION:…]`` stammt aus der LLM-Antwort — zwischen
@@ -589,7 +644,7 @@ async def run_migrated(coordinator, action, ctx,
     evidence = Evidence(
         target_allowed=await _target_evidence(coordinator, name, payload),
         confirmed=confirmed)
-    outcome = await coordinator.attempt(request, evidence, bindings=_bindings(ctx))
+    outcome = await coordinator.attempt(request, evidence, bindings=_bindings(ctx, feedback))
     if outcome.status is OutcomeStatus.OK:
         return LegacyResult(outcome.value["text"], outcome.status)
     if outcome.status is OutcomeStatus.PARTIAL and outcome.value:
