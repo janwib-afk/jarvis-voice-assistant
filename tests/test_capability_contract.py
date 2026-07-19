@@ -295,55 +295,33 @@ class ImportPurityTests(unittest.TestCase):
         self.assertEqual(mutable, [], f"Veraenderliches Modul-Global gefunden: {mutable}")
 
     def test_import_performs_no_io(self):
-        """Frischer Interpreter, Netz/Datei/Prozess als Fallen — dann erst importieren.
+        """Frischer Interpreter, Netz/Datei/Prozess/Uhr als Fallen — dann erst laden.
 
-        Bewusst im Subprozess: ein ``importlib.reload`` im laufenden Prozess erzeugt
-        eine ZWEITE Enum-Klasse und laesst jeden spaeteren ``isinstance``-Vergleich
-        fehlschlagen. Der Subprozess ist ausserdem der staerkere Nachweis, weil er
-        auch den allerersten Import erfasst.
+        Geprueft wird die Reinheit von ``_contract`` selbst. Das reine Modul wird
+        **standalone** ueber einen Paket-Stub geladen, damit ``capability/__init__``
+        (und damit ``_coordinator``/``asyncio``) NICHT laeuft — sonst tripsen die
+        stdlib-Importinterna von asyncio je nach Python-Version eine Falle, ohne dass
+        das etwas ueber ``_contract`` aussagt.
         """
         import os
         import subprocess
         import sys
 
-        probe = (
-            "import builtins, socket, subprocess as sp\n"
-            "def trip(kind):\n"
-            "    def f(*a, **k):\n"
-            "        raise SystemExit('IO:' + kind)\n"
-            "    return f\n"
-            "builtins.open = trip('open')\n"
-            # socket.socket muss eine VERERBBARE Klasse bleiben: ssl.py definiert
-            # beim Import 'class SSLSocket(socket)'. Eine Funktion als Ersatz
-            # wuerde schon diese Klassendefinition sprengen und nichts ueber das
-            # gepruefte Modul aussagen.
-            "_RealSocket = socket.socket\n"
-            "class _TrapSocket(_RealSocket):\n"
-            "    def __init__(self, *a, **k):\n"
-            "        raise SystemExit('IO:socket')\n"
-            "socket.socket = _TrapSocket\n"
-            "socket.create_connection = trip('connect')\n"
-            "socket.getaddrinfo = trip('dns')\n"
-            # Gleiches Problem wie bei socket: asyncio.windows_utils definiert
-            # beim Import 'class Popen(subprocess.Popen)'.
-            "_RealPopen = sp.Popen\n"
-            "class _TrapPopen(_RealPopen):\n"
-            "    def __init__(self, *a, **k):\n"
-            "        raise SystemExit('IO:subprocess')\n"
-            "sp.Popen = _TrapPopen\n"
-            "import capability\n"
-            "c = capability.CapabilityContract(\n"
+        from tests.test_capability_policy import _standalone_pure_load
+
+        probe = _standalone_pure_load(load=("_contract",)) + (
+            "c = _contract.CapabilityContract(\n"
             "    name='probe.thing', version=1, title='T',\n"
-            "    inputs=capability.InputSchema(fields=('q',)),\n"
-            "    output=capability.OutputSchema(fields=('t',)),\n"
-            "    effects=(capability.EffectClass.NETWORK_READ,),\n"
-            "    reads=(capability.DataClass.PUBLIC,), writes=(),\n"
-            "    scopes=(capability.Scope.WEB,), timeout_s=5,\n"
-            "    retry=capability.Retry.NEVER, cancellable=True,\n"
-            "    preview=capability.Preview.NONE, verify=capability.Verify.NONE,\n"
-            "    health=capability.Health.PASSIVE, audit=(), fixture={}, execute=None)\n"
+            "    inputs=_contract.InputSchema(fields=('q',)),\n"
+            "    output=_contract.OutputSchema(fields=('t',)),\n"
+            "    effects=(_contract.EffectClass.NETWORK_READ,),\n"
+            "    reads=(_contract.DataClass.PUBLIC,), writes=(),\n"
+            "    scopes=(_contract.Scope.WEB,), timeout_s=5,\n"
+            "    retry=_contract.Retry.NEVER, cancellable=True,\n"
+            "    preview=_contract.Preview.NONE, verify=_contract.Verify.NONE,\n"
+            "    health=_contract.Health.PASSIVE, audit=(), fixture={}, execute=None)\n"
             "c.tier()\n"
-            "capability.Registry([c]).inspect()\n"
+            "_contract.Registry([c]).inspect()\n"
             "print('PURE')\n"
         )
         env = dict(os.environ, PYTHONIOENCODING="utf-8")

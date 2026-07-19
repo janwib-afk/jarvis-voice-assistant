@@ -15,6 +15,58 @@ import tests  # noqa: F401
 import capability as cap
 
 
+def _standalone_pure_load(load):
+    """Subprozess-Prolog: Netz/Datei/Prozess/Uhr als Fallen, dann die REINEN
+    capability-Module ``load`` **standalone** laden — ueber einen Paket-Stub, damit
+    ``capability/__init__`` (und damit ``_coordinator``/``asyncio``) NICHT laeuft.
+
+    So ist der Reinheitsnachweis praezise (die reinen Module sind rein) und robust
+    ueber Python-Versionen (keine asyncio-Importinterna, die je nach Version
+    ``time``/``datetime`` beruehren).
+    """
+    names = "".join(f"    '{n}',\n" for n in load)
+    return (
+        "import builtins, socket, subprocess as sp, time, datetime\n"
+        "import importlib.util, sys, types\n"
+        "def trip(kind):\n"
+        "    def f(*a, **k):\n"
+        "        raise SystemExit('IO:' + kind)\n"
+        "    return f\n"
+        "builtins.open = trip('open')\n"
+        "_RealSocket = socket.socket\n"
+        "class _TrapSocket(_RealSocket):\n"
+        "    def __init__(self, *a, **k):\n"
+        "        raise SystemExit('IO:socket')\n"
+        "socket.socket = _TrapSocket\n"
+        "socket.create_connection = trip('connect')\n"
+        "socket.getaddrinfo = trip('dns')\n"
+        "_RealPopen = sp.Popen\n"
+        "class _TrapPopen(_RealPopen):\n"
+        "    def __init__(self, *a, **k):\n"
+        "        raise SystemExit('IO:subprocess')\n"
+        "sp.Popen = _TrapPopen\n"
+        "time.time = trip('clock')\n"
+        "time.monotonic = trip('clock')\n"
+        "time.perf_counter = trip('clock')\n"
+        "class _NoClock:\n"
+        "    def __getattr__(self, n):\n"
+        "        raise SystemExit('IO:clock')\n"
+        "datetime.datetime = _NoClock()\n"
+        # Paket-Stub, damit relative Importe (from ._contract import ...) greifen,
+        # ohne dass capability/__init__.py (und _coordinator/asyncio) laeuft.
+        "pkg = types.ModuleType('capability')\n"
+        "pkg.__path__ = ['capability']\n"
+        "sys.modules['capability'] = pkg\n"
+        f"for _n in (\n{names}):\n"
+        "    _spec = importlib.util.spec_from_file_location(\n"
+        "        'capability.' + _n, 'capability/' + _n + '.py')\n"
+        "    _mod = importlib.util.module_from_spec(_spec)\n"
+        "    sys.modules['capability.' + _n] = _mod\n"
+        "    _spec.loader.exec_module(_mod)\n"
+        "    globals()[_n] = _mod\n"
+    )
+
+
 def _contract(**over):
     base = dict(
         name="test.thing", version=1, title="T",
@@ -248,51 +300,27 @@ class PolicyPurityTests(unittest.TestCase):
         import subprocess
         import sys
 
-        probe = (
-            "import builtins, socket, subprocess as sp, time, datetime\n"
-            "def trip(kind):\n"
-            "    def f(*a, **k):\n"
-            "        raise SystemExit('IO:' + kind)\n"
-            "    return f\n"
-            "builtins.open = trip('open')\n"
-            # socket.socket muss eine VERERBBARE Klasse bleiben (ssl.py definiert
-            # beim Import 'class SSLSocket(socket)').
-            "_RealSocket = socket.socket\n"
-            "class _TrapSocket(_RealSocket):\n"
-            "    def __init__(self, *a, **k):\n"
-            "        raise SystemExit('IO:socket')\n"
-            "socket.socket = _TrapSocket\n"
-            "socket.create_connection = trip('connect')\n"
-            "socket.getaddrinfo = trip('dns')\n"
-            # Gleiches Problem wie bei socket: asyncio.windows_utils definiert
-            # beim Import 'class Popen(subprocess.Popen)'.
-            "_RealPopen = sp.Popen\n"
-            "class _TrapPopen(_RealPopen):\n"
-            "    def __init__(self, *a, **k):\n"
-            "        raise SystemExit('IO:subprocess')\n"
-            "sp.Popen = _TrapPopen\n"
-            "time.time = trip('clock')\n"
-            "time.monotonic = trip('clock')\n"
-            "time.perf_counter = trip('clock')\n"
-            # datetime.datetime ist unveraenderlich; deshalb die KLASSE am Modul
-            # ersetzen statt eine Methode zu patchen.
-            "class _NoClock:\n"
-            "    def __getattr__(self, n):\n"
-            "        raise SystemExit('IO:clock')\n"
-            "datetime.datetime = _NoClock()\n"
-            "import capability as c\n"
-            "ct = c.CapabilityContract(\n"
+        # Praezise UND versionsrobust: geprueft wird die Reinheit von ``_policy`` und
+        # ``_contract`` — nicht die des ganzen Pakets. Der Coordinator zieht legitim
+        # ``asyncio`` (fuer die Ausfuehrung); dessen stdlib-Importinterna rufen je nach
+        # Python-Version ``time``/``datetime`` auf und haben mit der Policy-Reinheit
+        # nichts zu tun. Deshalb werden die reinen Module ueber einen Paket-Stub
+        # standalone geladen — ohne ``capability/__init__`` und damit ohne asyncio.
+        probe = _standalone_pure_load(load=("_contract", "_policy")) + (
+            "ct = _contract.CapabilityContract(\n"
             "    name='probe.thing', version=1, title='T',\n"
-            "    inputs=c.InputSchema(fields=('q',)), output=c.OutputSchema(fields=('t',)),\n"
-            "    effects=(c.EffectClass.DESTRUCTIVE, c.EffectClass.NETWORK_READ),\n"
-            "    reads=(c.DataClass.PERSONAL,), writes=(c.DataClass.PERSONAL,),\n"
-            "    scopes=(c.Scope.VAULT,), timeout_s=5, retry=c.Retry.NEVER,\n"
-            "    cancellable=True, preview=c.Preview.NONE, verify=c.Verify.NONE,\n"
-            "    health=c.Health.PASSIVE, audit=(), fixture={}, execute=None)\n"
-            "for prov in c.Provenance:\n"
+            "    inputs=_contract.InputSchema(fields=('q',)),\n"
+            "    output=_contract.OutputSchema(fields=('t',)),\n"
+            "    effects=(_contract.EffectClass.DESTRUCTIVE, _contract.EffectClass.NETWORK_READ),\n"
+            "    reads=(_contract.DataClass.PERSONAL,), writes=(_contract.DataClass.PERSONAL,),\n"
+            "    scopes=(_contract.Scope.VAULT,), timeout_s=5, retry=_contract.Retry.NEVER,\n"
+            "    cancellable=True, preview=_contract.Preview.NONE, verify=_contract.Verify.NONE,\n"
+            "    health=_contract.Health.PASSIVE, audit=(), fixture={}, execute=None)\n"
+            "for prov in _contract.Provenance:\n"
             "    for tgt in (True, False, None):\n"
-            "        c.decide(ct, c.CapabilityRequest('probe.thing', prov, {}),\n"
-            "                 c.Evidence(target_allowed=tgt), c.ACTIVE_RULES)\n"
+            "        _policy.decide(ct,\n"
+            "            _contract.CapabilityRequest('probe.thing', prov, {}),\n"
+            "            _contract.Evidence(target_allowed=tgt), _policy.ACTIVE_RULES)\n"
             "print('PURE')\n"
         )
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
