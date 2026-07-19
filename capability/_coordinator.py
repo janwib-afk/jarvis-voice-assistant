@@ -93,6 +93,17 @@ class Coordinator:
         self._dedupe_scope = dedupe_scope
         self._deps = deps
 
+    @property
+    def deps(self):
+        """Die konkrete Abhaengigkeitsreferenz der Runtime (§7).
+
+        **Kein** Service Locator: ein getyptes ``CapabilityDeps``-Objekt, kein
+        String-Lookup und keine globale Registry. Der Legacy-Adapter braucht
+        daraus den ``target_guard``, um Ziel-Evidenz **abzuleiten**, statt sie zu
+        behaupten (Amendment 2 §A2.6).
+        """
+        return self._deps
+
     # ── passiv, kostenfrei (§20) ────────────────────────────────────────────
 
     def inspect(self, name: str | None = None):

@@ -178,3 +178,57 @@ Slice-1-Tracer laufen weiter, verlieren aber die Nicht-Erfolgs-Projektion.
 **Restrisiko.** Der Legacy-Exception-Pfad ruft weiterhin den Summary-LLM mit
 `"Fehler: …"` auf — unverändertes Altverhalten, das erst mit dem Wegfall des Fallbacks
 in Slice 12 vollständig verschwindet.
+
+---
+
+## Slice 3 — Web-Pfade (BROWSE, OPEN, NEWS, RESEARCH)
+
+**Ziel und Seam.** Die vier Web-Actions migrieren und dabei die pauschale
+`target_allowed=True`-Zusage der Pilotphase ablösen. Seam: `capability.run_migrated` und
+die Wirkungsdeklaration; kontrollierte Grenzen sind `browser_tools.*` und der injizierte
+DNS-Resolver.
+
+**Ausgangsverhalten.** `run_migrated` setzte `target_allowed=True` **für jede** migrierte
+Action — auch für modellgesteuerte URLs. Die vier Web-Actions liefen über den Legacy-Fallback.
+
+**Erstes beobachtetes ROT.** Alle 19 Tests scheiterten mit `UnknownCapability`/`KeyError` —
+die vier Verträge existierten nicht.
+
+**Minimales GRÜN.**
+* Vier Verträge `web.browse`/`web.open`/`web.news`/`web.research`, alle über `_Delegated`.
+* `Coordinator.deps` als getypte Leseeigenschaft (kein Locator — dieselbe Referenz, die
+  `_exec_profile_rename` schon nutzt).
+* `_target_evidence` unterscheidet **feste** Provider-Ziele (`web.search`, `web.news`,
+  `web.research` — die URL steht im Code) von **modellgesteuerten** (`web.browse`,
+  `web.open` — Evidenz wird vom `TargetGuard` **abgeleitet**).
+* Fehlt der Guard, ist das Ergebnis `None` → `needs:safe-target` → **fail-closed**.
+
+**Zweites ROT — ein selbst eingeführter Defekt.** Der erste Entwurf rief `check_url`
+synchron auf. `check_url` löst DNS **blockierend** auf; auf der Event-Loop hätte ein
+langsamer DNS-Server die gesamte WS-Empfangsschleife angehalten. Der erste Testentwurf
+dazu war **vakuum** (er zählte die Ticks erst am Ende, wenn ohnehin beide Seiten fertig
+waren) und blieb grün. Nach Umbau auf „Tickstand *im Moment* der Auflösung" zeigte er
+**0 Ticks** — belegtes ROT. Fix: `await asyncio.to_thread(guard.check_url, …)`, genau wie
+in `guarded_goto`/`install_page_guard`.
+
+**Mutationen.** M14 Evidenz pauschal `True` · M15 fehlender Guard = fail-open ·
+M16 BROWSE/OPEN als feste Ziele deklariert · M17 Guard-Urteil ignoriert ·
+M18 RESEARCH-Autosave nicht deklariert · M19 BROWSE-Mapping verbogen ·
+M20 DNS blockiert die Loop — **alle sieben ROT**.
+
+**Wirkungsbefund.** `web.research` deklariert `local-write` und `writes personal`, weil der
+Autosave des Rechercheergebnisses in die persönliche Inbox ein Folgeeffekt dieser
+Capability ist — er läuft in `_finish_research` und darf nach einem Nicht-Erfolg (Slice 2)
+nicht stattfinden.
+
+**Regression.** 1089 Tests OK. Zwei Prompt-19-Tests kodierten den Pilotumfang und wurden
+angepasst, nicht gelöscht: die Negativliste „nur SEARCH migriert" fällt planmäßig
+(Vollständigkeit belegt ab Slice 11 der Audit), und das Fallback-Beispiel wechselte von
+`NEWS` auf das noch offene `APP_PLACE`.
+
+**Rollback.** `git revert` dieses Commits; die vier Actions fallen auf `execute_action`
+zurück, alle übrigen Slices bleiben gültig.
+
+**Restrisiko.** DNS-Rebinding zwischen Evidenz und Navigation bleibt offen — abgefedert,
+aber nicht beseitigt durch die transportseitige Nachprüfung der verbundenen IP. IP-Pinning
+bleibt Phase 9.

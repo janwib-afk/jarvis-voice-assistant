@@ -40,6 +40,10 @@ def pilot_contracts(deps: CapabilityDeps) -> list:
         # ── Phase 5C (Prompt 20) ────────────────────────────────────────────
         _legacy.launcher_profile_status_contract(deps),   # 5C Slice 1
         _legacy.conversation_summary_contract(deps),      # 5C Slice 1
+        _legacy.web_browse_contract(deps),                # 5C Slice 3
+        _legacy.web_open_contract(deps),                  # 5C Slice 3
+        _legacy.web_news_contract(deps),                  # 5C Slice 3
+        _legacy.web_research_contract(deps),              # 5C Slice 3
     ]
     return contracts
 

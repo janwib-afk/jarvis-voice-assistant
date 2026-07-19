@@ -42,11 +42,16 @@ class WebSearchCensusTests(unittest.TestCase):
 class LegacyAdapterTests(unittest.TestCase):
     """Der Adapter setzt derived und projiziert das Ergebnis byte-identisch."""
 
-    def test_search_is_the_only_migrated_voice_action(self):
+    def test_search_maps_to_web_search(self):
+        """Phase 5C loest die Pilotgrenze ab.
+
+        Bis Prompt 19 behauptete dieser Test zusaetzlich, SEARCH sei die EINZIGE
+        migrierte Voice-Action. Diese Praemisse faellt mit Amendment 2 §A2.1
+        planmaessig weg; die Vollstaendigkeit (22/22) belegt seither der
+        Phase-5C-Audit, nicht mehr eine Negativliste an dieser Stelle.
+        """
         self.assertTrue(cap.is_migrated("SEARCH"))
-        for other in ("BROWSE", "NEWS", "OPEN", "RESEARCH", "MEMORY_READ",
-                      "SCREEN", "CLIPBOARD"):
-            self.assertFalse(cap.is_migrated(other), f"{other} darf noch nicht migriert sein")
+        self.assertEqual("web.search", cap.MIGRATED_ACTIONS["SEARCH"])
 
     def test_migrated_result_is_byte_identical_to_the_legacy_path(self):
         fake = {"title": "Wetter Hamburg", "url": "https://x.test/w",
@@ -133,7 +138,14 @@ class OrchestrationIntegrationTests(unittest.TestCase):
             assistant_core.ai = orig_ai
         self.assertEqual(dispatched.get("action"), "SEARCH")
 
-    def test_non_migrated_action_still_uses_execute_action(self):
+    def test_not_yet_migrated_action_still_uses_execute_action(self):
+        """Der Legacy-Fallback traegt weiterhin, was noch nicht migriert ist.
+
+        NEWS war hier bis Prompt 19 das Beispiel; seit Phase 5C Slice 3 laeuft es
+        ueber den Coordinator. Das Beispiel ist deshalb auf eine noch offene
+        Action gewechselt. Der Fallback selbst faellt planmaessig in Slice 12 —
+        dieser Test wird dort durch seine Umkehrung ersetzt.
+        """
         import assistant_core
 
         called = {"legacy": False}
@@ -143,26 +155,13 @@ class OrchestrationIntegrationTests(unittest.TestCase):
             called["legacy"] = True
             return await real_exec(action, ctx, mutate_launcher)
 
-        async def _news():
-            return "Weltnachrichten heute."
-
-        class _FakeMessages:
-            async def create(self, **kw):
-                class _R:
-                    content = [type("C", (), {"text": "Zusammenfassung."})()]
-                return _R()
-
-        orig_ai = assistant_core.ai
-        assistant_core.ai = type("AI", (), {"messages": _FakeMessages()})()
-        try:
-            with mock.patch("browser_tools.fetch_news", _news), \
-                    mock.patch.object(assistant_core, "execute_action", _spy_exec):
-                asyncio.run(assistant_core.run_action_and_respond(
-                    _turn_ctx(), _Action("NEWS", ""), _CollectingSink().sink(),
-                    capabilities=_coord()))
-        finally:
-            assistant_core.ai = orig_ai
-        self.assertTrue(called["legacy"], "NEWS darf nicht ueber den Coordinator laufen")
+        self.assertFalse(cap.is_migrated("APP_PLACE"))
+        with mock.patch.object(assistant_core, "execute_action", _spy_exec):
+            asyncio.run(assistant_core.run_action_and_respond(
+                _turn_ctx(), _Action("APP_PLACE", ""), _CollectingSink().sink(),
+                capabilities=_coord()))
+        self.assertTrue(called["legacy"],
+                        "APP_PLACE ist nicht migriert und muss ueber den Fallback laufen")
 
 
 # ── Helfer ──────────────────────────────────────────────────────────────────

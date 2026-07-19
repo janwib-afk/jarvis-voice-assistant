@@ -48,6 +48,10 @@ MIGRATED_ACTIONS: Mapping[str, str] = MappingProxyType({
     "MEMORY_FORGET": "memory.forget",
     "PROFILE_STATUS": "launcher.profile.status",
     "SESSION_SUMMARY": "conversation.summary",
+    "BROWSE": "web.browse",
+    "OPEN": "web.open",
+    "NEWS": "web.news",
+    "RESEARCH": "web.research",
 })
 
 
@@ -264,10 +268,114 @@ def conversation_summary_contract(deps=None) -> CapabilityContract:
     )
 
 
+# ── Web-Pfade (Phase 5C Slice 3) ────────────────────────────────────────────
+
+
+def _web_contract(name, title, action_type, *, field, effects, reads, writes,
+                  timeout_s, fixture, scopes=(Scope.WEB,)) -> CapabilityContract:
+    """Gemeinsame Form der vier Web-Vertraege — die Wirkungen bleiben je Pfad eigen."""
+    return CapabilityContract(
+        name=name, version=1, title=title,
+        inputs=InputSchema(fields=(Field(field, str),) if field else ()),
+        output=OutputSchema(fields=(Field("text", str),)),
+        effects=effects, reads=reads, writes=writes, scopes=scopes,
+        timeout_s=timeout_s,
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture=fixture,
+        execute=_Delegated(action_type, field),
+    )
+
+
+def web_browse_contract(deps=None) -> CapabilityContract:
+    """``BROWSE`` — eine **modellgesteuerte** URL lesen (§A2.6)."""
+    return _web_contract(
+        "web.browse", "Seite lesen", "BROWSE", field="url",
+        # network-read (Abruf + Summary-LLM + TTS) und local-execute (der
+        # sichtbare Chromium-Prozess samt Fokuswechsel).
+        effects=(EffectClass.NETWORK_READ, EffectClass.LOCAL_EXECUTE),
+        reads=(DataClass.PUBLIC,), writes=(),
+        timeout_s=60, fixture={"url": "https://example.test/"})
+
+
+def web_open_contract(deps=None) -> CapabilityContract:
+    """``OPEN`` — eine **modellgesteuerte** URL sichtbar oeffnen (§A2.6)."""
+    return _web_contract(
+        "web.open", "Browser öffnen", "OPEN", field="url",
+        effects=(EffectClass.NETWORK_READ, EffectClass.LOCAL_EXECUTE),
+        reads=(DataClass.PUBLIC,), writes=(),
+        timeout_s=60, fixture={"url": "https://example.test/"})
+
+
+def web_news_contract(deps=None) -> CapabilityContract:
+    """``NEWS`` — **festes** Ziel (worldmonitor.app), im Code, nie in der Eingabe."""
+    return _web_contract(
+        "web.news", "Nachrichten", "NEWS", field=None,
+        effects=(EffectClass.NETWORK_READ, EffectClass.LOCAL_EXECUTE),
+        reads=(DataClass.PUBLIC,), writes=(),
+        timeout_s=60, fixture={})
+
+
+def web_research_contract(deps=None) -> CapabilityContract:
+    """``RESEARCH`` — feste Sucheinstiegs-Quelle, danach entdeckte Links.
+
+    ``local-write``/``writes personal`` stehen hier, weil der Autosave des
+    Rechercheergebnisses in die persoenliche Inbox ein deklarierter Folgeeffekt
+    dieser Capability ist (Amendment 2 §A2.5) — er laeuft in ``_finish_research``
+    und darf deshalb nach einem Nicht-Erfolg nicht stattfinden.
+    """
+    return _web_contract(
+        "web.research", "Recherche", "RESEARCH", field="query",
+        effects=(EffectClass.NETWORK_READ, EffectClass.LOCAL_EXECUTE,
+                 EffectClass.LOCAL_WRITE),
+        reads=(DataClass.PUBLIC,), writes=(DataClass.PERSONAL,),
+        scopes=(Scope.WEB, Scope.VAULT),
+        timeout_s=180, fixture={"query": "thema"})
+
+
+#: Capabilities mit **festen**, im Code stehenden Provider-Zielen. Ihre Ziel-URL
+#: kommt nie aus Eingabe oder Modellinhalt; die SSRF-Pruefung der tatsaechlichen
+#: Navigation erledigt der Transport-Guard (Amendment 2 §A2.6).
+_FIXED_TARGET_CAPS = frozenset({"web.search", "web.news", "web.research"})
+
+#: Capabilities mit **nutzer-/modellgesteuerter** URL. Sie brauchen eine vom
+#: runtime-eigenen ``TargetGuard`` ABGELEITETE Evidenz — nie eine behauptete.
+_URL_FIELD = {"web.browse": "url", "web.open": "url"}
+
+
+async def _target_evidence(coordinator, name: str, payload: dict) -> bool | None:
+    """``True`` erlaubt, ``False`` verworfen, ``None`` unbekannt (fail-closed).
+
+    ``None`` fuehrt in der Policy zu ``needs:safe-target`` und damit zu einem
+    Nicht-Erfolg — ohne Guard gibt es keine Evidenz, und ohne Evidenz keine
+    Navigation.
+
+    ``check_url`` loest DNS **blockierend** auf. Es laeuft deshalb in einem
+    Thread — genau wie in ``guarded_goto``/``install_page_guard``. Direkt auf der
+    Event-Loop haette ein langsamer DNS-Server die WS-Empfangsschleife angehalten.
+    """
+    if name in _FIXED_TARGET_CAPS:
+        return True
+    field = _URL_FIELD.get(name)
+    if field is None:
+        return True
+    guard = getattr(getattr(coordinator, "deps", None), "target_guard", None)
+    if guard is None:
+        return None
+    import asyncio
+    verdict = await asyncio.to_thread(guard.check_url, payload.get(field) or "")
+    return verdict.allowed
+
+
 #: Eingabeform je Action. Fehlt ein Eintrag, gilt die Pilotform ``{"query": payload}``.
 _PAYLOAD_BUILDERS = {
     "PROFILE_STATUS": lambda a: {"profile_query": a.payload or ""},
     "SESSION_SUMMARY": lambda a: {},
+    "BROWSE": lambda a: {"url": a.payload},
+    "OPEN": lambda a: {"url": a.payload},
+    "NEWS": lambda a: {},
+    "RESEARCH": lambda a: {"query": a.payload},
 }
 
 
@@ -283,6 +391,10 @@ _FALLBACK_TEXT = {
     "memory.forget": "Das konnte ich nicht vergessen.",
     "launcher.profile.status": "Den Profil-Status konnte ich nicht abrufen.",
     "conversation.summary": "Die Sitzung konnte ich nicht zusammenfassen.",
+    "web.browse": "Seite nicht erreichbar: Ziel nicht zulässig.",
+    "web.open": "Das konnte ich nicht öffnen.",
+    "web.news": "News konnten nicht geladen werden.",
+    "web.research": "Recherche fehlgeschlagen: nicht ausführbar.",
 }
 
 #: Letzte Zuflucht: jeder Ausgang hat einen sprechbaren Text — nie ein leerer String.
@@ -345,12 +457,15 @@ async def run_migrated(coordinator, action, ctx,
     (§16, Amendment 1 §A1.5).
     """
     name = MIGRATED_ACTIONS[action.type]
-    request = CapabilityRequest(name, Provenance.DERIVED, _payload_for(action))
+    payload = _payload_for(action)
+    request = CapabilityRequest(name, Provenance.DERIVED, payload)
     # target_allowed=True spiegelt die FESTEN Provider-/Suchmaschinen-Hosts (Anthropic,
     # DuckDuckGo) — nicht nutzergesteuert. SSRF auf jede tatsaechliche Navigation
     # erzwingt der Transport-Guard (Slice 6). ``confirmed`` kommt ausschliesslich aus
     # dem gesprochenen „Ja" (Operator), nie aus Modellinhalt.
-    evidence = Evidence(target_allowed=True, confirmed=confirmed)
+    evidence = Evidence(
+        target_allowed=await _target_evidence(coordinator, name, payload),
+        confirmed=confirmed)
     outcome = await coordinator.attempt(request, evidence, bindings=_bindings(ctx))
     if outcome.status is OutcomeStatus.OK:
         return LegacyResult(outcome.value["text"], outcome.status)
