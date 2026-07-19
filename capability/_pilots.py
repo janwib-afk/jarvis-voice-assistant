@@ -48,6 +48,9 @@ def pilot_contracts(deps: CapabilityDeps) -> list:
         _legacy.memory_read_contract(deps),               # 5C Slice 4
         _legacy.vault_notes_recent_contract(deps),        # 5C Slice 4
         _legacy.vault_project_context_contract(deps),     # 5C Slice 4
+        _legacy.vault_inbox_write_contract(deps),         # 5C Slice 5
+        _legacy.memory_write_contract(deps),              # 5C Slice 5
+        _legacy.clipboard_note_contract(deps),            # 5C Slice 5
     ]
     return contracts
 

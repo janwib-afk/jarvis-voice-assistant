@@ -56,6 +56,9 @@ MIGRATED_ACTIONS: Mapping[str, str] = MappingProxyType({
     "MEMORY_READ": "memory.read",
     "NOTES_RECENT": "vault.notes.recent",
     "PROJECT_CONTEXT": "vault.project.context",
+    "INBOX_WRITE": "vault.inbox.write",
+    "MEMORY_WRITE": "memory.write",
+    "CLIPBOARD_NOTE": "clipboard.note.create",
 })
 
 
@@ -383,6 +386,63 @@ def vault_project_context_contract(deps=None) -> CapabilityContract:
                           fixture={"question": "thema"})
 
 
+# ── Vault-/Memory-Writes (Phase 5C Slice 5) ─────────────────────────────────
+
+
+def _write_contract(name, title, action_type, *, field, effects, scopes,
+                    fixture) -> CapabilityContract:
+    return CapabilityContract(
+        name=name, version=1, title=title,
+        inputs=InputSchema(fields=(Field(field, str),) if field else ()),
+        output=OutputSchema(fields=(Field("text", str),)),
+        effects=effects,
+        reads=(DataClass.PERSONAL,), writes=(DataClass.PERSONAL,), scopes=scopes,
+        timeout_s=60,
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture=fixture,
+        execute=_Delegated(action_type, field),
+    )
+
+
+#: Der belegte Dedup-Pfad: ``memory.write_inbox_entry`` liest die vorhandene
+#: persoenliche Inbox und schickt bis zu 2000 Zeichen davon an das LLM. Die drei
+#: Wirkungen sind damit real und nicht bloss vorsorglich deklariert (§A2.5).
+_DEDUP_EFFECTS = (EffectClass.READ_SENSITIVE, EffectClass.LOCAL_WRITE,
+                  EffectClass.NETWORK_READ)
+
+
+def vault_inbox_write_contract(deps=None) -> CapabilityContract:
+    """``INBOX_WRITE`` — schreibt lokal, liest dabei persoenliche Inbox-Inhalte
+    und sendet sie zum Dedup an das LLM."""
+    return _write_contract(
+        "vault.inbox.write", "Inbox-Eintrag", "INBOX_WRITE", field="entry",
+        effects=_DEDUP_EFFECTS, scopes=(Scope.VAULT,),
+        fixture={"entry": "Idee: Thema"})
+
+
+def memory_write_contract(deps=None) -> CapabilityContract:
+    """``MEMORY_WRITE`` — reines Anhaengen ans Langzeit-Gedaechtnis.
+
+    Kein Dedup-Read und kein LLM-Aufruf im Schreibpfad; ``network-read`` steht
+    trotzdem, weil das Ergebnis ueber Summary-LLM und TTS hinausgeht.
+    """
+    return _write_contract(
+        "memory.write", "Merken", "MEMORY_WRITE", field="entry",
+        effects=(EffectClass.LOCAL_WRITE, EffectClass.NETWORK_READ),
+        scopes=(Scope.VAULT,), fixture={"entry": "Thema"})
+
+
+def clipboard_note_contract(deps=None) -> CapabilityContract:
+    """``CLIPBOARD_NOTE`` — liest SENSITIVE Zwischenablage, dedupt per LLM,
+    schreibt persoenlich."""
+    return _write_contract(
+        "clipboard.note.create", "Clipboard-Notiz", "CLIPBOARD_NOTE", field=None,
+        effects=_DEDUP_EFFECTS, scopes=(Scope.CLIPBOARD, Scope.VAULT),
+        fixture={})
+
+
 #: Capabilities mit **festen**, im Code stehenden Provider-Zielen. Ihre Ziel-URL
 #: kommt nie aus Eingabe oder Modellinhalt; die SSRF-Pruefung der tatsaechlichen
 #: Navigation erledigt der Transport-Guard (Amendment 2 §A2.6).
@@ -429,6 +489,9 @@ _PAYLOAD_BUILDERS = {
     "MEMORY_READ": lambda a: {},
     "NOTES_RECENT": lambda a: {},
     "PROJECT_CONTEXT": lambda a: {"question": a.payload},
+    "INBOX_WRITE": lambda a: {"entry": a.payload},
+    "MEMORY_WRITE": lambda a: {"entry": a.payload},
+    "CLIPBOARD_NOTE": lambda a: {},
 }
 
 
@@ -452,6 +515,9 @@ _FALLBACK_TEXT = {
     "memory.read": "Das Gedächtnis konnte ich nicht lesen.",
     "vault.notes.recent": "Die Notizen konnte ich nicht lesen.",
     "vault.project.context": "Den Projekt-Kontext konnte ich nicht lesen.",
+    "vault.inbox.write": "Den Eintrag konnte ich nicht speichern.",
+    "memory.write": "Das konnte ich mir nicht merken.",
+    "clipboard.note.create": "Die Notiz konnte ich nicht speichern.",
 }
 
 #: Letzte Zuflucht: jeder Ausgang hat einen sprechbaren Text — nie ein leerer String.

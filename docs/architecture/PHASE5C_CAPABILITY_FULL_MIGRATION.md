@@ -262,3 +262,39 @@ M23 Timeout weicht vom `ActionSpec` ab — **alle drei ROT**.
 
 **Restrisiko.** TM-008 (Vault-/Memory-Injection in den Prompt) bleibt unberührt — die
 Migration klassifiziert die Wirkung, sie filtert den Inhalt nicht.
+
+---
+
+## Slice 5 — Vault-/Memory-Writes
+
+**Ziel und Seam.** `INBOX_WRITE`, `MEMORY_WRITE`, `CLIPBOARD_NOTE` migrieren **und** die
+in §A2.5 geforderte Korrektur der Wirkungsklassifikation belegen.
+
+**Belegter Befund.** `memory.write_inbox_entry` liest die vorhandene heutige Inbox-Datei
+und schickt beim Dedup bis zu **2000 Zeichen persönlicher Inhalte** an Haiku
+([memory.py](memory.py), `write_inbox_entry`). `INBOX_WRITE` und `CLIPBOARD_NOTE` sind
+damit `read-sensitive` **+** `local-write` **+** `network-read` — nicht bloß lokale
+Schreibvorgänge.
+
+Dieser Pfad wird nicht behauptet, sondern gemessen: ein Fake-LLM-Client fängt ab, was
+tatsächlich übertragen wird, und der Test prüft, dass der **vorhandene** Eintrag im
+Prompt steht. Wäre er es nicht, wäre die Klassifikation zu streng — der Test schlägt in
+beide Richtungen aus.
+
+`MEMORY_WRITE` hat **keinen** Dedup-Read: es hängt nur an. Es trägt `local-write` und
+`network-read` (Summary + TTS), aber kein `read-sensitive` — die Klassifikation folgt dem
+Code, nicht einem Schema.
+
+**Erstes beobachtetes ROT.** 16 Fehler (`UnknownCapability`).
+
+**Mutationen.** M24 versteckter Read-/Netzeffekt weggelassen · M25 Clipboard-Scope
+entfernt · M26 `memory.write` als `destructive` · M27 Mapping verbogen — **alle vier ROT**.
+
+**Regression.** 1116 Tests OK. Die Tests arbeiten in einem temporären Inbox-Ordner; der
+echte Vault des Nutzers wird nie angefasst.
+
+**Rollback.** `git revert`.
+
+**Restrisiko.** Der Dedup-Prompt überträgt weiterhin persönliche Inhalte an den Provider —
+das ist bestehendes Produktverhalten. Die Migration macht es **sichtbar und
+klassifiziert**, sie unterbindet es nicht (Preview/Transfer bleibt datiert, Phase 9).
