@@ -17,14 +17,49 @@ import server
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
-def _actual_mutating_routes():
-    """Alle mutierenden Routen DIREKT aus der FastAPI-App — keine Zweitliste."""
-    found = set()
-    for route in server.app.routes:
+def _walk(routes):
+    """Traversiert Routen **versionsrobust**.
+
+    Bis FastAPI 0.136 legte ``include_router`` die Router-Routen flach in
+    ``app.routes``. Ab 0.139/Starlette 1.3 steht dort stattdessen ein einzelnes
+    ``_IncludedRouter``, das seine Routen unter ``original_router`` fuehrt. Ein
+    Audit, der nur die flache Liste liest, findet auf neueren Versionen **null**
+    Routen — und waere damit stillschweigend wirkungslos.
+    """
+    for route in routes:
+        nested = getattr(route, "routes", None)
+        if nested is None:
+            included = getattr(route, "original_router", None)
+            nested = getattr(included, "routes", None) if included is not None else None
+        if nested:
+            yield from _walk(nested)
+            continue
+        path = getattr(route, "path", None)
+        if path is None:
+            continue
         methods = getattr(route, "methods", None) or set()
         for method in methods & _MUTATING_METHODS:
-            found.add((method, route.path))
-    return found
+            yield method, path, route.endpoint
+
+
+def _mutating_entries():
+    """``{(method, path): endpoint}`` — aus App **und** eigenem Router.
+
+    Der eigene ``server.router`` ist die stabile Quelle; ``server.app`` faengt
+    zusaetzlich eine Route, die jemand direkt per ``@app.post`` registriert und
+    damit am Router vorbeigefuehrt haette.
+    """
+    entries = {}
+    for method, path, endpoint in _walk(server.app.routes):
+        entries[(method, path)] = endpoint
+    for method, path, endpoint in _walk(server.router.routes):
+        entries.setdefault((method, path), endpoint)
+    return entries
+
+
+def _actual_mutating_routes():
+    """Alle mutierenden Routen DIREKT aus dem Code — keine Zweitliste."""
+    return set(_mutating_entries())
 
 
 class RouteInventoryTests(unittest.TestCase):
@@ -68,10 +103,10 @@ class HandlersActuallyUseTheCoordinatorTests(unittest.TestCase):
     """Der Eintrag im Register genuegt nicht — der Handler muss ihn auch gehen."""
 
     def _handler_source(self, method, path):
-        for route in server.app.routes:
-            if path == route.path and method in (getattr(route, "methods", None) or set()):
-                return inspect.getsource(route.endpoint)
-        self.fail(f"Route {method} {path} nicht gefunden")
+        endpoint = _mutating_entries().get((method, path))
+        if endpoint is None:
+            self.fail(f"Route {method} {path} nicht gefunden")
+        return inspect.getsource(endpoint)
 
     def test_each_governed_handler_reaches_the_coordinator(self):
         for (method, path), name in server.MUTATING_ROUTE_CAPABILITIES.items():
@@ -95,6 +130,50 @@ class HandlersActuallyUseTheCoordinatorTests(unittest.TestCase):
         """Ungeschuetzt heisst nicht ungeordnet: Configuration bleibt der Writer."""
         source = self._handler_source(*server.DELETE_EXCEPTION)
         self.assertIn("_persist_launcher", source)
+
+
+class TraversalIsVersionRobustTests(unittest.TestCase):
+    """Regression: der Audit darf nicht von der Router-Abflachung abhaengen.
+
+    Bis FastAPI 0.136 legte ``include_router`` die Routen flach in ``app.routes``.
+    Ab 0.139/Starlette 1.3 steht dort ein ``_IncludedRouter`` mit
+    ``original_router``. Ein Audit, der nur die flache Liste liest, fand auf den
+    neueren Versionen **null** Routen — und war damit stillschweigend wirkungslos,
+    obwohl er lokal gruen aussah. Genau das ist auf dem Hosted-Gate passiert.
+    """
+
+    def test_walk_descends_into_an_included_router(self):
+        class _FakeRoute:
+            path = "/schatten"
+            methods = {"POST"}
+
+            @staticmethod
+            def endpoint():
+                return None
+
+        class _FakeIncludedRouter:
+            """Spiegelt die neue FastAPI-Form: Routen nur ueber ``original_router``."""
+            original_router = type("R", (), {"routes": [_FakeRoute()]})()
+
+        found = [(m, p) for m, p, _ in _walk([_FakeIncludedRouter()])]
+        self.assertEqual([("POST", "/schatten")], found)
+
+    def test_walk_still_reads_a_flat_route_list(self):
+        class _FlatRoute:
+            path = "/flach"
+            methods = {"DELETE"}
+
+            @staticmethod
+            def endpoint():
+                return None
+
+        found = [(m, p) for m, p, _ in _walk([_FlatRoute()])]
+        self.assertEqual([("DELETE", "/flach")], found)
+
+    def test_the_audit_actually_finds_routes(self):
+        """Die schaerfste Zusage: ein blinder Audit ist schlimmer als keiner."""
+        self.assertGreater(len(_actual_mutating_routes()), 0,
+                           "der Audit findet gar keine Routen — er ist blind")
 
 
 class NewRouteWouldBreakTheAuditTests(unittest.TestCase):

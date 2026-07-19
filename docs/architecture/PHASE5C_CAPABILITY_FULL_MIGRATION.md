@@ -625,3 +625,37 @@ Grant-Laufzeit (`AWAITING_AUTHORIZATION` existiert nicht).
 
 **Restrisiko.** Der Audit prüft Callsites teils per Quelltext. Das ist bewusst grob: es
 fängt das versehentliche Wiedereinführen zuverlässig, ersetzt aber kein Typsystem.
+
+---
+
+## Fix nach dem ersten Hosted-Gate — der Audit war versionsabhängig blind
+
+**Symptom.** Fast-Gate rot mit 2 Failures und 11 Errors in `test_capability_route_audit` —
+**lokal grün**, auf CI rot. Alle 13 Fehlschläge betrafen `server.app.routes`.
+
+**Reproduktion statt Vermutung.** Versionsvergleich: CI fährt **fastapi 0.139.2 /
+starlette 1.3.1**, lokal 0.136.3 / 1.1.0. In einem temporären venv mit den CI-Versionen
+ließ sich das Verhalten mit einer minimalen App isolieren.
+
+**Ursache.** Bis FastAPI 0.136 flacht `include_router` die Router-Routen in `app.routes`
+ab. Ab 0.139/Starlette 1.3 steht dort stattdessen ein einzelnes `_IncludedRouter`, das
+seine Routen ausschließlich unter `original_router` führt und weder `.routes` noch `.path`
+besitzt. Der Audit fand damit **null** mutierende Routen.
+
+Das ist der unangenehmere Teil des Befunds: ein Wächter, der nichts findet, ist nicht
+harmlos — er ist **blind** und meldet trotzdem Erfolg, sobald die Zählprüfung fehlt. Hier
+hat genau diese Zählprüfung (`exactly_ten`) den Ausfall aufgedeckt.
+
+**Fix.** `_walk` traversiert versionsrobust: `.routes`, sonst `original_router.routes`.
+Zusätzlich wird `server.router` **direkt** gelesen — das stabile Objekt aus unserem
+eigenen Modul — während `server.app` weiterhin eine per `@app.post` am Router
+vorbeigeführte Route fangen würde.
+
+**Neue Regressionstests.** Ein Stub in neuer Form (`original_router`) und einer in alter
+(flach) belegen beide Pfade; `test_the_audit_actually_finds_routes` verbietet einen
+blinden Audit ausdrücklich.
+
+**Mutation.** M56 (nicht-robuste Traversierung) ist **ROT**.
+
+**Verifiziert gegen beide Versionsstände:** unter fastapi 0.139.2/starlette 1.3.1 findet
+die Traversierung die Routen, unter 0.136.3/1.1.0 bleiben lokal 1245 Tests grün.
