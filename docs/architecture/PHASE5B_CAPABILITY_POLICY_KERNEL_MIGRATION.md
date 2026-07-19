@@ -221,3 +221,93 @@ Fixture `a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` — bytegleich.
 gesetzt; der tatsaechliche `TargetGuard` entsteht erst in Slice 6. Bis dahin ist die
 `safe-target`-Regel korrekt, aber ohne Zulieferer — sie kann noch niemanden schuetzen.
 Das ist der Grund, warum Slice 6 der eigentliche Sicherheitsnachweis ist und nicht dieser.
+
+---
+
+## Slice 3 — Coordinator ohne Produktionsaufrufer
+
+**Ziel.** Den Lifecycle `validate -> preview -> authorize -> execute -> verify` bauen,
+mit geschlossenem Ergebnismodell und den in Amendment 1 §A1.6 gezogenen Grenzen. Noch
+immer ohne jeden Produktionsaufrufer.
+
+**Oeffentlicher Seam.** `SEAM-CAPABILITY-COORDINATION` — `Coordinator.attempt`,
+`.inspect`, `.health`, `.idempotency_key` sowie das `Outcome`-Modell. Kontrollierte
+Grenze: **Fake-Vertraege** plus injizierte Clock und Audit-Senke. Kein Provider, kein
+Netz, kein Dateisystem.
+
+**Ausgangsverhalten.** Es gab keinen Lifecycle. Timeout lag als einziges
+`asyncio.wait_for` in `assistant_core.py:324`; Cancel, Confirmation und Fehlerbehandlung
+waren ueber `assistant_core` und den WS-Endpunkt verteilt; Teilerfolg war nicht
+darstellbar.
+
+**RED (tatsaechlich beobachtet).** `Ran 26 tests ... FAILED (errors=26)` mit
+`AttributeError: module 'capability' has no attribute 'Coordinator'`.
+
+**GREEN (minimal).** `capability/_coordinator.py` plus zwei neue Eintraege im
+`obslog`-Katalog (`capability.attempted`, `capability.unverified`).
+
+**Nicht-Ueberspringbarkeit — verhaltensbasiert belegt, nicht ueber eine Stufenliste.**
+Was nicht laufen darf, hinterlaesst keine Spur: bei `deny` und bei `needs` bleibt die
+Aufzeichnungsliste des Fake-Executors leer; ein Schemaverstoss wirft **auch dann**, wenn
+die Policy ohnehin verweigert haette (damit ist `validate` vor `authorize` belegt).
+
+**Die vier Grenzen aus Amendment 1 §A1.6, jede mit Test:**
+
+| Grenze | Umsetzung | Belegt durch |
+|---|---|---|
+| **Ein** Timeout-Owner | `asyncio.wait_for` im Coordinator; Ergebnis `timeout`, keine Exception | `test_timeout_becomes_an_outcome_not_an_exception` |
+| `CancelledError` unveraendert, **kein** Verify danach | eigener `except`-Zweig mit blossem `raise`; **kein** `finally` | `test_cancelled_error_propagates_unchanged`, `test_no_audit_and_no_verify_after_cancellation` |
+| `cancelled` nur kooperativ | eigener Markertyp `capability.Cancelled` als Rueckgabewert des Executors | `test_cancelled_outcome_is_only_a_cooperative_domain_cancellation` |
+| Key erzeugt und **uebergeben**, kein Cache | `AttemptContext.idempotency_key`; zwei identische Attempts fuehren **beide** aus | `test_identical_attempts_both_execute_there_is_no_cache` |
+
+**Weitere strukturelle Zusagen.** `verify` stuft `ok` zu `partial` herab, nie umgekehrt;
+`verify="none"` wird **vermerkt** (`capability.unverified`), statt Erfolg zu behaupten;
+die Fehlermeldung verlaesst den Coordinator nie — nur der Typ (SI-9); Audit traegt
+ausschliesslich Allowlist-Metadaten, und ein Test prueft, dass jeder verwendete
+Eventname `obslog` tatsaechlich bekannt ist (sonst waere das Audit eine Behauptung ohne
+Wirkung). Der Preview-Hash entsteht aus der **eingefrorenen** Eingabe — TOCTOU ist damit
+nicht darstellbar statt nur unwahrscheinlich.
+
+**Zwischenbefund (zweiter eigener Testfehler, systematisch geklaert).** Die Suite war im
+Modul allein grün, im Verbund aber **reproduzierbar** (5/5) rot — also keine Flakiness.
+Ursache: `_coordinator` importiert `asyncio`, das `ssl` laedt, und `ssl` fuehrt beim
+Import `class SSLSocket(socket)` aus. Meine Sandbox hatte `socket.socket` durch eine
+**Funktion** ersetzt, worauf schon die Klassendefinition scheiterte — die Probe sagte
+also nichts ueber das gepruefte Modul aus. Dasselbe noch einmal bei
+`asyncio.windows_utils` mit `class Popen(subprocess.Popen)`. Gegenmittel: die Fallen sind
+jetzt **vererbbare Klassen**, deren `__init__` wirft. Der Import darf die Klasse
+ableiten; jede tatsaechliche Benutzung fliegt auf.
+
+**Gegenprobe zur entschaerften Sandbox (Pflicht, sonst waere sie vacuous).** Fuenf echte
+Verstoesse in den Importpfad bzw. in `decide` eingebaut — **alle fuenf ROT**: Datei-I/O,
+DNS, Socket-Verbindung, Subprozess, Uhrzugriff.
+
+**Mutationsnachweis (ausgefuehrt).** Neun Mutationen an `_coordinator.py`, je ein voller
+Testlauf, Datei danach byte-identisch wiederhergestellt:
+
+| Mutation | Ergebnis |
+|---|---|
+| `deny` haelt `execute` nicht mehr auf | **ROT** |
+| `needs` haelt `execute` nicht mehr auf | **ROT** |
+| `CancelledError` wird zu einem Outcome verschluckt | **ROT** |
+| `verify` stuft `partial` zu `ok` **hoch** | **ROT** |
+| Timeout wirft statt Outcome | **ROT** |
+| `verify="none"` behauptet Erfolg ohne Vermerk | **ROT** |
+| Audit traegt die Eingabe mit | **ROT** |
+| Fehlermeldung leckt in das Outcome | **ROT** |
+| Retry-Schleife eingebaut | **ROT** |
+
+**Regression.** Suite **953** grün (vorher 927, +26). Cancellation- und Sicherheitsblock
+(83 Faelle) **5× flakefrei**. Fixture `a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` —
+bytegleich.
+
+**Commit.** Slice 2 war `2ff027b`; die SHA dieses Slices traegt der Folge-Slice nach.
+
+**Rueckrollweg.** `capability/_coordinator.py` und die Testdatei entfernen, Exporte und
+die zwei `obslog`-Katalogeintraege zuruecknehmen. Weiterhin **kein Produktionsaufrufer**
+— null Laufzeitwirkung.
+
+**Offene Restrisiken.** Eine propagierte `CancelledError` wird **nicht auditiert**: jede
+Arbeit in diesem Pfad koennte den Abbruch verzoegern, und ein eigener Ausgang wuerde ihn
+mit der kooperativen Stornierung verwechseln. Das ist eine bewusste, hier benannte
+Beobachtungsluecke — kein Versehen.

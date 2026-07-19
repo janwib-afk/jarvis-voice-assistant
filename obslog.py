@@ -145,6 +145,13 @@ _CATALOG: dict[str, tuple[int, dict]] = {
     "placement.changed":   (logging.INFO,    {"app": _as_id, "monitor": _as_id, "zone": _as_id}),
     "profile.changed":     (logging.INFO,    {"kind": _as_id, "active": _as_id}),
     "monitor.detect_failed": (logging.WARNING, {"error_type": _as_id}),
+    # Capability-Audit (RFC-0007 §20, Amendment 1 §A1.6) — ausschliesslich
+    # Metadaten. Payloads, Inhalte, URLs, Preview-Hashes und Secrets sind hier
+    # strukturell nicht nennbar, weil es schlicht kein Feld dafuer gibt.
+    "capability.attempted": (logging.INFO,   {"capability": _as_id, "version": _as_int,
+                                              "outcome": _as_id, "duration_ms": _as_int,
+                                              "effects": _as_id, "reason": _as_id}),
+    "capability.unverified": (logging.INFO,  {"capability": _as_id, "version": _as_int}),
     # Server-Lifecycle
     "server.started":      (logging.INFO,    {}),
     "health.broadcast_failed": (logging.WARNING, {"error_type": _as_id}),

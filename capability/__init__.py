@@ -43,9 +43,15 @@ from ._policy import (  # noqa: F401
     Rule,
     decide,
 )
+from ._coordinator import (  # noqa: F401
+    AttemptContext,
+    Cancelled,
+    Coordinator,
+)
 
 __all__ = [
     "ACTIVE_RULES", "DATED_RULES", "Rule", "decide",
+    "AttemptContext", "Cancelled", "Coordinator",
     "AUDIT_FIELDS",
     "CapabilityContract", "CapabilityRequest", "CapabilityView",
     "DataClass", "Decision", "EffectClass", "Evidence", "Health",

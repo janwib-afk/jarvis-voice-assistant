@@ -313,9 +313,24 @@ class ImportPurityTests(unittest.TestCase):
             "        raise SystemExit('IO:' + kind)\n"
             "    return f\n"
             "builtins.open = trip('open')\n"
-            "socket.socket = trip('socket')\n"
+            # socket.socket muss eine VERERBBARE Klasse bleiben: ssl.py definiert
+            # beim Import 'class SSLSocket(socket)'. Eine Funktion als Ersatz
+            # wuerde schon diese Klassendefinition sprengen und nichts ueber das
+            # gepruefte Modul aussagen.
+            "_RealSocket = socket.socket\n"
+            "class _TrapSocket(_RealSocket):\n"
+            "    def __init__(self, *a, **k):\n"
+            "        raise SystemExit('IO:socket')\n"
+            "socket.socket = _TrapSocket\n"
+            "socket.create_connection = trip('connect')\n"
             "socket.getaddrinfo = trip('dns')\n"
-            "sp.Popen = trip('subprocess')\n"
+            # Gleiches Problem wie bei socket: asyncio.windows_utils definiert
+            # beim Import 'class Popen(subprocess.Popen)'.
+            "_RealPopen = sp.Popen\n"
+            "class _TrapPopen(_RealPopen):\n"
+            "    def __init__(self, *a, **k):\n"
+            "        raise SystemExit('IO:subprocess')\n"
+            "sp.Popen = _TrapPopen\n"
             "import capability\n"
             "c = capability.CapabilityContract(\n"
             "    name='probe.thing', version=1, title='T',\n"
