@@ -81,14 +81,14 @@ def main():
                  "speaking": "Spricht", "error": "Störung — Details im Banner"}
         ok_words = True
         for st, word in words.items():
-            page.evaluate(f"setOrbState('{st}')")
+            page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('%s')" % st)
             got = page.locator("#status").inner_text()
             cls = page.evaluate("document.getElementById('status-row').className")
             if got != word or f"s-{st}" not in cls:
                 ok_words = False
                 print(f"    {st}: '{got}' / {cls}")
         check("AP11: Zustandswort + Statuszeilen-Klasse je Zustand", ok_words)
-        page.evaluate("setOrbState('idle')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
 
         # Mute: aria-pressed + Klartext + Orb.
         page.click("#mute-btn")

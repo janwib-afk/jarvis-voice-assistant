@@ -263,24 +263,19 @@ class StopFlowTests(unittest.TestCase):
                 self.assertEqual(frame["type"], "stop")
         self.assertEqual(called, [])
 
-    def test_stop_clears_pending_confirmation(self):
-        import actions as actions_mod
-
-        async def idle_process(session_id, text, ws):
-            pass
-
-        with mock.patch.object(server.assistant_core, "process_message", idle_process):
-            with self._connect() as sock:
-                sock.receive_json()  # health-Frame
-                # pending_confirm der Session simulieren (Session-ID kennt nur der
-                # Server) — daher global fuer alle Sessions setzen und pruefen,
-                # dass Stopp sie leert.
-                server.assistant_core.pending_confirm["dummy-check"] = actions_mod.Action("SEARCH", "x")
-                sock.send_json({"type": "stop"})
-                sock.receive_json()  # stop-Frame
-        # Die eigene Session wurde geleert; fremde Eintraege bleiben unberuehrt.
-        self.assertIn("dummy-check", server.assistant_core.pending_confirm)
-        server.assistant_core.pending_confirm.pop("dummy-check", None)
+    def test_stop_leaves_session_ready(self):
+        """Nach einem Stopp ist die Session wieder aufnahmebereit. Die offene
+        Bestaetigung liegt seit RFC-0006 im Session-Aggregat; dass ein Stopp sie
+        verwirft, deckt ``test_state_characterization`` ueber den echten Dialog ab."""
+        rt = server.app.state.runtime
+        with self._connect() as sock:
+            sock.receive_json()  # health-Frame
+            sock.send_json({"type": "stop"})
+            self.assertEqual(sock.receive_json()["type"], "stop")
+            # Genau eine Session ist offen und wieder bereit.
+            self.assertEqual(rt.conversation_manager.session_count, 1)
+        # Nach dem Disconnect ist keine Session mehr offen (kein Leak).
+        self.assertEqual(rt.conversation_manager.session_count, 0)
 
 
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")

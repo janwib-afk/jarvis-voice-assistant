@@ -4,6 +4,38 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-18 (Phase 4J, RFC-0006 VOLLSTÄNDIG IMPLEMENTIERT):** Die Umsetzung von
+> [RFC-0006](../architecture/RFC-0006-explicit-runtime-state-machines.md) inkl. Amendment 1
+> ist abgeschlossen. **Backend:** neues tiefes Modul [`conversation/`](../../conversation/)
+> mit reinem Transitionskern (`step(state, event) → (state, effects)`, I/O-frei) und
+> runtime-eigenem `ConversationManager`; `assistant_core.conversations`, `pending_confirm`,
+> `end_session` und die Runtime-Aliase sind **entfernt** (löst **K03** aus RFC-0002); der
+> WS-Endpunkt ist ein dünner Adapter ohne Queue-/Worker-/Task-Interna, die
+> RFC-0005-Transportgrenze bleibt dort. **Frontend:**
+> [`frontend/voice.js`](../../frontend/voice.js) ist der reine Voice-Reducer (fünf
+> orthogonale Regionen + Client-Session-Ebene, abgeleitete Presentation), abgesichert durch
+> **55** ausführbare Contract-Fälle. `setOrbState()` ist entfernt; die Anzeige wird
+> ausschließlich aus `JarvisVoice.presentation(V.state)` abgeleitet, `uiState.jarvisState`
+> ist nur noch **Render-Ausgabe**. Entfernt sind zusätzlich `hasGreeted`, `audioUnlocked`,
+> `uiState.connected`, `isPlaying`, `isMuted`, `reconnectAttempts` (jetzt private
+> Adapter-Ressource `JarvisVoice.createBackoff`) sowie die DOM-Ableitung für
+> `action-running` (Invariante I9). **Race-/Stale-Matrix:** die 17 verbindlichen Szenarien
+> aus §21 haben einen eigenen, benannten Testblock
+> ([`tests/test_race_matrix.py`](../../tests/test_race_matrix.py) 1–10 + 17,
+> [`tests/browser/e2e_race_matrix.py`](../../tests/browser/e2e_race_matrix.py) 11–16);
+> Szenario 18 bleibt ausdrücklich Phase 6 und ist als Nicht-Ziel festgehalten.
+> **Audio:** ein rein testseitiger Seam
+> ([`tests/browser/e2e_audio_seam.py`](../../tests/browser/e2e_audio_seam.py)) macht den
+> Wiedergabepfad deterministisch prüfbar; **Playwright-Chromium hat weiterhin keinen
+> verwendbaren MP3-Codec** — geprüft ist die Adapter- und Zustandssemantik, nicht die
+> Dekodierung durch den Browser. Dabei wurde ein Produktionsfehler gefunden und behoben:
+> ein verspäteter Audio-Rückruf leerte den lokalen Puffer vor der Stale-Prüfung und ließ
+> die neu gestartete Wiedergabe einen Teil verlieren (Verstoß gegen I10/§19).
+> Beobachtbares Verhalten und Wire-Contracts sind unverändert (RFC-0005 nicht erweitert);
+> Legacy bleibt byte-exakt. Keine Job-Engine, keine Persistenz, kein Capability-/
+> Policy-Kernel. Verlauf und Rollback-Punkte:
+> [PHASE4J_EXPLICIT_RUNTIME_STATE_MACHINES_MIGRATION.md](../architecture/PHASE4J_EXPLICIT_RUNTIME_STATE_MACHINES_MIGRATION.md).
+
 > **Status 2026-07-18 (Phase 4I, RFC-0006 AKZEPTIERT — nur Architektur):** Für die heute
 > impliziten Conversation- und Voice-Zustände sowie einen abgegrenzten zukünftigen Job-Lifecycle
 > wurde [RFC-0006](../architecture/RFC-0006-explicit-runtime-state-machines.md)

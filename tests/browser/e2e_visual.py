@@ -30,7 +30,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from playwright.sync_api import sync_playwright  # noqa: E402
-from e2e_harness import JarvisServer, browser_context, open_jarvis  # noqa: E402
+from e2e_harness import force_presentation, JarvisServer, browser_context, open_jarvis  # noqa: E402
 
 BASELINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "visual_baseline")
 DIFF_THRESHOLD = 16       # Kanal-Differenz je Pixel, ab der ein Pixel "anders" zaehlt
@@ -71,18 +71,18 @@ def capture_all(page, srv, outdir):
     _wait_fonts(page)
 
     # Orb-Zustaende (Vollbild) — erzwungen ueber die oeffentliche Client-API.
-    page.evaluate("setOrbState('idle')")
+    force_presentation(page, "idle")
     shot("jarvis-fullscreen-idle")
     for state in ("listening", "thinking", "speaking", "error"):
-        page.evaluate(f"setOrbState('{state}')")
+        force_presentation(page, state)
         shot(f"jarvis-fullscreen-{state}")
-    page.evaluate("setOrbState('idle')")
+    force_presentation(page, "idle")
 
     # Muted (echter Button), dann zurueck.
     page.get_by_role("button", name="Mikrofon stummschalten").click()
     shot("jarvis-fullscreen-muted")
     page.get_by_role("button", name="Mikrofon wieder aktivieren").click()
-    page.evaluate("setOrbState('idle')")
+    force_presentation(page, "idle")
 
     # Fehlerbanner (persistente Komponente).
     page.evaluate("window.showErrorBanner({component:'tts', "
@@ -99,7 +99,7 @@ def capture_all(page, srv, outdir):
         page.get_by_label("Textnachricht an Jarvis").press("Control+Enter")
         page.wait_for_function(
             f"document.querySelectorAll('#transcript .msg.jarvis').length >= {i}")
-    page.evaluate("setOrbState('idle')")
+    force_presentation(page, "idle")
     shot("jarvis-fullscreen-transcript-multi")
 
     # Kontrollzentrum (Fokus 1000x800).

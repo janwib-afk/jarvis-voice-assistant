@@ -21,6 +21,7 @@ import unittest
 from unittest import mock
 
 import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
+from tests import wire_testing as wt
 
 import actions
 import app_launcher
@@ -704,7 +705,6 @@ class ThinDispatcherTests(unittest.TestCase):
 
     def tearDown(self):
         assistant_core.ai = self._saved_ai
-        assistant_core.conversations.pop("dispatch-test", None)
 
     def test_builds_context_from_current_process_state(self):
         gesehen = {}
@@ -720,14 +720,14 @@ class ThinDispatcherTests(unittest.TestCase):
             return []
 
         assistant_core.ai = sentinel_ai
-        assistant_core.conversations["dispatch-test"] = [
-            {"role": "user", "content": "Hallo"}]
+        history = [{"role": "user", "content": "Hallo"}]
+        ctx = wt.turn_context(history=history)
 
         spec = actions.spec_for("SEARCH")
         with mock.patch.dict(actions.REGISTRY,
                              {"SEARCH": dataclasses.replace(spec, execute=_spy)}):
             result = run(assistant_core.execute_action(
-                actions.Action("SEARCH", "thema"), "dispatch-test",
+                actions.Action("SEARCH", "thema"), ctx,
                 mutate_launcher=_hook))
 
         self.assertEqual(result, "ok")
@@ -744,21 +744,19 @@ class ThinDispatcherTests(unittest.TestCase):
             gesehen["ctx"] = c
             return ""
 
-        assistant_core.conversations["dispatch-test"] = [
-            {"role": "user", "content": "Original"}]
+        history = [{"role": "user", "content": "Original"}]
+        ctx = wt.turn_context(history=history)
         spec = actions.spec_for("SEARCH")
         with mock.patch.dict(actions.REGISTRY,
                              {"SEARCH": dataclasses.replace(spec, execute=_spy)}):
-            run(assistant_core.execute_action(actions.Action("SEARCH", "x"),
-                                              "dispatch-test"))
+            run(assistant_core.execute_action(actions.Action("SEARCH", "x"), ctx))
         # Nachtraegliche Aenderungen am Verlauf duerfen den Snapshot nicht treffen.
-        assistant_core.conversations["dispatch-test"].append(
-            {"role": "user", "content": "Spaeter"})
-        assistant_core.conversations["dispatch-test"][0]["content"] = "Geaendert"
+        history.append({"role": "user", "content": "Spaeter"})
+        history[0]["content"] = "Geaendert"
         self.assertEqual(gesehen["ctx"].history,
                          ({"role": "user", "content": "Original"},))
 
-    def test_unknown_session_yields_empty_history(self):
+    def test_empty_history_yields_empty_snapshot(self):
         gesehen = {}
 
         async def _spy(payload, c):
@@ -769,7 +767,7 @@ class ThinDispatcherTests(unittest.TestCase):
         with mock.patch.dict(actions.REGISTRY,
                              {"SEARCH": dataclasses.replace(spec, execute=_spy)}):
             run(assistant_core.execute_action(actions.Action("SEARCH", "x"),
-                                              "gibt-es-nicht"))
+                                              wt.turn_context()))
         self.assertEqual(gesehen["ctx"].history, ())
 
 

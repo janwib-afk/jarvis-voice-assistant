@@ -9,7 +9,7 @@ Determinismus-Entscheidungen (in BASELINE.md dokumentiert):
     (startListening -> 'listening'), was Screenshots nichtdeterministisch macht.
     'listening' wird stattdessen real per Push-to-Talk (Space) aufgenommen.
   - Orb-Zustaende listening/thinking/speaking/error werden zusaetzlich ueber die
-    oeffentliche Client-API setOrbState() erzwungen (identische CSS-Klassen wie im
+    semantische Voice-Ereignisse erzwungen (identische CSS-Klassen wie im
     echten Flow); 'muted' entsteht real per Mute-Button, das Transcript real ueber
     den LLM-Stub des Harness.
   - Fake-Media-Flags + Mikrofon-Permission verhindern das Mic-Fehlerbanner beim
@@ -148,15 +148,15 @@ def main():
         page.wait_for_timeout(800)  # idle-Ruecksprung nach Antwort ohne Audio
 
         # Orb-Zustaende — Vollbild 1920x1080
-        page.evaluate("setOrbState('idle')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
         page.wait_for_timeout(300)
         shot(page, "jarvis--fullscreen--idle.png")
 
         for state in ("listening", "thinking", "speaking", "error"):
-            page.evaluate(f"setOrbState('{state}')")
+            page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('%s')" % state)
             page.wait_for_timeout(450)  # Animation sichtbar mitten im Puls
             shot(page, f"jarvis--fullscreen--{state}-forced.png")
-        page.evaluate("setOrbState('idle')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
 
         # listening real per Push-to-Talk (Space halten)
         page.keyboard.down("Space")
@@ -171,7 +171,7 @@ def main():
         shot(page, "jarvis--fullscreen--muted-real.png")
         page.click("#mute-btn")
         page.wait_for_timeout(200)
-        page.evaluate("setOrbState('idle')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
 
         # Fehlerbanner (persistente Komponente, per oeffentlicher API)
         page.evaluate(
@@ -226,11 +226,11 @@ def main():
 
         # prefers-reduced-motion (Orb-Puls laeuft trotzdem — bekannte Luecke)
         page.emulate_media(reduced_motion="reduce")
-        page.evaluate("setOrbState('listening')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('listening')")
         page.wait_for_timeout(450)
         shot(page, "jarvis--fullscreen--reduced-motion-listening.png")
         page.emulate_media(reduced_motion="no-preference")
-        page.evaluate("setOrbState('idle')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
 
         # Aktionshistorie fuellen (sichtbar in Fokus- und Panel-Modus)
         page.evaluate(ACTION_ENTRIES)

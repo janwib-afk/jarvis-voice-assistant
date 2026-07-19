@@ -66,8 +66,13 @@ INIT_WS_CONTROL = """
     const Real = window.WebSocket;
     window.__wsInstances = [];
     window.__wsConnectCount = 0;
+    // Gesendete Frames zaehlen: belegt Invariante I12 ("der Server erfaehrt es
+    // nicht") beobachtbar, statt sie nur zu behaupten.
+    window.__wsSentCount = 0;
     function Wrapped(url, protocols) {
         const ws = protocols ? new Real(url, protocols) : new Real(url);
+        const realSend = ws.send.bind(ws);
+        ws.send = function (data) { window.__wsSentCount++; return realSend(data); };
         window.__wsConnectCount++;
         window.__wsInstances.push(ws);
         window.__lastWs = ws;
@@ -134,15 +139,21 @@ class JarvisServer:
                 time.sleep(0.3)
         raise TimeoutError(f"E2E-Server nicht bereit (Log: {self.log_path})")
 
-    def scenario(self, replies=None, llm_delay=0.0, action_delay=0.0):
+    def scenario(self, replies=None, llm_delay=0.0, action_delay=0.0, audio=False):
         payload = json.dumps({
-            "replies": replies or [], "llm_delay": llm_delay, "action_delay": action_delay,
+            "replies": replies or [], "llm_delay": llm_delay,
+            "action_delay": action_delay, "audio": audio,
         }).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/__e2e__/scenario", data=payload,
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    def stats(self):
+        """Kostenschutz-Zaehler des Stub-Servers (nur Zahlen, keine Inhalte)."""
+        with urllib.request.urlopen(self.base_url + "/__e2e__/stats", timeout=5) as r:
             return json.loads(r.read())
 
     def __exit__(self, exc_type, exc, tb):
@@ -280,3 +291,37 @@ def open_jarvis(page, base_url, expect_connected=True):
             "document.querySelectorAll('#transcript .msg.jarvis').length >= 1",
             timeout=15000,
         )
+
+
+# Presentation ueber SEMANTISCHE Ereignisse herstellen (RFC-0006 / Phase 4J).
+# Kein beliebiger State-Setter: jeder Zustand entsteht ueber den echten Ereignispfad
+# des Reducers, genau wie im Betrieb. `renderVoice()` leitet danach die Anzeige ab.
+FORCE_PRESENTATION = """
+(function (want) {
+    const D = (e) => dispatchVoice(Object.assign({ epoch: window.__voice.state.epoch }, e));
+    // Grundzustand ueber echte Ereignisse: laufende Wiedergabe beenden, nicht
+    // stumm, nichts laeuft, keine Overlays. Ohne das Zuruecksetzen der Wiedergabe
+    // wuerde ein vorheriger 'speaking'-Zustand alle Folgeaufnahmen dominieren
+    // (Presentation-Prioritaet 3).
+    D({ type: 'StopRequested' });
+    D({ type: 'StopAck' });
+    if (window.__voice.state.capture === 'muted') D({ type: 'MuteToggled' });
+    // Auch das laufende Zuhoeren beenden — sonst dominiert 'listening' den
+    // Grundzustand (der Harness startet die Erkennung automatisch).
+    if (window.__voice.state.capture === 'listening') D({ type: 'RecognitionEnd' });
+    D({ type: 'ErrorDismissed', overlay: 'fatal-error' });
+    D({ type: 'ErrorDismissed', overlay: 'recoverable-error' });
+    if (want === 'listening')      D({ type: 'StartListening' });
+    else if (want === 'thinking')  D({ type: 'SayTextSent' });
+    else if (want === 'speaking')  { D({ type: 'UserGesture' });
+                                     D({ type: 'AudioReceived', audio: 'x' }); }
+    else if (want === 'muted')     D({ type: 'MuteToggled' });
+    else if (want === 'error')     D({ type: 'ErrorEvent', fatal: true });
+    renderVoice();
+})
+"""
+
+
+def force_presentation(page, want):
+    """Den gewuenschten Presentation-Zustand ueber echte Ereignisse herstellen."""
+    page.evaluate(FORCE_PRESENTATION + "('%s')" % want)

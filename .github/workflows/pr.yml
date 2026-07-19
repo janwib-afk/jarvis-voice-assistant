@@ -63,8 +63,14 @@ jobs:
           pip install -r requirements.txt
       - name: Install Chromium
         run: python -m playwright install chromium
+      - name: Voice state contract (pure reducer)
+        run: python tests/browser/e2e_voice_contract.py
       - name: Gate 5 - Browser smoke (functional subset)
         run: python tests/browser/e2e_functional.py --smoke
+      - name: Race and stale matrix (RFC-0006 section 21, scenarios 11-16)
+        run: python tests/browser/e2e_race_matrix.py
+      - name: Audio seam (playback semantics via injected test double)
+        run: python tests/browser/e2e_audio_seam.py
       - name: Accessibility + keyboard
         run: python tests/browser/e2e_a11y.py
       - name: Reduced motion

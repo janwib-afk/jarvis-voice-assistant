@@ -109,18 +109,17 @@ class ResearchFlowIntegrationTests(unittest.IsolatedAsyncioTestCase):
         ]
         for p in self._patches:
             p.start()
-        assistant_core.conversations[self.SID] = []
+        self.ctx = wt.turn_context()
 
     def tearDown(self):
         for p in self._patches:
             p.stop()
-        assistant_core.end_session(self.SID)
         memory.configure(*self._saved_mem)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     async def test_full_research_flow(self):
         ws = _StubWS()
-        await assistant_core.process_message(self.SID, "Recherchiere Elektroautos", wt.legacy_sink(ws.send_json))
+        await assistant_core.process_message(self.ctx, "Recherchiere Elektroautos", wt.legacy_sink(ws.send_json))
 
         # Genau zwei LLM-Calls: die Hauptantwort + die Zusammenfassung (kein Dedup,
         # da der Recherche-Autosave dedup=False nutzt).

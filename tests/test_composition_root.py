@@ -124,6 +124,20 @@ class _RecordingClient:
 
 
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
+class _FakeChannel:
+    session_id = "iso-fake"
+
+    async def emit(self, event, correlation_id=None):
+        pass
+
+    def event_sink(self, correlation_id):
+        return self
+
+
+async def _noop_turn(ctx, text, correlation_id, sink):
+    pass
+
+
 class RuntimeIsolationTests(unittest.TestCase):
     """Zwei App-Runtimes besitzen getrennten Laufzeitzustand (serielle Isolation)."""
 
@@ -131,19 +145,19 @@ class RuntimeIsolationTests(unittest.TestCase):
         a = runtime_mod.Runtime.for_production()
         b = runtime_mod.Runtime.for_production()
         self.assertNotEqual(a.session_token, b.session_token)
-        for field in ("ws_clients", "conversations", "pending_confirm", "startup_warnings"):
+        for field in ("ws_clients", "conversation_manager", "startup_warnings"):
             self.assertIsNot(getattr(a, field), getattr(b, field), f"{field} geteilt")
 
     def test_mutating_runtime_a_does_not_touch_runtime_b(self):
         a = runtime_mod.Runtime.for_production()
         b = runtime_mod.Runtime.for_production()
         a.ws_clients.add("client-a")
-        a.conversations["sid"] = [{"role": "user", "content": "hallo"}]
-        a.pending_confirm["sid"] = "MEMORY_FORGET"
         a.startup_warnings.append("warnung-a")
+        # Conversation-Zustand: jede Runtime hat ihren EIGENEN Manager (RFC-0006 D4).
+        a.conversation_manager.open(_FakeChannel(), run_turn=_noop_turn)
+        self.assertEqual(a.conversation_manager.session_count, 1)
+        self.assertEqual(b.conversation_manager.session_count, 0)
         self.assertEqual(b.ws_clients, set())
-        self.assertEqual(b.conversations, {})
-        self.assertEqual(b.pending_confirm, {})
         self.assertEqual(b.startup_warnings, [])
 
     def test_two_runtimes_can_hold_different_configs(self):

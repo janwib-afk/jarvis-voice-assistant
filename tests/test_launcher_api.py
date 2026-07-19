@@ -22,6 +22,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
+from tests import wire_testing as wt
 
 try:
     import server
@@ -465,7 +466,7 @@ class ProfileApiTests(_ApiTestBase):
     # ── Sprachsteuerung (Phase 5): echter Persist-Pfad ──────────────────────
     def test_voice_autostart_persists_to_disk(self):
         result = asyncio.run(assistant_core.execute_action(
-            actions.Action("APP_AUTOSTART_OFF", "VS Code"), "test-session",
+            actions.Action("APP_AUTOSTART_OFF", "VS Code"), wt.turn_context(),
             mutate_launcher=server._launcher_hook(self.runtime)))
         self.assertEqual(result, "VS Code ist aus dem Clap-Start raus.")
         self.assertFalse(self._profile_states("coding")["vscode"]["autostart"])
@@ -474,7 +475,7 @@ class ProfileApiTests(_ApiTestBase):
 
     def test_voice_place_persists_to_disk(self):
         result = asyncio.run(assistant_core.execute_action(
-            actions.Action("APP_PLACE", "Obsidian | rechts | Vollbild"), "test-session",
+            actions.Action("APP_PLACE", "Obsidian | rechts | Vollbild"), wt.turn_context(),
             mutate_launcher=server._launcher_hook(self.runtime)))
         self.assertEqual(result, "Obsidian liegt jetzt im Vollbild auf dem rechten Monitor.")
         self.assertEqual(self._profile_states("coding")["obsidian"]["placement"],
@@ -482,7 +483,7 @@ class ProfileApiTests(_ApiTestBase):
 
     def test_voice_profile_activate_persists(self):
         result = asyncio.run(assistant_core.execute_action(
-            actions.Action("PROFILE_ACTIVATE", "Writing"), "test-session",
+            actions.Action("PROFILE_ACTIVATE", "Writing"), wt.turn_context(),
             mutate_launcher=server._launcher_hook(self.runtime)))
         self.assertEqual(result, "Writing ist jetzt aktiv.")
         self.assertEqual(self._read_cfg()["launcher"]["active_profile"], "writing")

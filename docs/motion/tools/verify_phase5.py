@@ -55,9 +55,9 @@ def main():
         ok_states = True
         for st, names in expect.items():
             if st == "muted":
-                page.evaluate("isMuted = true; setOrbState('idle')")
+                page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('muted')")
             else:
-                page.evaluate("isMuted = false; setOrbState('%s')" % st)
+                page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('%s')" % st)
             page.wait_for_timeout(320)
             got = set(orb_names(page))
             if got != names:
@@ -65,23 +65,23 @@ def main():
                 print(f"    {st}: {sorted(got)}")
         check("Orb: exakt die vorgesehenen Animationen je Zustand", ok_states)
         # Mute-Flag aus der Matrix zuruecksetzen — Folgechecks laufen entstummt.
-        page.evaluate("isMuted = false; updateMuteButton(); setOrbState('idle')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
         page.wait_for_timeout(150)
 
         # error: 2 Pulse, endet statisch (nur Glow-Layer statisch an).
-        page.evaluate("setOrbState('error')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('error')")
         page.wait_for_timeout(300)
         during = set(orb_names(page))
         page.wait_for_timeout(2300)
         after = set(orb_names(page))
         check("error: Impuls läuft (flash-error) und endet statisch",
               "flash-error" in during and after == set(), f"{sorted(during)} → {sorted(after)}")
-        page.evaluate("setOrbState('idle')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
 
         # Wechsel ersetzt sofort (kein Alt-Loop überlebt).
-        page.evaluate("setOrbState('listening')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('listening')")
         page.wait_for_timeout(120)
-        page.evaluate("setOrbState('speaking')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('speaking')")
         page.wait_for_timeout(250)
         got = set(orb_names(page))
         check("Zustandswechsel ersetzt Animationen sofort",
@@ -99,7 +99,7 @@ def main():
 
         # Stop unterbricht sofort (Esc während speaking/thinking).
         for st in ("speaking", "thinking"):
-            page.evaluate(f"setOrbState('{st}')")
+            page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('%s')" % st)
             page.wait_for_timeout(150)
             page.keyboard.press("Escape")
             page.wait_for_timeout(600)
@@ -151,7 +151,7 @@ def main():
               page.locator(".error-banner").count() == 0)
 
         shot = os.path.join(EVID, "normal--listening-glow.png")
-        page.evaluate("setOrbState('listening')")
+        page.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('listening')")
         page.wait_for_timeout(400)
         page.locator("#orb-container").screenshot(path=shot)
         print(f"  [shot] {os.path.basename(shot)}")
@@ -168,7 +168,7 @@ def main():
         rpage.wait_for_timeout(1200)
         ok_reduced = True
         for st in ("idle", "listening", "thinking", "speaking", "error"):
-            rpage.evaluate(f"setOrbState('{st}')")
+            rpage.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('%s')" % st)
             rpage.wait_for_timeout(250)
             n = rpage.evaluate(ORB_ANIMS)
             if n:
@@ -181,7 +181,7 @@ def main():
               ok_reduced and sweep_r == [], str(sweep_r))
         glow = rpage.evaluate(
             "getComputedStyle(document.getElementById('orb'), '::after').opacity")
-        rpage.evaluate("setOrbState('listening')")
+        rpage.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('listening')")
         rpage.wait_for_timeout(200)
         glow = rpage.evaluate(
             "getComputedStyle(document.getElementById('orb'), '::after').opacity")
@@ -200,15 +200,15 @@ def main():
         vpage.goto(URL)
         vpage.wait_for_timeout(1200)
         for st, ms in (("idle", 1500), ("listening", 2000), ("thinking", 1500), ("speaking", 1500)):
-            vpage.evaluate(f"setOrbState('{st}')")
+            vpage.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('%s')" % st)
             vpage.wait_for_timeout(ms)
         vpage.evaluate("addActionEntry({phase:'start', action:'RESEARCH', label:'Recherche', detail:'Elektroautos', ts: Date.now()/1000})")
         vpage.wait_for_timeout(2500)
         vpage.keyboard.press("Escape")
         vpage.wait_for_timeout(1000)
-        vpage.evaluate("setOrbState('error')")
+        vpage.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('error')")
         vpage.wait_for_timeout(2600)
-        vpage.evaluate("setOrbState('idle')")
+        vpage.evaluate("(function(w){var D=function(e){return dispatchVoice(Object.assign({epoch:window.__voice.state.epoch},e));};D({type:'StopRequested'});D({type:'StopAck'});if(window.__voice.state.capture==='muted')D({type:'MuteToggled'});if(window.__voice.state.capture==='listening')D({type:'RecognitionEnd'});D({type:'ErrorDismissed',overlay:'fatal-error'});D({type:'ErrorDismissed',overlay:'recoverable-error'});if(w==='listening')D({type:'StartListening'});else if(w==='thinking')D({type:'SayTextSent'});else if(w==='speaking'){D({type:'UserGesture'});D({type:'AudioReceived',audio:'x'});}else if(w==='muted')D({type:'MuteToggled'});else if(w==='error')D({type:'ErrorEvent',fatal:true});renderVoice();})('idle')")
         vpage.click('.pn-btn[data-app-page="control"]')
         vpage.wait_for_timeout(1200)
         video_path = vpage.video.path()

@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from playwright.sync_api import sync_playwright  # noqa: E402
-from e2e_harness import JarvisServer, browser_context, open_jarvis  # noqa: E402
+from e2e_harness import force_presentation, JarvisServer, browser_context, open_jarvis  # noqa: E402
 
 RESULTS = []
 
@@ -42,14 +42,14 @@ def run(pw):
         open_jarvis(page, srv.base_url)
 
         # Loop-Animationen aus: Orb + Luenette-Sweep in allen Zustaenden.
-        page.evaluate("setOrbState('idle')")
+        force_presentation(page, "idle")
         check("Orb idle: keine Animation", anim_name(page, "#orb") == "none",
               anim_name(page, "#orb"))
         check("Luenette-Sweep: keine Animation",
               anim_name(page, ".luenette-sweep") == "none", anim_name(page, ".luenette-sweep"))
 
         for state, word in STATE_WORDS.items():
-            page.evaluate(f"setOrbState('{state}')")
+            force_presentation(page, state)
             check(f"Orb {state}: keine Loop-Animation",
                   anim_name(page, "#orb") == "none", anim_name(page, "#orb"))
             # Zustand bleibt erkennbar: Klasse gesetzt + Statuswort im Klartext.
@@ -57,7 +57,7 @@ def run(pw):
                   page.locator("#orb").get_attribute("class") == state)
             check(f"Orb {state}: Statuswort '{word}' sichtbar",
                   page.locator("#status").inner_text().strip() == word)
-        page.evaluate("setOrbState('idle')")
+        force_presentation(page, "idle")
 
         # Volle Funktion trotz Reduced Motion: Nachricht senden funktioniert.
         srv.scenario(replies=["Reduced-Motion-Antwort erhalten."])

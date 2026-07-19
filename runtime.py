@@ -24,6 +24,7 @@ import httpx
 
 import config_loader
 import configuration as configuration_mod
+import conversation
 import wire_protocol
 
 _DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -61,12 +62,13 @@ class Runtime:
         self.owns_http = http is None
         # per-App-Laufzeitzustand (Besitz verschoben, Semantik unverändert)
         self.ws_clients: set = set()
-        self.conversations: dict = {}
-        self.pending_confirm: dict = {}
         # Wire-Protokoll + Verbindungsregistry (RFC-0005 §12): runtime-besessen,
         # kein Modul-Global. Import-sicher (kein I/O). Legacy bleibt Default.
         self.wire_protocol = wire_protocol.WireProtocol()
         self.connections = wire_protocol.ConnectionRegistry(self.wire_protocol)
+        # Conversation-Zustand (RFC-0006 D4): genau EIN runtime-eigener Manager,
+        # der alle Sessions besitzt. Konstruktion ist I/O-frei (Import-Sicherheit).
+        self.conversation_manager = conversation.ConversationManager()
         # intern
         self._wired = False
         self._refresh_task: "asyncio.Task | None" = None
@@ -113,7 +115,7 @@ class Runtime:
     def wire(self) -> None:
         """EINZIGER Aufrufer der Start-Verdrahtung (D2), idempotent (_wired):
         memory/assistant_core/app_launcher konfigurieren, Clients injizieren,
-        per-App conversations/pending_confirm an die Module aliasen."""
+        Clients injizieren. Session-Zustand liegt seit RFC-0006 im Manager."""
         if self._wired:
             return
         import app_launcher
@@ -126,10 +128,6 @@ class Runtime:
         )
         assistant_core.configure(cfg)
         assistant_core.init_clients(self.ai, self.http)
-        # per-App-Session-State: die Modul-Dicts sind ab jetzt DIE Runtime-Dicts
-        # (serielle Isolation — Semantik unverändert; RFC-0002 Slice 3).
-        assistant_core.conversations = self.conversations
-        assistant_core.pending_confirm = self.pending_confirm
         app_launcher.configure(cfg.get("apps", []), cfg.get("launcher"))
         self._wired = True
 
@@ -161,6 +159,10 @@ class Runtime:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self._refresh_task = None
+        # Aktive Conversation Sessions VOR den abhaengigen Ressourcen schliessen
+        # (RFC-0006 Paragraph 8): kein Turn laeuft noch, wenn Browser/Clients gehen.
+        with contextlib.suppress(Exception):
+            await self.conversation_manager.aclose()
         import browser_tools
         with contextlib.suppress(Exception):
             await browser_tools.close()
