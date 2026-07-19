@@ -542,3 +542,53 @@ Sicherheitstheater. Ziel: **Phase 10**.
 **Regression.** 1217 Tests OK.
 
 **Rollback.** `git revert` — Register und Audit entfallen, die Routen bleiben migriert.
+
+---
+
+## Slice 12 — Gespeichertes `risk` und Legacy-Fallback entfernen
+
+**Ziel und Seam.** Die zweite Sicherheitswahrheit auflösen und den produktiven
+Rückfallpfad entfernen. Seams: `actions.CONFIRM_ACTIONS`, `ActionSpec.risk`,
+`assistant_core.run_action_and_respond`.
+
+**Erstes beobachtetes ROT.** 3 von 10 Tests: gespeichertes Feld, `risk=`-Argument,
+Fallback im Quelltext.
+
+**Minimales GRÜN.**
+* Das gespeicherte `risk`-Feld und `risk="confirm"` sind entfernt.
+* `CONFIRM_ACTIONS` wird aus dem `destructive`-Effekt des kanonischen Vertrags
+  abgeleitet — **eine** Wahrheit statt einer handgepflegten Risikospalte daneben.
+* `ActionSpec.risk` bleibt als **read-only Property**, die denselben Katalog liest.
+  Es gibt keine zweite Risikotabelle und keinen gespeicherten Risikowert.
+* Der produktive `asyncio.wait_for(execute_action(...))`-Fallback ist entfernt.
+
+**Der geforderte Beweis (§A2.9).** M52 entfernt den `destructive`-Effekt aus
+`memory.forget` — der abgeleitete Confirmation-Status **kippt** und drei Tests werden rot.
+Die Ableitung ist damit belastet, nicht dekorativ.
+
+**Zwei Vertragsverschärfungen, bewusst.** `capabilities` ist in `process_message` **und**
+`run_action_and_respond` jetzt ein erforderliches Keyword-Argument. Ein Turn ohne
+Coordinator wäre exakt der Bypass, den dieser Slice entfernt; ihn als `None` weiter zu
+dulden hieße, die Tür offen zu lassen. Der Prompt-19-Test, der `Default None` zusicherte,
+ist in seine **Umkehrung** überführt (erforderlich, keyword-only) — planmäßig abgelöst,
+nicht gelöscht.
+
+**Ein Befund aus dem Testfall.** `test_action_exception_message_and_traceback_never_logged`
+patchte den `ActionSpec`-Executor von SEARCH und lief plötzlich ins Leere: `web.search`
+und `memory.forget` trugen als **einzige** noch eine **Kopie** der Fachlogik aus der
+Pilotphase statt zu delegieren. Genau das ist Slice 12s Auftrag („bestehende
+`execute`-Funktionen nur noch hinter Capability-Adaptern"). Beide delegieren jetzt über
+`_Delegated`; die letzten zwei Duplikate sind weg, und der Test greift wieder am richtigen
+Seam.
+
+**RFC-0001 bleibt gültig.** `ActionSpec.execute` und `ActionSpec.describe` existieren
+unverändert weiter — sie laufen nur noch **hinter** den Adaptern. Prompt-Metadaten wandern
+in dieser Phase nicht in den Capability-Vertrag.
+
+**Mutationen.** M52 `destructive` entfernt · M53 Ableitung liefert leere Menge ·
+M54 Property immer `low` — **alle drei ROT**.
+
+**Regression.** 1227 Tests OK.
+
+**Rollback.** `git revert` — gespeichertes `risk` und Fallback kehren zurück; die
+Signaturverschärfung müsste mit zurückgenommen werden.

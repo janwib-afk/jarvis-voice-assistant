@@ -136,16 +136,8 @@ def web_search_contract(deps=None) -> CapabilityContract:
         preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
         audit=("name", "version", "outcome", "duration_ms", "effects"),
         fixture={"query": "wetter"},
-        execute=_exec_web_search,
+        execute=_Delegated("SEARCH", "query"),
     )
-
-
-async def _exec_memory_forget(payload, ctx):
-    """Deckungsgleich mit ``actions._exec_memory_forget``: byte-identisches Ergebnis."""
-    import asyncio
-    import memory
-    result = await asyncio.to_thread(memory.forget_memory, payload["query"])
-    return {"text": result}
 
 
 def memory_forget_contract(deps=None) -> CapabilityContract:
@@ -165,7 +157,7 @@ def memory_forget_contract(deps=None) -> CapabilityContract:
         preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
         audit=("name", "version", "outcome", "duration_ms", "effects"),
         fixture={"query": "urlaub"},
-        execute=_exec_memory_forget,
+        execute=_Delegated("MEMORY_FORGET", "query"),
     )
 
 

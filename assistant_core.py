@@ -327,13 +327,14 @@ async def _report_capability_denial(sink, spec, action, projection) -> None:
 
 
 async def run_action_and_respond(ctx, action: actions.Action, sink,
-                                 mutate_launcher=None, capabilities=None,
+                                 mutate_launcher=None, *, capabilities,
                                  confirmed=False):
     """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events).
 
-    ``capabilities``: der runtime-eigene Coordinator (RFC-0007 §17). In der Pilotphase
-    dispatchen die migrierten Pfade (Slices 5/7) hierueber; nicht migrierte Actions
-    laufen unveraendert ueber ``execute_action``.
+    ``capabilities``: der runtime-eigene Coordinator (RFC-0007 §17) — **erforderlich**.
+    Seit Phase 5C laufen ALLE 22 Actions hierueber; ein Aufruf ohne Coordinator waere
+    genau der Bypass, den Slice 12 entfernt hat, und ist deshalb kein zulaessiger
+    Zustand mehr (Amendment 2 §A2.9).
     ``confirmed``: die **echte** Operator-Bestaetigung desselben offenen Turns (das
     gesprochene „Ja") — nur sie erfuellt die ``needs:confirmation`` einer destruktiven
     Capability (§16). Modellinhalt setzt sie nie.
@@ -352,24 +353,21 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
     # den Erfolgs-Nachlauf ausloesen (Amendment 2 §A2.5/§A2.7).
     denied = False
     try:
-        if capabilities is not None and capability.is_migrated(action.type):
-            # Migrierter Pfad (RFC-0007): der Coordinator ist der EINZIGE
-            # Timeout-Owner (Amendment 1 §A1.6 F1) — daher hier KEIN wait_for.
-            # CancelledError reicht der Coordinator unveraendert durch.
-            # Beide Pfade bekommen DENSELBEN request-scoped Kontext: der migrierte
-            # Pfad liest daraus die schmalen Invocation-Bindings (Amendment 2 §A2.4),
-            # der Legacy-Pfad benutzt ihn unveraendert wie bisher.
-            projection = await capability.run_migrated(
-                capabilities, action, _action_context(ctx, mutate_launcher),
-                confirmed=confirmed, feedback=_feedback)
-            action_result = projection.text
-            denied = not projection.ok
-            if denied:
-                await _report_capability_denial(sink, spec, action, projection)
-        else:
-            # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
-            action_result = await asyncio.wait_for(
-                execute_action(action, ctx, mutate_launcher), timeout=spec.timeout)
+        # ALLE 22 Actions laufen ueber den Coordinator (Amendment 2 §A2.1/§A2.9).
+        # Der Coordinator ist der EINZIGE Timeout-Owner (Amendment 1 §A1.6 F1) —
+        # daher hier KEIN wait_for. CancelledError reicht er unveraendert durch.
+        # Der frueher hier stehende execute_action-Fallback ist entfallen: mit
+        # 22/22 hatte er keinen Nutzer mehr, und solange er existierte, war ein
+        # Rueckfall an Policy und Timeout-Ownership vorbei einen Tippfehler
+        # entfernt. Die ActionSpec-Executoren laufen weiterhin — aber
+        # ausschliesslich HINTER den Capability-Adaptern (RFC-0001 bleibt gueltig).
+        projection = await capability.run_migrated(
+            capabilities, action, _action_context(ctx, mutate_launcher),
+            confirmed=confirmed, feedback=_feedback)
+        action_result = projection.text
+        denied = not projection.ok
+        if denied:
+            await _report_capability_denial(sink, spec, action, projection)
         if not denied:
             obslog.event("action.finished", action=action.type,
                          result_len=len(action_result))
@@ -436,15 +434,16 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
     await send_spoken_response(sink, summary, display_text)
 
 
-async def process_message(ctx, user_text: str, sink, mutate_launcher=None,
-                          capabilities=None):
+async def process_message(ctx, user_text: str, sink, mutate_launcher=None, *,
+                          capabilities):
     """Process message and send responses via WebSocket.
 
     ``mutate_launcher``: semantischer Launcher-Hook der KONKRETEN App-Runtime,
     vom WS-Endpoint injiziert (RFC-0003) — keine Runtime-/server-Abhaengigkeit hier.
     ``capabilities``: der runtime-eigene Capability-Coordinator (RFC-0007 §17),
-    identisch vom WS-Endpoint injiziert. In der Pilotphase reichen wir ihn nur an die
-    Ausfuehrung durch; die Piloten (Slices 5/7) dispatchen migrierte Pfade darueber.
+    identisch vom WS-Endpoint injiziert — **erforderlich**. Seit Phase 5C laufen alle
+    22 Actions und der Kontext-Refresh hierueber; ein Turn ohne Coordinator waere
+    genau der Bypass, den Slice 12 entfernt hat (Amendment 2 §A2.9).
     ``assistant_core`` haelt keine Rueckreferenz auf ``server`` oder eine globale Runtime.
     """
     # Wartet eine riskante Aktion auf Bestätigung? Ja => ausführen, Nein => verwerfen,
@@ -473,7 +472,7 @@ async def process_message(ctx, user_text: str, sink, mutate_launcher=None,
     # ``to_thread(refresh_data)`` an Policy, Timeout und Audit vorbei. Position
     # unveraendert: vor History und Prompt-Bau, damit der Refresh auf DIESEN
     # Prompt wirkt. Die blockierende Arbeit bleibt im Thread.
-    if "activate" in user_text.lower() and capabilities is not None:
+    if "activate" in user_text.lower():
         await capabilities.attempt(
             capability.CapabilityRequest(
                 "context.refresh", capability.Provenance.OPERATOR, {}),

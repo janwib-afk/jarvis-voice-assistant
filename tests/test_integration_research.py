@@ -119,7 +119,7 @@ class ResearchFlowIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_full_research_flow(self):
         ws = _StubWS()
-        await assistant_core.process_message(self.ctx, "Recherchiere Elektroautos", wt.legacy_sink(ws.send_json))
+        await assistant_core.process_message(self.ctx, "Recherchiere Elektroautos", wt.legacy_sink(ws.send_json), capabilities=_coord())
 
         # Genau zwei LLM-Calls: die Hauptantwort + die Zusammenfassung (kein Dedup,
         # da der Recherche-Autosave dedup=False nutzt).
@@ -148,3 +148,10 @@ class ResearchFlowIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _coord():
+    """Seit Phase 5C Slice 12 ist der Coordinator erforderlich (Amendment 2 §A2.9)."""
+    import capability as _cap
+    return _cap.Coordinator(_cap.build_registry(_cap.CapabilityDeps()),
+                            _cap.ACTIVE_RULES, audit=lambda *a, **k: None)

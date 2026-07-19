@@ -20,6 +20,7 @@ import tests  # noqa: F401  — synthetische Config-Fixture
 import obslog
 import actions
 import assistant_core
+import capability as _cap
 import clipboard_tools
 
 try:
@@ -118,7 +119,8 @@ class ActionResultLeakTests(_PrivacyTestCase):
         try:
             with _RootCapture() as cap:
                 run(assistant_core.run_action_and_respond(
-                    wt.turn_context(), actions.Action("CLIPBOARD", "zusammenfassen"), wt.legacy_sink(_FakeWS().send_json)))
+                    wt.turn_context(), actions.Action("CLIPBOARD", "zusammenfassen"), wt.legacy_sink(_FakeWS().send_json),
+                    capabilities=_coord()))
             combined = self.combined(cap)
         finally:
             clipboard_tools.get_clipboard_text = self._saved_clip
@@ -139,7 +141,8 @@ class ActionResultLeakTests(_PrivacyTestCase):
                     spec, execute=lambda payload, ctx: fake_ctx(payload))}):
             with _RootCapture() as cap:
                 run(assistant_core.run_action_and_respond(
-                    wt.turn_context(), actions.Action("PROJECT_CONTEXT", "Nordlicht"), wt.legacy_sink(_FakeWS().send_json)))
+                    wt.turn_context(), actions.Action("PROJECT_CONTEXT", "Nordlicht"), wt.legacy_sink(_FakeWS().send_json),
+                    capabilities=_coord()))
             combined = self.combined(cap)
         self.assertNotIn(S_VAULT, combined, "L3: Vault-Inhalt im Log")
 
@@ -158,7 +161,8 @@ class ExceptionLeakTests(_PrivacyTestCase):
                 {"SEARCH": dataclasses.replace(spec, execute=boom)}):
             with _RootCapture() as cap:
                 run(assistant_core.run_action_and_respond(
-                    wt.turn_context(), actions.Action("SEARCH", "x"), wt.legacy_sink(_FakeWS().send_json)))
+                    wt.turn_context(), actions.Action("SEARCH", "x"), wt.legacy_sink(_FakeWS().send_json),
+                    capabilities=_coord()))
             combined = self.combined(cap)
         self.assertNotIn(S_EXC, combined, "L5/L6: Exception-Inhalt/Traceback im Log")
         # Sichere Exception-Metadaten bleiben sichtbar.
@@ -271,3 +275,10 @@ class LifespanSinkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _coord():
+    """Seit Phase 5C Slice 12 laufen ALLE Actions ueber den Coordinator; ein
+    Aufruf ohne ihn ist kein zulaessiger Zustand mehr (Amendment 2 §A2.9)."""
+    return _cap.Coordinator(_cap.build_registry(_cap.CapabilityDeps()),
+                            _cap.ACTIVE_RULES, audit=lambda *a, **k: None)
