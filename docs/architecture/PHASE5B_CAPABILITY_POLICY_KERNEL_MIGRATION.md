@@ -549,3 +549,77 @@ Pro-Verbindungs- und Pro-Hop-Pruefung erschwert SSRF erheblich, aber **ohne IP-P
 wird nicht behauptet, die tatsaechlich verbundene IP kryptografisch zu binden.
 **DNS-Rebinding bleibt Restrisiko** (D7/R7, Phase 9). Der Route-Handler und die
 `server_addr`-Nachpruefung verkleinern das Fenster, schliessen es aber nicht.
+
+---
+
+## Slice 7 — Pilot memory.forget
+
+**Ziel.** `MEMORY_FORGET` ueber den Coordinator fuehren, ohne dass sich der gesprochene
+Confirmation-Pfad aendert. Erster Attempt ergibt `needs:confirmation`; das gesprochene
+„Ja" fuehrt denselben pending Attempt aus. **Kein** Grant, **kein** neuer Session-Zustand,
+**keine** neue Wire-Form. `memory.forget` bleibt Confirmation, wird nicht umetikettiert
+(§16).
+
+**Oeffentlicher Seam.** `SEAM-CAPABILITY` (memory.forget-Zensus), `SEAM-POLICY`
+(Confirm-Regel), `SEAM-CAPABILITY-COORDINATION` (Dispatch mit `confirmed`).
+Kontrollierte Grenze: `memory.forget_memory` (Vault) — nie echter Vault.
+
+**Ausgangsverhalten.** `MEMORY_FORGET` (einzige `risk="confirm"`-Action) → process_message
+`request_confirmation` → gesprochene Rueckfrage → „Ja" → `run_action_and_respond` →
+`execute_action` → `memory.forget_memory`.
+
+**RED (tatsaechlich beobachtet).** `Ran 9 tests ... FAILED (failures=3, errors=6)` mit
+`AssertionError: None != 'MEMORY_FORGET'` (memory.forget nicht in der Registry, Dispatch
+reicht `confirmed` nicht durch).
+
+**GREEN (minimal).**
+* `capability/_legacy.py` — `memory.forget`-Vertrag (Version 1), `run_migrated` um
+  `confirmed` erweitert. `execute` deckt sich mit `actions._exec_memory_forget`.
+* `assistant_core.run_action_and_respond` nimmt `confirmed` und reicht es an
+  `run_migrated`; **`process_message` setzt `confirmed=True` genau im „Ja"-Zweig** — das
+  gesprochene „Ja" IST die echte Operator-Bestaetigung desselben offenen Turns.
+
+**Confirmation bleibt Confirmation (§16).** Der `memory.forget`-Vertrag traegt
+`effects={destructive, network-read}`; die Policy verlangt `CONFIRMATION`, **nie**
+`AUTHORIZATION` — ein Test nagelt das fest. Voice erfuellt nie einen Grant (SI-2); das
+beobachtbare Verhalten ist exakt das heutige.
+
+**„Modellinhalt kann sich nie selbst bestaetigen" — belegt.** `confirmed` kommt
+ausschliesslich aus dem `process_message`-„Ja"-Zweig (Operator-Utterance, durch
+`is_confirmation` validiert), nie aus dem `[ACTION:…]` (Provenance `derived`). Test: erster
+Attempt mit `confirmed=False` → `needs:confirmation`, **der Vault wird nicht angefasst**.
+
+**Byte-Identitaet belegt.** Dieselbe gefakte `forget_memory`-Antwort durch Alt- und
+migrierten Pfad → identisches rohes Ergebnis → Summary-LLM-Eingabe und Frames unveraendert.
+
+**CancelledError erhalten.** Wirft die Loeschung `CancelledError`, reicht der Coordinator
+sie unveraendert durch (Test).
+
+**Zwischenbefund (zwei Alt-Test-Doubles, korrekt angeglichen).** Wie in Slice 4/5 spiegelten
+zwei Doubles die um `confirmed` erweiterte Signatur nicht (`test_confirm_flow` `fake_run`,
+mein eigener `run_migrated`-Spy im Search-Test). Beide um `confirmed=False` ergaenzt — kein
+Verhalten gelockert.
+
+**Mutationsnachweis (ausgefuehrt).** Vier Mutationen, alle **ROT**:
+
+| Mutation | Ergebnis |
+|---|---|
+| Zensus: `destructive` weggelassen (Unter-Deklaration) | **ROT** |
+| `confirmed` immer `True` → Selbstbestaetigung moeglich | **ROT** |
+| `MEMORY_FORGET` nicht mehr migriert | **ROT** |
+| „Ja" reicht `confirmed` nicht mehr durch | **ROT** |
+
+**Regression.** Suite **1011** grün (vorher 1002, +9). Confirm-/Cancellation-Block **5×
+flakefrei**. Smoke **Exit 0**. Fixture `a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` —
+bytegleich.
+
+**Commit.** Slice 6 war `3edd6ec`; die SHA dieses Slices traegt der Folge-Slice nach.
+
+**Rueckrollweg.** Commit reverten: `memory.forget` faellt aus `pilot_contracts`/
+`MIGRATED_ACTIONS`, der `confirmed`-Parameter entfaellt (optional, Default `False` — bricht
+keinen Aufrufer). `MEMORY_FORGET` laeuft wieder ueber `execute_action`; der gesprochene
+Confirm-Pfad war die ganze Zeit unveraendert.
+
+**Offene Restrisiken.** Keine neuen. `launcher.profile.delete` bleibt die dokumentierte
+destructive Luecke ohne serverseitig belegbare Bestaetigung (Amendment 1 §A1.4) — das
+loest erst ein Preview-/Grant-Vertrag in Phase 10.

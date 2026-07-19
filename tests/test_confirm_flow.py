@@ -63,7 +63,8 @@ class ConfirmFlowTests(unittest.TestCase):
         async def fake_spoken(ws, text, display_text=None):
             self.spoken.append(text)
 
-        async def fake_run(ctx, action, ws, mutate_launcher=None, capabilities=None):
+        async def fake_run(ctx, action, ws, mutate_launcher=None, capabilities=None,
+                           confirmed=False):
             self.executed.append(action)
 
         self._patches = [

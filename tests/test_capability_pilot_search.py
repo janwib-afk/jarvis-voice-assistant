@@ -103,9 +103,9 @@ class OrchestrationIntegrationTests(unittest.TestCase):
         dispatched = {}
         real_run = cap.run_migrated
 
-        async def _spy(coord, action, ctx):
+        async def _spy(coord, action, ctx, confirmed=False):
             dispatched["action"] = action.type
-            return await real_run(coord, action, ctx)
+            return await real_run(coord, action, ctx, confirmed=confirmed)
 
         async def _search(q):
             return {"title": "T", "url": "U", "content": "C"}

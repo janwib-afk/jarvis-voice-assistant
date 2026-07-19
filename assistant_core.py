@@ -310,12 +310,16 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
 
 
 async def run_action_and_respond(ctx, action: actions.Action, sink,
-                                 mutate_launcher=None, capabilities=None):
+                                 mutate_launcher=None, capabilities=None,
+                                 confirmed=False):
     """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events).
 
     ``capabilities``: der runtime-eigene Coordinator (RFC-0007 §17). In der Pilotphase
     dispatchen die migrierten Pfade (Slices 5/7) hierueber; nicht migrierte Actions
     laufen unveraendert ueber ``execute_action``.
+    ``confirmed``: die **echte** Operator-Bestaetigung desselben offenen Turns (das
+    gesprochene „Ja") — nur sie erfuellt die ``needs:confirmation`` einer destruktiven
+    Capability (§16). Modellinhalt setzt sie nie.
     """
     obslog.event("action.started", action=action.type)
 
@@ -330,7 +334,8 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
             # Migrierter Pilot-Pfad (RFC-0007): der Coordinator ist der EINZIGE
             # Timeout-Owner (Amendment 1 §A1.6 F1) — daher hier KEIN wait_for.
             # CancelledError reicht der Coordinator unveraendert durch.
-            action_result = await capability.run_migrated(capabilities, action, ctx)
+            action_result = await capability.run_migrated(
+                capabilities, action, ctx, confirmed=confirmed)
         else:
             # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
             action_result = await asyncio.wait_for(
@@ -411,8 +416,11 @@ async def process_message(ctx, user_text: str, sink, mutate_launcher=None,
         if verdict is not None:
             ctx.remember("user", user_text)
             if verdict:
+                # Das gesprochene „Ja" IST die echte Operator-Bestaetigung desselben
+                # offenen Turns (§16): sie erfuellt die needs:confirmation der
+                # destruktiven Capability.
                 await run_action_and_respond(ctx, pending, sink, mutate_launcher,
-                                             capabilities=capabilities)
+                                             capabilities=capabilities, confirmed=True)
             else:
                 msg = f"Verstanden, {USER_ADDRESS} — ich lasse es bleiben."
                 ctx.remember("assistant", msg)
