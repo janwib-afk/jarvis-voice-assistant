@@ -15,6 +15,7 @@ import tempfile
 import unittest
 
 import tests  # noqa: F401
+from tests.env_guard import guard_env
 from fastapi.testclient import TestClient
 
 import app_launcher
@@ -39,6 +40,7 @@ _CONFIG = {
 
 class ConfigRestBase(unittest.TestCase):
     def setUp(self):
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         fd, self.cfg_path = tempfile.mkstemp(suffix=".json")
         os.close(fd)
@@ -64,7 +66,6 @@ class ConfigRestBase(unittest.TestCase):
         (app_launcher.APPS, app_launcher.PROFILES,
          app_launcher.ACTIVE_PROFILE) = self._saved_launcher
         os.unlink(self.cfg_path)
-        os.environ.pop("JARVIS_SKIP_STARTUP_REFRESH", None)
 
 
 class SettingsRouteTests(ConfigRestBase):

@@ -22,6 +22,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
+from tests.env_guard import guard_env
 from tests import wire_testing as wt
 
 try:
@@ -92,6 +93,7 @@ class _ApiTestBase(unittest.TestCase):
     def setUp(self):
         # Seam (RFC-0003): eigene Runtime + Temp-Config + lifespan-fahrender
         # TestClient — keine server.CONFIG_PATH/config-Patches.
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         fd, self.cfg_path = tempfile.mkstemp(suffix=".json")
         os.close(fd)

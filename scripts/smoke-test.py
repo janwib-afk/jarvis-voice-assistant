@@ -147,6 +147,15 @@ def check_tests():
     with open(fixture, "rb") as f:
         fixture_before = f.read()
 
+    # Test-Environment-Integritaet (Prompt 20A §6.6): die Suite darf die beiden
+    # Startschalter NICHT netto veraendern. Wuerde ein Test JARVIS_SKIP_STARTUP_
+    # REFRESH pauschal poppen statt exakt wiederherzustellen, wuerde ein spaeterer
+    # Lifespan-Test echtes wttr.in erreichen — reihenfolgeabhaengig und
+    # kostenwirksam. Snapshot vorher, Vergleich nachher.
+    _ABSENT = object()
+    _ENV_KEYS = ("JARVIS_SKIP_STARTUP_REFRESH", "JARVIS_CONFIG_PATH")
+    env_before = {k: os.environ.get(k, _ABSENT) for k in _ENV_KEYS}
+
     suite = unittest.TestLoader().discover(os.path.join(ROOT, "tests"))
     # Test-Logs/-Prints nicht in die ✓/✗-Ausgabe mischen — ABER das Logging-
     # Subsystem NICHT global abschalten. `logging.disable(CRITICAL)` wuerde auch
@@ -177,6 +186,16 @@ def check_tests():
                "— ein Test schreibt in die eingecheckte Fixture.")
         return False
     report(True, "Test-Fixture unveraendert", "config.test.json bytegleich")
+
+    env_after = {k: os.environ.get(k, _ABSENT) for k in _ENV_KEYS}
+    drifted = [k for k in _ENV_KEYS if env_before[k] != env_after[k]]
+    if drifted:
+        report(False, "Test-Environment unveraendert",
+               "die Suite hat veraendert: " + ", ".join(drifted)
+               + " — ein Test stellt den Ausgangswert nicht exakt wieder her.")
+        return False
+    report(True, "Test-Environment unveraendert",
+           "JARVIS_SKIP_STARTUP_REFRESH/JARVIS_CONFIG_PATH byte-/wertgleich")
     # Unerwartete Skips (alles ausser den bekannten Umgebungs-Skips) lassen den
     # Smoke-Test fehlschlagen — verhindert, dass die Suite "still gruen" wirkt,
     # obwohl z.B. server.py wegen kaputter Config nicht importiert werden konnte

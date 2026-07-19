@@ -73,3 +73,34 @@ WebView2-Instanz des Nutzers bleibt eine einmalige manuelle Bestätigung.
 **Rollback.** `git revert` dieses Commits stellt den alten (defekten) Audio-Pfad
 wieder her; die realistische Fake-Härtung und die neuen Fälle würden mit
 zurückgenommen.
+
+## Slice 5 — Test-Environment-Isolation
+
+**Belegter Leak.** `tests/__init__.py` setzt `JARVIS_SKIP_STARTUP_REFRESH` per
+`setdefault`. Sechs Testmodule **poppten** es im tearDown pauschal statt den
+Ausgangswert wiederherzustellen — nach der Suite war es netto entfernt. Ein weiter
+hinten sortierter Lifespan-Test hätte dann ohne Skip einen echten `wttr.in`-Zugriff
+ausgelöst (reihenfolgeabhängig, kostenwirksam).
+
+**Erstes beobachtetes ROT.** Der neue Env-Integritäts-Check im Smoke-Test wurde rot:
+„die Suite hat verändert: JARVIS_SKIP_STARTUP_REFRESH".
+
+**Minimales GRÜN.**
+* `tests/env_guard.py`: `guard_env(test, *names)` schnappt den **exakten** Zustand
+  (vorhanden-mit-Wert vs. fehlend) und stellt ihn über `addCleanup` wieder her —
+  läuft bei Erfolg, Fehler **und** Setup-Abbruch, nie ein blanko `pop()`.
+* Alle env-mutierenden Testmodule nutzen `guard_env` statt der pauschalen Pops.
+* Smoke-Test vergleicht `JARVIS_SKIP_STARTUP_REFRESH`/`JARVIS_CONFIG_PATH` vor/nach
+  der Suite und wird rot bei Netto-Drift.
+* `tests/test_env_isolation.py`: fehlend→fehlend, Sentinel-Wert exakt, Restore trotz
+  Ausnahme, Reihenfolge-Unabhängigkeit (Popper↔Setter beide Wege), und **§6.7**: mit
+  gesetztem Skip löst der Serverstart keinen Refresh aus und eine
+  `urllib.request.urlopen`-Tripwire fängt jeden echten `wttr.in`-Zugriff.
+
+**Import-Robustheit.** `from tests.env_guard import guard_env` funktioniert sowohl
+unter `discover -s tests` als auch unter `python -m unittest tests.<Modul>`.
+
+**Grüne Evidenz.** Volle Suite 1248 OK; env-mutierende Module in umgekehrter und
+gemischter Reihenfolge grün; Smoke-Env-Integrität grün.
+
+**Rollback.** `git revert`; die Tests kehren zu den pauschalen Pops zurück (Leak).

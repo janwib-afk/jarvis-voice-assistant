@@ -22,6 +22,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  — synthetische Fixture vor 'import server'
+from tests.env_guard import guard_env
 
 try:
     import server
@@ -148,6 +149,7 @@ class LegacyBroadcastAndRestGoldenTests(unittest.TestCase):
     beobachtet die drei REST-getriggerten Broadcast-Frames."""
 
     def setUp(self):
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         self.music_dir = tempfile.mkdtemp(prefix="jarvis-golden-music-")
         with open(os.path.join(self.music_dir, "song.mp3"), "w", encoding="utf-8") as f:
@@ -190,7 +192,6 @@ class LegacyBroadcastAndRestGoldenTests(unittest.TestCase):
         if os.path.exists(self.cfg_path):
             os.remove(self.cfg_path)
         shutil.rmtree(self.music_dir, ignore_errors=True)
-        os.environ.pop("JARVIS_SKIP_STARTUP_REFRESH", None)
 
     def _ws(self):
         return self.client.websocket_connect(

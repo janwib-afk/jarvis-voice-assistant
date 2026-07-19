@@ -17,6 +17,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  waehlt synthetische Test-Config vor 'import server'
+from tests.env_guard import guard_env
 
 try:
     import server
@@ -60,6 +61,7 @@ class _SettingsSeamTestCase(unittest.TestCase):
     CONFIG = _TEST_CONFIG
 
     def setUp(self):
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         self.tmp = tempfile.mkdtemp(prefix="jarvis-settings-")
         self.cfg_path = os.path.join(self.tmp, "config.json")
@@ -299,6 +301,7 @@ class SettingsIsolationTests(unittest.TestCase):
     Datei (Regression fuer den frueheren globalen CONFIG_PATH — Befund B)."""
 
     def setUp(self):
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         self.tmp = tempfile.mkdtemp(prefix="jarvis-iso-")
         self._saved_core = {n: getattr(assistant_core, n) for n in _CORE_GLOBALS}
