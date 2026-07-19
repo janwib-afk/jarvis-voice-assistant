@@ -683,6 +683,24 @@ body::after {
     color: var(--color-state-danger);
 }
 
+/* Fokussierbare Recovery-Aktion im Banner (z.B. „Audio aktivieren"). */
+.error-banner .eb-action {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 4px 12px;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm, 6px);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+}
+.error-banner .eb-action:hover,
+.error-banner .eb-action:focus-visible {
+    background: var(--color-text-banner-dim, rgba(255,255,255,0.12));
+}
+
 @keyframes banner-in {
     from { opacity: 0; transform: translateX(var(--motion-distance-medium)); }
     to   { opacity: 1; transform: none; }

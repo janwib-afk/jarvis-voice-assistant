@@ -79,13 +79,21 @@ def init_clients(ai_client, http_client) -> None:
 # ── Kontextdaten (Wetter/Tasks/Vault/Inbox) ─────────────────────────────────
 
 def get_weather_sync():
-    """Fetch raw weather data (2 Versuche, je 5s Timeout)."""
+    """Fetch raw weather data (2 Versuche, je 5s Timeout).
+
+    Jede Response wird geschlossen — auf ALLEN Wegen: der ``with``-Block deckt
+    Erfolg und ``read()``/JSON-Fehler ab; ein ``HTTPError`` IST selbst eine
+    offene Response und muss separat geschlossen werden, weil ``urlopen`` ihn
+    bereits beim Aufruf wirft (der ``with`` bindet dann nie). Ohne das lecken die
+    Verbindungen und die Suite meldet ResourceWarnings.
+    """
+    import urllib.error
     import urllib.request
     for attempt in range(2):
         try:
             req = urllib.request.Request(f"https://wttr.in/{CITY}?format=j1", headers={"User-Agent": "curl"})
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read())
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
             c = data["current_condition"][0]
             return {
                 "temp": c["temp_C"],
@@ -94,12 +102,15 @@ def get_weather_sync():
                 "humidity": c["humidity"],
                 "wind_kmh": c["windspeedKmph"],
             }
-        except Exception:
+        except urllib.error.HTTPError as e:
+            e.close()
+            obslog.event("context.refresh_failed", stage="weather")
             if attempt == 0:
-                obslog.event("context.refresh_failed", stage="weather")
                 time.sleep(1)
-            else:
-                obslog.event("context.refresh_failed", stage="weather")
+        except Exception:
+            obslog.event("context.refresh_failed", stage="weather")
+            if attempt == 0:
+                time.sleep(1)
     return None
 
 

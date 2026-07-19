@@ -19,6 +19,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401  waehlt synthetische Test-Config (tests/__init__.py) vor 'import server'
+from tests.env_guard import guard_env
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LAUNCH_PS1 = os.path.join(_ROOT, "scripts", "launch-session.ps1")
@@ -61,6 +62,7 @@ class MusicApiTests(unittest.TestCase):
     def setUp(self):
         # Seam (RFC-0003): eigene Runtime + eigene Temp-Config + lifespan-fahrender
         # TestClient — keine server.CONFIG_PATH/config-Patches.
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
 
         # Temp-Musikordner: 2 MP3s, Nicht-MP3s und ein Ordner mit .mp3-Namen.

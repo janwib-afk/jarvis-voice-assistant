@@ -82,6 +82,17 @@ CASES = [
      "var r=R(s,{type:'AutoplayBlocked'});"
      "return r.state.playback==='locked' && r.state.overlays.indexOf('recoverable-error')!==-1"
      " && P(r.state)!=='error';})()"),
+    # Mute × Playback bleiben orthogonal (Prompt 20A §9): AudioReceived darf ein
+    # stummes Mikrofon NICHT ent-stummen, waehrend die Wiedergabe startet.
+    ("AudioReceived erhaelt Mute beim Start der Wiedergabe",
+     "(function(){var s=M({connection:'connected', capture:'muted', playback:'idle'});"
+     "var r=R(s,{type:'AudioReceived',audio:'a'});"
+     "return r.state.playback==='playing' && r.state.capture==='muted'"
+     " && r.effects.indexOf('PlayAudio')!==-1;})()"),
+    ("AudioReceived ohne Mute setzt Capture wie bisher auf idle",
+     "(function(){var s=M({connection:'connected', capture:'listening', playback:'idle'});"
+     "var r=R(s,{type:'AudioReceived',audio:'a'});"
+     "return r.state.playback==='playing' && r.state.capture==='idle';})()"),
 
     # ── Greeting-Latch (Amendment 1 / M2) ──────────────────────────────────
     ("erstes WsOpen sendet Begruessung",

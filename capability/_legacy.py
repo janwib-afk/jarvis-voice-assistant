@@ -5,9 +5,11 @@ zurueck auf den rohen Ergebnis-String, den ``assistant_core.run_action_and_respo
 erwartet. Das ``[ACTION:…]``-Wire-Format und ``ActionSpec`` bleiben unveraendert
 (RFC-0001 bleibt bindend); der Prompt und die Selbstbeschreibung aendern sich nicht.
 
-In der **Pilotphase** ist genau eine Voice-Action migriert: ``SEARCH`` -> ``web.search``.
-Die uebrigen 20 Actions laufen unveraendert ueber ``execute_action`` (Prompt 20,
-Amendment 1 §A1.1).
+Seit Phase 5C (Prompt 20, Amendment 2) sind **alle 22 Voice-Actions** migriert und
+laufen ausschliesslich ueber den Coordinator; einen produktiven ``execute_action``-
+Fallback gibt es nicht mehr. Die ``ActionSpec``-Executoren existieren weiter, aber nur
+noch HINTER den Capability-Adaptern (``_Delegated``). 22 Actions teilen sich 21
+Capability-Namen (``APP_AUTOSTART_ON``/``_OFF`` benutzen denselben Vertrag).
 
 ``execute`` importiert ``browser_tools`` **lazy**, damit ``import capability`` I/O-frei
 und leicht bleibt.

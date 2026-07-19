@@ -104,7 +104,7 @@ const ERROR_LABELS = {
     tts: 'Sprachausgabe', llm: 'KI', mic: 'Mikrofon', browser: 'Browser',
     action: 'Aktion', config: 'Konfiguration', audio: 'Audio', ws: 'Verbindung',
 };
-const PERSISTENT_ERRORS = ['mic', 'config', 'ws'];
+const PERSISTENT_ERRORS = ['mic', 'config', 'ws', 'audio'];
 const MAX_BANNERS = 3;
 
 function showErrorBanner(err) {
@@ -153,10 +153,25 @@ function showErrorBanner(err) {
         hintEl.textContent = hint;
         banner.appendChild(hintEl);
     }
+    // Optionale, fokussierbare Aktion (z.B. „Audio aktivieren") — eine echte
+    // per Tastatur nutzbare Schaltflaeche statt eines vagen „irgendwo klicken".
+    if (err.action && err.action.label && typeof err.action.onClick === 'function') {
+        const act = document.createElement('button');
+        act.className = 'eb-action';
+        act.type = 'button';
+        act.id = err.action.id || '';
+        if (err.action.dataAttr) act.setAttribute(err.action.dataAttr, '');
+        act.textContent = err.action.label;
+        act.addEventListener('click', (e) => { e.stopPropagation(); err.action.onClick(); });
+        banner.appendChild(act);
+    }
     banner.appendChild(close);
     stack.appendChild(banner);
 
-    if (!PERSISTENT_ERRORS.includes(component)) {
+    // ``transient`` erzwingt Auto-Ausblenden auch fuer sonst persistente
+    // Komponenten (z.B. ein einmaliger Audio-Formatfehler statt der bleibenden
+    // Blockade-Meldung).
+    if (err.transient || !PERSISTENT_ERRORS.includes(component)) {
         setTimeout(() => removeBanner(banner), 10000);
     }
     reportError(text);
@@ -362,21 +377,38 @@ function sendUtterance(text) {
     return true;
 }
 
-// Unlock audio on ANY user interaction
-function unlockAudio() {
-    if (audioIsLocked()) {
-        const silent = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZNIGPkAAAAAAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZNIGPkAAAAAAAAAAAAAAAAAAAA');
-        silent.play().then(() => {
-            // Freischaltung ist ein Zustandsuebergang locked -> idle (Amendment 1/M1).
-            const effects = dispatchVoice({ type: 'UserGesture', epoch: voiceEpoch() });
-            if (effects.indexOf('PlayAudio') !== -1) playNext();
-            console.log('[jarvis] Audio unlocked');
-        }).catch(() => {});
-    }
+// ── Kanonische Audio-Freischaltung/Recovery — GENAU EIN Besitzer ───────────
+// Frueher lag hier ein stiller MP3-Probelauf: ``UserGesture`` wurde erst nach
+// ``silent.play()`` dispatcht. Diese eingebettete Probe ist aber UNGUELTIG —
+// echtes Chromium/Edge lehnt sie mit ``NotSupportedError`` ab (``canPlayType``
+// meldet irrefuehrend 'probably'). Die Ablehnung wurde mit ``.catch(()=>{})``
+// verschluckt, ``UserGesture`` nie dispatcht, ``playback`` blieb fuer immer
+// 'locked' — genau der Screenshot-Bug. Der Reducer schaltet ohnehin ohne Probe
+// frei und startet Gepuffertes; eine echte Nutzergeste genuegt (Amendment 1/M1).
+function activateAudio() {
+    if (!audioIsLocked()) return;
+    const effects = dispatchVoice({ type: 'UserGesture', epoch: voiceEpoch() });
+    if (effects.indexOf('DismissBanner') !== -1) dismissErrorBanners('audio');
+    if (effects.indexOf('PlayAudio') !== -1) playNext();
+    renderVoice();
 }
-document.addEventListener('click', unlockAudio, { once: false });
-document.addEventListener('touchstart', unlockAudio, { once: false });
-document.addEventListener('keydown', unlockAudio, { once: false });
+// Jede echte Nutzergeste kann freischalten; der benannte, per Tastatur nutzbare
+// Weg ist der „Audio aktivieren"-Button im Blockade-Banner (showAudioBlocked).
+document.addEventListener('click', activateAudio, { once: false });
+document.addEventListener('touchstart', activateAudio, { once: false });
+document.addEventListener('keydown', activateAudio, { once: false });
+
+// Das Blockade-Banner mit fokussierbarer Recovery-Aktion. Ein Klick auf den
+// Button laeuft als echte Nutzergeste durch dieselbe kanonische Funktion.
+function showAudioBlocked() {
+    showErrorBanner({
+        component: 'audio',
+        text: 'Audio blockiert — einmal aktivieren.',
+        hint: 'Aktiviere die Sprachausgabe per Klick oder Tastatur.',
+        action: { label: 'Audio aktivieren', id: 'audio-unlock-btn',
+                  dataAttr: 'data-audio-unlock', onClick: activateAudio },
+    });
+}
 
 // Delight: der Orb-Glow blüht beim ersten Verbinden einmal auf („Instrument
 // erwacht"). Reduced-Motion unterdrückt die Animation (statischer Glow bleibt);
@@ -503,10 +535,7 @@ function queueAudio(base64Audio) {
     // angefordert, sonst wird abgespielt (Amendment 1 / M1).
     const eff = dispatchVoice({ type: 'AudioReceived', audio: base64Audio,
                                 epoch: voiceEpoch() });
-    if (eff.indexOf('ShowBanner') !== -1) {
-        showErrorBanner({ component: 'audio', text: 'Audio blockiert — Klick benötigt.',
-                          hint: 'Einmal irgendwo in das Fenster klicken.' });
-    }
+    if (eff.indexOf('ShowBanner') !== -1) showAudioBlocked();
     if (eff.indexOf('PlayAudio') !== -1) playNext();
 }
 
@@ -530,6 +559,28 @@ function onAudioFinished(epochAtStart) {
     }
 }
 
+// Ein Audio-Element GENAU EINMAL aufraeumen: Handler loesen, Object-URL genau
+// einmal freigeben, currentAudio/-Url nur nullen, wenn sie noch dieses Element
+// fuehren. Idempotent ueber alle Wege (Erfolg/Fehler/Stop/stale).
+function releaseAudio(audio, url) {
+    if (audio) { audio.onended = null; audio.onerror = null; }
+    if (url && !releaseAudio._revoked.has(url)) {
+        URL.revokeObjectURL(url);
+        releaseAudio._revoked.add(url);
+    }
+    if (currentAudio === audio) { currentAudio = null; currentAudioUrl = null; }
+}
+releaseAudio._revoked = new Set();
+
+// Nur ungefaehrliche Metadaten loggen — nie Base64-Audio, TTS-Text oder Secrets.
+function logAudio(where, extra) {
+    try {
+        console.warn('[jarvis] audio', where, Object.assign({
+            epoch: voiceEpoch(), queue: audioQueue.length,
+        }, extra || {}));
+    } catch (_) { /* Logging darf nie den Wiedergabepfad stoeren */ }
+}
+
 function playNext() {
     // Reiner Effekt-Ausfuehrer: den Zustand fuehrt der Reducer. Der Kopf des
     // Puffers wird nur GELESEN und erst in onAudioFinished entfernt (Symmetrie).
@@ -548,23 +599,57 @@ function playNext() {
     const audio = new Audio(url);
     currentAudio = audio;
     currentAudioUrl = url;
-    audio.onended = () => { URL.revokeObjectURL(url); currentAudio = null; onAudioFinished(epochAtStart); };
-    audio.onerror = () => { URL.revokeObjectURL(url); currentAudio = null; onAudioFinished(epochAtStart); };
-    audio.play().catch(err => {
-        dispatchVoice({ type: 'AutoplayBlocked', epoch: voiceEpoch() });
-        console.warn('[jarvis] Autoplay blocked, waiting for click...');
-        status.textContent = 'Klicke irgendwo damit Jarvis sprechen kann.';
-        showErrorBanner({ component: 'audio', text: 'Audio blockiert — Klick benötigt.', hint: 'Einmal irgendwo in das Fenster klicken.' });
+    audio.onended = () => { releaseAudio(audio, url); onAudioFinished(epochAtStart); };
+    audio.onerror = () => { releaseAudio(audio, url); onAudioFinished(epochAtStart); };
+    audio.play().catch(err => handlePlayFailure(err, epochAtStart, audio, url, bytes.length));
+}
+
+// Eine Ablehnung von ``play()`` nach Fehlerklasse behandeln (§4.4). GENAU EIN
+// Recovery-Weg: die kanonische Nutzergeste (Klick/Taste/Button). KEIN
+// konkurrierender lokaler Click-Retry, KEINE rekursive playNext-Kette.
+function handlePlayFailure(err, epochAtStart, audio, url, byteLen) {
+    const name = (err && err.name) || 'Error';
+    // Epoch-Guard: eine verspaetete Ablehnung einer LAENGST abgeloesten Wiedergabe
+    // (Stop/Reconnect/Epoch-Wechsel) raeumt nur auf und aendert den neuen Zustand
+    // nicht. Sie traegt ihre URSPRUNGS-Epoch, nicht die aktuelle.
+    if (epochAtStart !== voiceEpoch()) {
+        releaseAudio(audio, url);
+        logAudio('stale-reject', { name: name });
+        return;
+    }
+    releaseAudio(audio, url);
+
+    if (name === 'NotAllowedError') {
+        // Echte, per Geste behebbare Autoplay-Sperre: zurueck nach 'locked',
+        // Blockade-Banner mit „Audio aktivieren"-Button. Das Audio bleibt
+        // gepuffert; die naechste Geste dispatcht UserGesture -> PlayAudio.
+        dispatchVoice({ type: 'AutoplayBlocked', epoch: epochAtStart });
+        logAudio('autoplay-blocked', { name: name });
+        showAudioBlocked();
         renderVoice();
-        // Wait for click then retry
-        document.addEventListener('click', function retry() {
-            document.removeEventListener('click', retry);
-            audio.play().then(() => {
-                dismissErrorBanners('audio');
-                renderVoice();
-            }).catch(() => playNext());
-        });
+        return;
+    }
+    if (name === 'AbortError') {
+        // Erwarteter Abbruch (Stop/Reconnect): keine neue Blockadewarnung.
+        logAudio('aborted', { name: name });
+        return;
+    }
+    // NotSupportedError / Decode-/Mediafehler ODER unbekannt: EHRLICHER
+    // Format-/Wiedergabefehler, KEIN „Klick benoetigt" und keine Endlosschleife.
+    // Der Kopf wird deterministisch verworfen (onAudioFinished -> AudioEnded),
+    // die Queue laeuft weiter oder endet sauber leer.
+    const format = (name === 'NotSupportedError' || name === 'EncodingError'
+                    || name === 'NotReadableError');
+    showErrorBanner({
+        component: 'audio', transient: true,
+        text: format ? 'Sprachausgabe im Format nicht abspielbar.'
+                     : 'Sprachausgabe konnte nicht abgespielt werden.',
+        hint: 'Der Text ist oben sichtbar.',
     });
+    logAudio(format ? 'unsupported' : 'error', {
+        name: name, mime: 'audio/mpeg', bytes: byteLen || 0 });
+    onAudioFinished(epochAtStart);
+    renderVoice();
 }
 
 // ── Stopp: Wiedergabe sofort beenden + laufende Server-Aktion abbrechen ─────
@@ -574,12 +659,9 @@ function stopPlaybackLocal() {
     const wasActive = audioIsPlaying() || audioQueue.length > 0;
     audioQueue = [];
     if (currentAudio) {
-        currentAudio.onended = null;
-        currentAudio.onerror = null;
-        currentAudio.pause();
-        if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-        currentAudio = null;
-        currentAudioUrl = null;
+        const a = currentAudio, u = currentAudioUrl;
+        a.pause();
+        releaseAudio(a, u);           // Handler loesen + URL genau einmal freigeben
     }
     dispatchVoice({ type: 'StopRequested', epoch: voiceEpoch() });
     renderVoice();

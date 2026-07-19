@@ -3,16 +3,20 @@
 ## Status
 
 **Accepted for incremental implementation** (2026-07-15). Architektur-Kandidat 02 aus
-dem Architekturbericht (`architecture-review-20260713-221830.html`), vom Nutzer in
+dem Architekturbericht (`architecture-review-20260713-221830.html` — eine **nicht
+versionierte** historische Evidenz, die nur temporär in `%TEMP%` erzeugt und bewusst
+nicht eingecheckt wurde; nicht im Repository auffindbar), vom Nutzer in
 Prompt 8A ausdrücklich gewählt; Grilling (D1–D5), „Design It Twice" (drei read-only
 Entwürfe) und die Zielentwurf-Wahl (**E3 kompatibilitäts-first + E2-Zugriffsmuster**,
 neue/migrierte Routen ziehen Deps aus `app.state.runtime`) sind abgeschlossen und vom
 Nutzer bestätigt (2026-07-15).
 
-> **Umsetzungsvorbehalt:** Die Annahme autorisiert die Architektur; die eigentliche
-> Composition-Root-**Migration (Prompt 8)** bleibt blockiert, bis das
-> **Phase-3-Hosted-Runner-Gate** grün ist oder der Nutzer es ausdrücklich und
-> dokumentiert ändert.
+> **Umsetzungsstand (aktualisiert 2026-07-19):** Diese Architektur ist **umgesetzt**.
+> `runtime.py` ist der Composition Root; `create_app(runtime)` und der Lifespan
+> (`aopen`/`aclose`) sind produktiv, Routen ziehen Deps aus `app.state.runtime`. Die
+> ursprüngliche Vorbedingung (Phase-3-Hosted-Runner grün) war erfüllt; die Migration
+> (Prompt 8, Phase 4A) und ihr voll-lazy Amendment 1 sind längst gemergt. Der folgende,
+> ursprüngliche „Umsetzungsvorbehalt" ist damit **historisch**.
 
 > Dieses RFC **implementiert nichts**. Es autorisiert (nach ausdrücklicher Annahme)
 > die inkrementelle Umsetzung des Composition Roots. RFC-0001 (Action → deep module)
@@ -542,8 +546,8 @@ Ressourcen an — die RFCs sind disjunkt und additiv.
   klare Ownership; Multi-App-Isolation (seriell) belegt; Cleanup bei Partial-Failure; Launcher +
   bestehender Browser laufen; Verträge unverändert; keine neuen produktiven Globals im migrierten
   Bereich; Legacy-Adapter dünn+dokumentiert; kritische Lifecycle-Tests 5× flakefrei; 0 Provider/Skips.
-- **Vorbedingung der Umsetzung (unabhängig):** Phase-3-Hosted-Runner grün ODER ausdrücklicher,
-  dokumentierter Verzicht des Nutzers — bis dahin bleibt Prompt 8 blockiert.
+- **Vorbedingung der Umsetzung (historisch, war erfüllt):** Phase-3-Hosted-Runner grün ODER
+  ausdrücklicher Verzicht des Nutzers. Erfüllt; Prompt 8 (Phase 4A) ist umgesetzt und gemergt.
 
 ## Freigabe
 

@@ -13,6 +13,7 @@ import tempfile
 import unittest
 
 import tests  # noqa: F401
+from tests.env_guard import guard_env
 from fastapi.testclient import TestClient
 
 import app_launcher
@@ -39,6 +40,7 @@ _CONFIG = {
 
 class ProfileRenamePilotTests(unittest.TestCase):
     def setUp(self):
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         fd, self.cfg_path = tempfile.mkstemp(suffix=".json")
         os.close(fd)

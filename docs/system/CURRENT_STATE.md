@@ -4,7 +4,26 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
-> **Status 2026-07-19 (Phase 5B, RFC-0007 + Amendment 1 — PILOTPHASE IMPLEMENTIERT):**
+> **AKTUELLER STAND 2026-07-19 (Phase 5C, RFC-0007 + Amendment 2 — VOLLMIGRATION DER
+> DURCHSETZBAREN PFADE ABGESCHLOSSEN; danach Wartungsrunde Prompt 20A):** Alle **22 von 22**
+> Voice-Actions und **9 von 10** mutierenden REST-Routen laufen über den Capability-
+> Coordinator (auf **21** Verträgen; `APP_AUTOSTART_ON`/`_OFF` teilen einen). Das
+> gespeicherte `ActionSpec.risk` ist **entfernt** — Confirmation wird aus dem
+> `destructive`-Effekt abgeleitet (`CONFIRM_ACTIONS == {MEMORY_FORGET}`); der produktive
+> `execute_action`-Fallback ist **weg**, `capabilities` ist erforderlich. `master` steht auf
+> dem Phase-5C-Merge `ad6b71284c…`. **Weiterhin offen (unverändert, keine neuen Versprechen):**
+> `launcher.profile.delete` als einzige ungeschützte mutierende Route bis zur Phase-10-Grant-
+> Laufzeit; **TM-001** flächendeckend *durchsetzbar*, aber **nicht gelöst**; **TM-002** ohne
+> IP-Pinning nur teilweise, **DNS-Rebinding** offen (Phase 9); Presence-/Preview-Regeln
+> **datiert und inaktiv**. Prompt 20A behob zusätzlich den Audio-Freischalt-Bug (ungültige
+> stille MP3-Probe), isolierte das Test-Environment und schloss die Wetter-HTTP-Responses.
+> **Der 20-Prompt-Durchgang ist damit abgeschlossen — der ursprüngliche Masterplan ist NICHT
+> vollständig implementiert:** die Phasen 6–13 (Job-Engine, Langzeitgedächtnis, Scheduler,
+> Connectoren u.a.) bleiben zukünftiger Scope. Die folgenden Statusblöcke sind **historische
+> Momentaufnahmen** und beschreiben NICHT mehr den aktuellen Stand.
+>
+> **Status 2026-07-19 (Phase 5B, RFC-0007 + Amendment 1 — PILOTPHASE IMPLEMENTIERT — HISTORISCH,
+> durch Phase 5C abgelöst):**
 > Der Capability-/Policy-Kernel ist als **Pilot** umgesetzt
 > ([RFC-0007](../architecture/RFC-0007-capability-policy-kernel.md) inkl.
 > [Amendment 1](../architecture/RFC-0007-capability-policy-kernel.md#amendment-1--pilotphase-wirkungsinventar-ssrf-durchsetzung-und-lifecycle-grenzen);

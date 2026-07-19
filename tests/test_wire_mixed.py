@@ -14,6 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests  # noqa: F401
+from tests.env_guard import guard_env
 
 try:
     import server
@@ -33,6 +34,7 @@ VALID_ORIGIN = "http://127.0.0.1:8340"
 @unittest.skipIf(server is None, f"server import nicht moeglich: {_IMPORT_ERROR!r}")
 class MixedBroadcastTests(unittest.TestCase):
     def setUp(self):
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
         with open(os.path.join(os.path.dirname(__file__), "fixtures", "config.test.json"),
                   encoding="utf-8") as f:
@@ -69,7 +71,6 @@ class MixedBroadcastTests(unittest.TestCase):
         if os.path.exists(self.cfg_path):
             os.remove(self.cfg_path)
         shutil.rmtree(self.tmp, ignore_errors=True)
-        os.environ.pop("JARVIS_SKIP_STARTUP_REFRESH", None)
 
     def _conn(self, subprotocols=None):
         return self.client.websocket_connect(

@@ -22,7 +22,7 @@ Phase 7 war der finale Qualitäts-, Sicherheits- und Produktionsreife-Pass des J
 |---|---|---|---|---|
 | Gefunden | 0 | 0 | 5 (inkl. 1 neu) | 11 (inkl. 1 neu) |
 | Behoben | – | – | **5** | **4** |
-| Offen | 0 | **0** | 0 | 5 (begründet, nicht-blockierend) |
+| Offen | 0 | **0** | 0 | **7** (begründet, nicht-blockierend — 11 gefunden − 4 behoben; vollständige Liste in OPEN_ITEMS.md) |
 
 ## 6 · Behobene Probleme
 
@@ -30,7 +30,7 @@ P2: (1) `color-scheme: dark` + `theme-color` → native Selects/Scrollbars dunke
 
 ## 7 · Offene Probleme
 
-5×P3, keiner release-blockierend: Orb-Rest bei <~600px Höhe (200 %-Zoom-Sonderfall, aria-hidden), Banner/`#sc-error`-Doppelung, Map-Label-Kürzung (Weg B lesbar), 9px-Overflow @375px (unter Minimalmodus), Font-preload. Siehe [OPEN_ITEMS.md](OPEN_ITEMS.md).
+**7×P3**, keiner release-blockierend: Orb-Rest bei <~600px Höhe (200 %-Zoom-Sonderfall, aria-hidden), Banner/`#sc-error`-Doppelung, Map-Label-Kürzung (Weg B lesbar), 9px-Overflow @375px (unter Minimalmodus), Font-preload, ARIA-Tab-Muster im Kontrollzentrum unvollständig (Review F2), `#cc-map-stage` ohne `role="group"`/`aria-label` (Review F3). Vollständige Liste in [OPEN_ITEMS.md](OPEN_ITEMS.md) (dort als #1–#7 enumeriert).
 
 ## 8 · Accessibility-Ergebnis
 

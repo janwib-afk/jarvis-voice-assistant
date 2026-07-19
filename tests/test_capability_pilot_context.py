@@ -12,6 +12,7 @@ import tempfile
 import unittest
 
 import tests  # noqa: F401
+from tests.env_guard import guard_env
 from fastapi.testclient import TestClient
 
 import assistant_core
@@ -79,6 +80,7 @@ class StartupAndSettingsTests(unittest.TestCase):
     }
 
     def setUp(self):
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ.pop("JARVIS_SKIP_STARTUP_REFRESH", None)  # Startup-Refresh AKTIV
         fd, self.cfg = tempfile.mkstemp(suffix=".json")
         os.close(fd)
@@ -93,7 +95,7 @@ class StartupAndSettingsTests(unittest.TestCase):
         server.SESSION_TOKEN = self._saved_token
         assistant_core.refresh_data = self._saved_refresh
         memory.configure(*self._saved_memory)
-        os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
+        # JARVIS_SKIP_STARTUP_REFRESH stellt guard_env exakt wieder her.
         if os.path.exists(self.cfg):
             os.remove(self.cfg)
 

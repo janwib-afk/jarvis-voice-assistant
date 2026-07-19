@@ -79,6 +79,12 @@ jobs:
         run: python tests/browser/e2e_race_matrix.py
       - name: Audio seam (playback semantics via injected test double)
         run: python tests/browser/e2e_audio_seam.py
+      - name: Audio integration flow (buffered-while-locked + honest codec failure)
+        run: python tests/browser/e2e_functional.py --only audio_playback
+      - name: Real codec smoke (no window.Audio fake — play() + native events)
+        # Belegt echte Wiedergabe + native playing/ended in einem echten Browser
+        # (Edge falls vorhanden, sonst Chromium mit WAV). Ergaenzt den Fake-Seam.
+        run: python tests/browser/e2e_audio_codec.py
       - name: Accessibility + keyboard
         run: python tests/browser/e2e_a11y.py
       - name: Reduced motion

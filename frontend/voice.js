@@ -168,8 +168,11 @@
         if (state.playback === 'playing') {
           return _result(_next(state, { audioQueue: queued }), []);
         }
+        // Mute × Playback bleiben orthogonal: startet die Wiedergabe, waehrend das
+        // Mikrofon stumm ist, bleibt es stumm (sonst ent-stummte TTS den Nutzer).
         return _result(_next(state, {
-          playback: 'playing', audioQueue: queued, capture: 'idle'
+          playback: 'playing', audioQueue: queued,
+          capture: state.capture === 'muted' ? 'muted' : 'idle'
         }), ['StopRecognition', 'PlayAudio', 'Render']);
       }
 

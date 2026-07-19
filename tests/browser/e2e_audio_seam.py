@@ -32,11 +32,23 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 from e2e_harness import JarvisServer, browser_context, open_jarvis  # noqa: E402
 
 # Kontrollierbares Audio-Element. Bewusst minimal: nur was der Adapter benutzt
-# (Konstruktor, play, pause, onended, onerror). `mode` steuert, wie play() sich
-# verhaelt — 'ok' loest auf, 'blocked' lehnt ab wie eine Autoplay-Sperre.
+# (Konstruktor, play, pause, onended, onerror).
+#
+# WICHTIG (Prompt 20A): Der Fake spiegelt jetzt die ECHTE Chromium-/Edge-Realitaet.
+# Eine ``data:audio/mp3``-URL — die alte stille Freischaltprobe — lehnt IMMER mit
+# ``NotSupportedError`` ab (empirisch belegt: `canPlayType('audio/mpeg')` meldet
+# 'probably', `play()` scheitert trotzdem). Der fruehere Fake loeste diese Probe
+# faelschlich auf und MASKIERTE damit den Freischaltfehler.
+#
+# ``mode`` steuert nur die ECHTEN (blob:/data:audio/wav) Wiedergaben:
+#   'ok'      -> loest auf
+#   'blocked' -> NotAllowedError (echte, per Geste behebbare Autoplay-Sperre)
+#   'unsupported' -> NotSupportedError (Format-/Codecfehler)
+#   'pending' -> Promise bleibt offen; der Test loest/lehnt es spaeter selbst auf
 INIT_FAKE_AUDIO = """
 (() => {
     window.__audio = { instances: [], mode: 'ok', playCalls: 0 };
+    function isProbe(src) { return String(src).startsWith('data:audio/mp3'); }
     class FakeAudio {
         constructor(src) {
             this.src = src;
@@ -44,12 +56,25 @@ INIT_FAKE_AUDIO = """
             this.paused = false;
             this.onended = null;
             this.onerror = null;
+            this._pending = null;
             window.__audio.instances.push(this);
         }
         play() {
             window.__audio.playCalls++;
-            if (window.__audio.mode === 'blocked') {
+            // Die alte stille MP3-Probe ist ungueltig — echtes Chromium/Edge lehnt ab.
+            if (isProbe(this.src)) {
+                return Promise.reject(new DOMException('no supported source', 'NotSupportedError'));
+            }
+            const mode = window.__audio.mode;
+            if (mode === 'blocked') {
                 return Promise.reject(new DOMException('blocked', 'NotAllowedError'));
+            }
+            if (mode === 'unsupported') {
+                return Promise.reject(new DOMException('no supported source', 'NotSupportedError'));
+            }
+            if (mode === 'pending') {
+                const self = this;
+                return new Promise((res, rej) => { self._pending = { res, rej }; });
             }
             this.playing = true;
             return Promise.resolve();
@@ -59,9 +84,14 @@ INIT_FAKE_AUDIO = """
     window.Audio = FakeAudio;
     // Testseitige Ausloeser — NICHT Teil des Produktionscodes.
     window.__audio.last = () => window.__audio.instances[window.__audio.instances.length - 1];
-    window.__audio.real = () => window.__audio.instances.filter(a => !String(a.src).startsWith('data:'));
+    window.__audio.real = () => window.__audio.instances.filter(a => !isProbe(a.src));
     window.__audio.end = (a) => { const t = a || window.__audio.last(); if (t.onended) t.onended(); };
     window.__audio.fail = (a) => { const t = a || window.__audio.last(); if (t.onerror) t.onerror(); };
+    // Verzoegerte Aufloesung/Ablehnung fuer Stop-/Epoch-Rennen (§5.8/§5.9).
+    window.__audio.resolvePlay = (a) => { const t = a || window.__audio.last();
+        if (t._pending) { t.playing = true; t._pending.res(); t._pending = null; } };
+    window.__audio.rejectPlay = (a, name) => { const t = a || window.__audio.last();
+        if (t._pending) { t._pending.rej(new DOMException('x', name || 'AbortError')); t._pending = null; } };
 })();
 """
 
@@ -305,6 +335,146 @@ def fall_autoplay_block(page, base_url, srv):
           f"playback={st2['playback']}")
 
 
+# ── 7 Kaltstart OHNE _prepare(): Audio trifft vor der Geste ein ────────────
+def fall_kaltstart_ohne_geste(page, base_url, srv):
+    """§5.1/§5.2: der Pfad, den der alte Fake maskiert hat.
+
+    Es wird NICHT vorab freigeschaltet. Echtes TTS-Audio trifft ein, waehrend
+    ``playback === 'locked'`` — es muss gepuffert werden und einen zugaenglichen
+    „Audio aktivieren"-Button zeigen (kein blosses „irgendwo klicken"). Ein echter
+    Klick auf diesen Button schaltet frei und startet GENAU EIN Nutz-Audio; Banner
+    und Overlay verschwinden.
+
+    Vor dem Fix bleibt ``unlockAudio()`` an der ungueltigen MP3-Probe haengen, die
+    Geste dispatcht nie ``UserGesture`` und der Zustand bleibt fuer immer 'locked'.
+    """
+    srv.scenario(replies=["Hallo, hier ist Jarvis."], audio=True)
+    open_jarvis(page, base_url)
+    # Antwort abwarten (Text sichtbar), Audio ist gepuffert, noch keine Geste.
+    page.wait_for_function("window.__voice.state.audioQueue.length >= 1", timeout=10000)
+    st = page.evaluate("""() => ({
+        playback: window.__voice.state.playback,
+        queue: window.__voice.state.audioQueue.length,
+        real: window.__audio.real().length,
+        orb: document.getElementById('orb').className,
+        banner: !!document.querySelector('.error-banner'),
+    })""")
+    check("Kaltstart: Audio ist gepuffert, noch nichts abgespielt",
+          st["playback"] == "locked" and st["queue"] >= 1 and st["real"] == 0,
+          f"playback={st['playback']}, queue={st['queue']}, real={st['real']}")
+    check("Kaltstart: kein falsches 'speaking' vor der Geste",
+          st["orb"] != "speaking", f"orb={st['orb']}")
+
+    # Der zugaengliche Recovery-Button muss existieren und fokussierbar sein.
+    btn = page.query_selector("#audio-unlock-btn, [data-audio-unlock]")
+    check("Kaltstart: sichtbarer, fokussierbarer 'Audio aktivieren'-Button",
+          btn is not None and btn.is_visible(),
+          "kein Button gefunden" if btn is None else "sichtbar")
+
+    if btn is not None:
+        btn.focus()
+        btn.click()
+    else:                                       # Fallback: generische Geste
+        page.mouse.click(5, 5)
+    page.wait_for_function("window.__voice.state.playback === 'playing'", timeout=8000)
+    # Der Blockade-Banner blendet mit einer kurzen Animation aus — auf seinen
+    # tatsaechlichen Wegfall warten (Zustands-Wait, kein fester Sleep).
+    page.wait_for_function("!document.querySelector('.error-banner')", timeout=5000)
+    st2 = page.evaluate("""() => ({
+        playback: window.__voice.state.playback,
+        real: window.__audio.real().length,
+        playing: window.__audio.last().playing,
+        banner: !!document.querySelector('.error-banner'),
+        overlay: window.__voice.state.overlays.indexOf('recoverable-error'),
+    })""")
+    check("Kaltstart: die Geste startet GENAU EIN Nutz-Audio",
+          st2["playback"] == "playing" and st2["real"] == 1 and st2["playing"] is True,
+          f"playback={st2['playback']}, real={st2['real']}")
+    check("Kaltstart: Banner und Overlay verschwinden nach Erfolg",
+          st2["banner"] is False and st2["overlay"] == -1,
+          f"banner={st2['banner']}, overlay={st2['overlay']}")
+
+
+# ── 8 NotSupportedError: ehrlicher Formatfehler, kein „Klick benoetigt" ─────
+def fall_not_supported(page, base_url, srv):
+    """§5.5: ein echter Codec-/Formatfehler ist KEINE Autoplay-Sperre.
+
+    Es darf keine „Klick benoetigt"-Endlosschleife entstehen; die Queue wird
+    deterministisch fortgesetzt (der Kopf wird verworfen, kein Wiederholen).
+    """
+    _prepare(page, base_url, srv)
+    srv.scenario(replies=["Antwort"], audio=True)
+    page.evaluate("() => { window.__audio.mode = 'unsupported'; }")
+    _say(page)
+    page.wait_for_function(
+        "window.__voice.state.playback !== 'playing' && window.__voice.state.audioQueue.length === 0",
+        timeout=10000)
+    st = page.evaluate("""() => ({
+        playback: window.__voice.state.playback,
+        queue: window.__voice.state.audioQueue.length,
+        overlay: window.__voice.state.overlays.indexOf('recoverable-error'),
+        lastError: (window.__voice.state.lastError || {}),
+    })""")
+    check("NotSupported: kein recoverable-error-Overlay (kein Klick-noetig-Banner)",
+          st["overlay"] == -1, f"overlay={st['overlay']}")
+    check("NotSupported: Queue deterministisch geleert, keine Endlosschleife",
+          st["queue"] == 0 and st["playback"] != "playing",
+          f"playback={st['playback']}, queue={st['queue']}")
+
+
+# ── 9 Stop, waehrend play() noch aussteht (§5.8) ───────────────────────────
+def fall_stop_waehrend_play_pending(page, base_url, srv):
+    """Eine verspaetete Aufloesung ODER Ablehnung eines bereits abgeloesten
+    play() darf den neuen Zustand nicht veraendern."""
+    _prepare(page, base_url, srv)
+    srv.scenario(replies=["Antwort"], audio=True)
+    page.evaluate("() => { window.__audio.mode = 'pending'; }")   # play() bleibt offen
+    _say(page)
+    page.wait_for_function("window.__audio.real().length === 1", timeout=10000)
+
+    # Stop, waehrend das play()-Promise noch offen ist -> Epoch++.
+    page.evaluate("() => { window.__spaetAudio = window.__audio.last(); stopPlaybackLocal(); }")
+    st = page.evaluate("() => window.__voice.state.playback")
+    check("pending-stop: nach Stop nicht mehr 'playing'", st != "playing", f"playback={st}")
+
+    # Jetzt die verspaetete Ablehnung DES ALTEN play() (AbortError) zustellen.
+    danach = page.evaluate("""() => {
+        window.__audio.rejectPlay(window.__spaetAudio, 'AbortError');
+        return { playback: window.__voice.state.playback,
+                 queue: window.__voice.state.audioQueue.length,
+                 lokal: audioQueue.length,
+                 banner: !!document.querySelector('.error-banner') };
+    }""")
+    check("pending-stop: verspaetetes Reject aendert den Zustand nicht",
+          danach["playback"] != "playing" and danach["queue"] == 0,
+          f"playback={danach['playback']}, queue={danach['queue']}")
+    check("pending-stop: kein neuer Blockade-Banner durch den Abbruch",
+          danach["banner"] is False)
+    check("pending-stop: lokaler Puffer und Reducer-Queue symmetrisch",
+          danach["lokal"] == danach["queue"], f"lokal={danach['lokal']}")
+
+
+# ── 10 Mikrofon stumm blockiert TTS nicht (§5.11) ──────────────────────────
+def fall_mic_mute_erlaubt_tts(page, base_url, srv):
+    """Mikrofon-Mute betrifft nur den Capture-Pfad, nie die Wiedergabe."""
+    _prepare(page, base_url, srv)
+    # Mikrofon stumm schalten (echte Nutzergeste auf den Mute-Button).
+    page.click("#mute-btn")
+    page.wait_for_function("window.__voice.state.capture === 'muted'", timeout=5000)
+    srv.scenario(replies=["Trotzdem Sprache"], audio=True)
+    _say(page)
+    _wait_playing(page)
+    st = page.evaluate("""() => ({
+        capture: window.__voice.state.capture,
+        playback: window.__voice.state.playback,
+        playing: window.__audio.last().playing,
+    })""")
+    check("Mute: Capture bleibt 'muted', TTS spielt trotzdem",
+          st["capture"] == "muted" and st["playback"] == "playing"
+          and st["playing"] is True,
+          f"capture={st['capture']}, playback={st['playback']}")
+
+
 FAELLE = [
     ("1 erfolgreicher play()-Pfad", fall_play_erfolg),
     ("2 AudioEnded", fall_audio_ende),
@@ -312,6 +482,10 @@ FAELLE = [
     ("4 Stop waehrend der Wiedergabe", fall_stop_waehrend_playback),
     ("5 verspaetetes Ende nach Epoch-Wechsel", fall_verspaetetes_ende_nach_epoch),
     ("6 Autoplay-Block", fall_autoplay_block),
+    ("7 Kaltstart ohne Geste", fall_kaltstart_ohne_geste),
+    ("8 NotSupportedError", fall_not_supported),
+    ("9 Stop waehrend play() pending", fall_stop_waehrend_play_pending),
+    ("10 Mic-Mute erlaubt TTS", fall_mic_mute_erlaubt_tts),
 ]
 
 

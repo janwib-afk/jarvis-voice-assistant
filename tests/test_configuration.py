@@ -19,6 +19,7 @@ import unittest
 from unittest import mock
 
 import tests  # noqa: F401  — synthetische Config-Fixture (JARVIS_CONFIG_PATH)
+from tests.env_guard import guard_env
 
 import config_loader
 import configuration
@@ -315,6 +316,7 @@ class RuntimeOwnershipTests(_TempConfigTestCase):
 
     def setUp(self):
         super().setUp()
+        guard_env(self, "JARVIS_SKIP_STARTUP_REFRESH")
         os.environ["JARVIS_SKIP_STARTUP_REFRESH"] = "1"
 
     def make_runtime(self, doc=None):
