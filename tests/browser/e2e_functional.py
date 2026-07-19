@@ -206,38 +206,59 @@ def flow_greeting_once(pw):
 
 
 def flow_audio_playback(pw):
-    """6c. AUDIO-PFAD und Playback-`locked` (RFC-0006 Amendment 1 / M1).
+    """6c. AUDIO-PFAD: Pufferung unter `locked` + ehrlicher Codec-Fehlschlag.
 
-    Der Stub liefert hier ein ECHTES stilles MP3, sodass `queueAudio`/`playNext`
-    und der Wiedergabeversuch wirklich durchlaufen — ohne dieses Szenario ist der
-    gesamte Audio-Pfad testfrei.
+    Zwei ausdruecklich GETRENNTE Phasen, damit nichts behauptet wird, das nicht
+    stattgefunden hat (Prompt 20A §3.5/§5):
 
-    Ehrliche Grenze: das Chromium von Playwright ist ein Open-Source-Build OHNE
-    MP3-Codec (`play()` -> NotSupportedError). Erfolgreiche Wiedergabe ist hier
-    daher nicht darstellbar. Verifizierbar — und genau der zustandsrelevante Teil —
-    ist der Fehlschlagpfad: er muss die Playback-Region auf `locked` halten, ein
-    `recoverable-error`-Overlay setzen und die Presentation NICHT auf 'error'
-    ziehen (Praezisierung 3)."""
+    1. Solange `playback === 'locked'` (keine Nutzergeste), wird echtes MP3-Audio
+       nur GEPUFFERT — es findet KEIN Wiedergabeversuch statt. Sichtbar sind der
+       Blockade-Banner mit fokussierbarem „Audio aktivieren"-Button und das
+       `recoverable-error`-Overlay; die Presentation bleibt != 'error'.
+
+    2. Erst eine ECHTE Nutzergeste (Klick auf den Button) startet die Wiedergabe
+       des echten MP3. Playwright-Chromium hat keinen MP3-Codec -> `play()` lehnt
+       real mit `NotSupportedError` ab (kein Fake). Der neue Pfad behandelt das als
+       EHRLICHEN Formatfehler: KEIN „Klick benoetigt", die Queue wird deterministisch
+       geleert, der Zustand bleibt nicht auf 'locked' oder 'playing' haengen."""
     with JarvisServer("audio") as srv, browser_context(pw, srv.base_url) as (page, col):
-        srv.scenario(replies=["Ich spreche jetzt."], audio=True)
-        # Erwartet: Chromium loggt die abgelehnte Wiedergabe.
-        col.allow_console_error("Autoplay")
+        # Das Begruessungsaudio trifft VOR jeder Nutzergeste ein — genau der
+        # locked-Pufferfall. (Ein Text zu senden waere selbst eine Tastengeste
+        # und wuerde vorher freischalten; deshalb hier bewusst KEINE Eingabe.)
+        srv.scenario(replies=["Hallo."], audio=True)
         open_jarvis(page, srv.base_url)
 
-        # Startwert der Playback-Region (Praezisierung 4).
-        assert page.evaluate("window.__voice.state.playback") == "locked", "Start nicht locked"
-
-        page.get_by_label("Textnachricht an Jarvis").fill("sag was")
-        page.get_by_label("Textnachricht an Jarvis").press("Control+Enter")
-        expect(jarvis_said(page, "Ich spreche jetzt.")).to_be_visible()
-
-        # Der Audio-Pfad lief wirklich (Wiedergabeversuch fand statt) und der
-        # Fehlschlag haelt den Zustand auf locked statt ihn haengen zu lassen.
+        # Phase 1: gepuffert unter locked, KEIN Wiedergabeversuch behauptet.
         page.wait_for_function(
             "window.__voice.state.overlays.indexOf('recoverable-error') !== -1",
             timeout=15000)
-        assert page.evaluate("window.__voice.state.playback") == "locked"
-        # Overlay veraendert die Presentation NICHT (Praezisierung 3).
+        st = page.evaluate("""() => ({
+            playback: window.__voice.state.playback,
+            queue: window.__voice.state.audioQueue.length,
+            btn: !!document.querySelector('#audio-unlock-btn'),
+        })""")
+        assert st["playback"] == "locked", f"playback={st['playback']}"
+        assert st["queue"] >= 1, "Audio nicht gepuffert"
+        assert st["btn"] is True, "kein 'Audio aktivieren'-Button"
+        assert page.evaluate(
+            "JarvisVoice.presentation(window.__voice.state)") != "error"
+
+        # Phase 2: echte Geste (Button) -> echtes MP3 -> echter NotSupportedError.
+        # Playwright-Chromium hat keinen MP3-Codec; das ist der EINZIGE echte,
+        # ungefaelschte Wiedergabeversuch hier. Der Formatfehler leert die Queue
+        # deterministisch und haengt den Zustand nicht auf 'locked'/'playing'.
+        page.click("#audio-unlock-btn")
+        page.wait_for_function(
+            "window.__voice.state.playback !== 'locked' "
+            "&& window.__voice.state.playback !== 'playing' "
+            "&& window.__voice.state.audioQueue.length === 0",
+            timeout=15000)
+        end = page.evaluate("""() => ({
+            playback: window.__voice.state.playback,
+            overlay: window.__voice.state.overlays.indexOf('recoverable-error'),
+        })""")
+        # Kein „Klick benoetigt"-Overlay nach einem ehrlichen Formatfehler.
+        assert end["overlay"] == -1, f"faelschlich recoverable-error: {end}"
         assert page.evaluate(
             "JarvisVoice.presentation(window.__voice.state)") != "error"
         col.assert_clean("audio_playback")
