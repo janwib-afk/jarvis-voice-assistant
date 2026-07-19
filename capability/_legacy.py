@@ -104,6 +104,44 @@ def memory_forget_contract(deps=None) -> CapabilityContract:
     )
 
 
+async def _exec_profile_rename(payload, ctx):
+    """REST-Pilot: Profil umbenennen ueber den EINZIGEN Writer (Configuration).
+
+    Keine direkte Mutationsumgehung — die Persistenz laeuft ausschliesslich durch
+    ``runtime.persist_launcher`` (``configuration.mutate``); die Wire-Correlation fuer
+    den Broadcast kommt aus den opaken Transport-Metadaten (``ctx.meta``), nicht aus der
+    Capability-Eingabe.
+    """
+    import configuration
+    rt = ctx.deps.runtime
+    intent = configuration.RenameProfile(payload["profile_id"], payload["name"])
+    correlation_id = (ctx.meta or {}).get("correlation_id")
+    errors = await rt.persist_launcher(intent, "profile", correlation_id)
+    return {"errors": tuple(errors)}
+
+
+def launcher_profile_rename_contract(deps=None) -> CapabilityContract:
+    """Der REST-Pilot ``launcher.profile.rename`` (Version 1, Amendment 1 §A1.4).
+
+    Ersetzt ``launcher.profile.delete`` als Pilot: gleiche Adapterform, aber
+    ``local-write`` statt ``destructive`` — ohne neue UI, Wire-Form oder Grant-Runtime.
+    """
+    return CapabilityContract(
+        name="launcher.profile.rename", version=1, title="Profil umbenennen",
+        inputs=InputSchema(fields=("profile_id", "name")),
+        output=OutputSchema(fields=("errors",)),
+        effects=(EffectClass.LOCAL_WRITE,),
+        reads=(DataClass.LOCAL,), writes=(DataClass.LOCAL,),
+        scopes=(Scope.CONFIG_LAUNCHER,),
+        timeout_s=15,
+        retry=Retry.NEVER, cancellable=False,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture={"profile_id": "default", "name": "Neu"},
+        execute=_exec_profile_rename,
+    )
+
+
 #: Sprechbare Fehlerform je migrierter Capability, falls das Outcome nicht ``ok`` ist —
 #: bewahrt das beobachtbare Verhalten des jeweiligen Alt-Pfades.
 _FALLBACK_TEXT = {

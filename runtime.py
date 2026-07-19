@@ -86,10 +86,29 @@ class Runtime:
             dedupe_scope=session_token,
             deps=_cap_deps,
         )
+        # Launcher-Persist-Adapter (RFC-0007 §17, Slice 8): der Server injiziert seine
+        # ``persist_launcher_intent``-Orchestrierung (configuration.mutate als einziger
+        # Writer + Live-Apply + Broadcast). Explizite Instanz-Injektion, kein
+        # Modul-Global, kein Service Locator; der Kernel/Coordinator kann so eine
+        # REST-Wirkung ausfuehren, ohne dass ``capability`` ``server`` importiert.
+        self._launcher_persist = None
         # intern
         self._wired = False
         self._refresh_task: "asyncio.Task | None" = None
         self._closed = False
+
+    def configure_launcher_persist(self, fn) -> None:
+        """Vom Server (``create_app``) gesetzte Persist-Orchestrierung."""
+        self._launcher_persist = fn
+
+    async def persist_launcher(self, intent, kind: str, correlation_id=None) -> list[str]:
+        """Semantische Launcher-Mutation ueber den EINZIGEN Writer (RFC-0003).
+
+        Delegiert an die injizierte Server-Orchestrierung; ohne Injektion ein Fehler
+        (fail-closed) statt einer stillen Umgehung."""
+        if self._launcher_persist is None:
+            raise RuntimeError("launcher persist nicht konfiguriert")
+        return await self._launcher_persist(self, intent, kind, correlation_id)
 
     @property
     def config(self) -> dict | None:

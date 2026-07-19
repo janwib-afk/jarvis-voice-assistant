@@ -54,12 +54,19 @@ class Cancelled:
 
 @dataclass(frozen=True)
 class AttemptContext:
-    """Was die Ausfuehrung vom Coordinator bekommt — bewusst wenig."""
+    """Was die Ausfuehrung vom Coordinator bekommt — bewusst wenig.
+
+    ``meta`` traegt **opake Transport-Metadaten** (z.B. die Wire-Correlation eines
+    REST-Requests fuer einen nachgelagerten Broadcast). Sie ist **kein** Capability-
+    Eingabefeld: sie geht NICHT in Validierung oder Idempotency Key ein (§18/§19 —
+    ``correlation_id`` ist keine Job-ID, ``event_id`` kein Idempotency Key).
+    """
     capability: str
     version: int
     idempotency_key: str
     preview_hash: str | None
     deps: Any = None
+    meta: Mapping[str, Any] | None = None
 
 
 def _canonical(payload: Mapping[str, Any]) -> str:
@@ -107,7 +114,8 @@ class Coordinator:
     # ── der Lifecycle ───────────────────────────────────────────────────────
 
     async def attempt(self, request: CapabilityRequest,
-                      evidence: Evidence | None = None) -> Outcome:
+                      evidence: Evidence | None = None, *,
+                      meta: Mapping[str, Any] | None = None) -> Outcome:
         evidence = evidence or Evidence()
 
         # 1) validate — ein Adapter, der Unsinn schickt, bekommt kein Outcome (§11).
@@ -136,7 +144,7 @@ class Coordinator:
         ctx = AttemptContext(
             capability=contract.name, version=contract.version,
             idempotency_key=self.idempotency_key(request),
-            preview_hash=preview_hash, deps=self._deps,
+            preview_hash=preview_hash, deps=self._deps, meta=meta,
         )
         started = self._clock()
         try:

@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import actions
 import app_launcher
+import capability
 import monitors
 import assistant_core
 import config_loader
@@ -822,10 +823,23 @@ async def launcher_rename_profile(profile_id: str, request: Request):
         return err
     if app_launcher.find_profile(profile_id) is None:
         return JSONResponse({"ok": False, "errors": ["Unbekanntes Profil."]}, status_code=404)
-    _merged, err = await _persist_launcher(
-        request.app.state.runtime, configuration.RenameProfile(profile_id, name), "profile", _rest_correlation(request))
-    if err is not None:
-        return err
+    # REST-Pilot (RFC-0007 Slice 8): ueber DENSELBEN Coordinator, Provenance operator.
+    # Keine direkte Mutationsumgehung — die Persistenz laeuft im Capability-Execute
+    # ausschliesslich ueber configuration.mutate (einziger Writer). Status/Body/Broadcast
+    # bleiben byte-/shape-identisch.
+    rt = request.app.state.runtime
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(
+            "launcher.profile.rename", capability.Provenance.OPERATOR,
+            {"profile_id": profile_id, "name": name}),
+        capability.Evidence(),
+        meta={"correlation_id": _rest_correlation(request)})
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return JSONResponse({"ok": False, "errors": ["Profil-Aktion fehlgeschlagen."]},
+                            status_code=500)
+    errors = list(outcome.value["errors"])
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=500)
     obslog.event("profile.changed", kind="renamed", active=app_launcher.ACTIVE_PROFILE)
     return _profiles_response()
 
@@ -887,6 +901,10 @@ def create_app(rt: runtime_mod.Runtime) -> FastAPI:
     Config/Clients öffnen erst im Lifespan (rt.aopen)."""
     app = FastAPI(lifespan=_server_lifespan)
     app.state.runtime = rt
+    # Launcher-Persist in die Runtime injizieren (RFC-0007 §17, Slice 8): der
+    # Capability-Kernel fuehrt REST-Wirkungen ueber DIESE Orchestrierung aus, ohne
+    # dass ``capability`` ``server`` importiert (keine Zyklus-/Locator-Kopplung).
+    rt.configure_launcher_persist(persist_launcher_intent)
     app.add_middleware(RestV1Middleware)   # REST-V1-Presentation (Legacy passiert exakt)
     app.include_router(router)
     app.mount("/static", StaticFiles(

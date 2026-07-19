@@ -623,3 +623,82 @@ Confirm-Pfad war die ganze Zeit unveraendert.
 **Offene Restrisiken.** Keine neuen. `launcher.profile.delete` bleibt die dokumentierte
 destructive Luecke ohne serverseitig belegbare Bestaetigung (Amendment 1 §A1.4) — das
 loest erst ein Preview-/Grant-Vertrag in Phase 10.
+
+---
+
+## Slice 8 — REST-Pilot launcher.profile.rename
+
+**Ziel.** Die Rename-Route ueber **denselben** Coordinator fuehren (Provenance `operator`),
+ohne dass sich Statuscode, Response-Body, Broadcast oder Legacy/V1-Vertrag aendern.
+Configuration bleibt der einzige Writer; **keine** direkte Mutationsumgehung. Amendment 1
+§A1.4 ersetzt damit `launcher.profile.delete` als REST-Pilot — gleiche Adapterform, aber
+`local-write` statt `destructive`.
+
+**Oeffentlicher Seam.** `SEAM-CAPABILITY-COORDINATION` (REST-Adapter), `SEAM-REST`
+(Vertrag unveraendert). Seam-Setup wie `test_launcher_api`: eigene Runtime + Temp-Config +
+lifespan-fahrender TestClient.
+
+**Ausgangsverhalten.** `POST /launcher/profiles/{id}/rename` rief direkt
+`_persist_launcher(rt, RenameProfile(...), "profile", corr)`.
+
+**RED (tatsaechlich beobachtet).** `Ran 7 tests ... FAILED (failures=2, errors=1)` mit
+`AssertionError: None is not <Provenance.OPERATOR>` (Capability nicht in der Registry, Route
+dispatcht nicht ueber den Coordinator).
+
+**GREEN (minimal).**
+* `capability/_coordinator.py` — `attempt(..., *, meta=None)` und
+  `AttemptContext.meta`: **opake Transport-Metadaten** (die Wire-Correlation fuer den
+  Broadcast). Sie gehen **nicht** in Validierung oder Idempotency Key ein — `correlation_id`
+  ist keine Job-ID, `event_id` kein Idempotency Key (§18/§19).
+* `runtime.py` — `configure_launcher_persist`/`persist_launcher`: explizite
+  Instanz-Injektion der Server-Orchestrierung (kein Modul-Global, kein Service Locator, kein
+  `capability`→`server`-Import). Ohne Injektion **fail-closed** (Fehler statt Umgehung).
+* `server.py` — `create_app` injiziert `persist_launcher_intent`; die Rename-Route
+  dispatcht ueber `rt.capabilities.attempt(...)` mit `Provenance.OPERATOR`.
+* `capability/_legacy.py` — `launcher.profile.rename`-Vertrag (Version 1); `execute`
+  persistiert ausschliesslich ueber `runtime.persist_launcher` (Configuration = einziger
+  Writer) und zieht die Correlation aus `ctx.meta`.
+
+**Vertragserhalt belegt.** Erfolg → 200 + `_profiles_response()`; unbekanntes Profil → 404;
+kein Token → 403; die Temp-Datei traegt den neuen Namen (Configuration schrieb). Der
+bestehende `test_launcher_api.test_rename_profile` und die RFC-0005-Wire-/Broadcast-Tests
+bleiben grün — Status/Body/Broadcast unveraendert.
+
+**Delete bleibt die offene Luecke.** Ein Test belegt: `DELETE /launcher/profiles/{id}`
+laeuft **nicht** ueber den Coordinator, loescht aber weiterhin (Verhalten unveraendert).
+`launcher.profile.delete` bleibt die dokumentierte destructive Luecke ohne serverseitig
+belegbare Bestaetigung (Amendment 1 §A1.4) — direkter DELETE wird **nicht** zu „Confirmation"
+umetikettiert.
+
+**Zwischenbefund (vorbestehende Test-Isolationsluecke, aufgedeckt).** Die volle Suite brach
+mit 5+6 Fehlern in `test_dashboard_api` und `test_conversation_ws` (403). Ursache
+**systematisch geklaert**: der Lifespan setzt per RFC-0002-A3-Kompat-Alias
+`server.SESSION_TOKEN = rt.session_token` (`server.py:889`). Jeder lifespan-fahrende Test
+mit eigener Runtime setzt damit das Modul-Token um — bisher latent, weil **alle** solchen
+Tests (launcher/music/settings) alphabetisch **nach** dashboard sortieren. Mein neuer Test
+(`capability…`) sortiert **davor** und deckt die Pollution auf; `test_launcher_api` **vor**
+`test_dashboard_api` bricht identisch (belegt: pre-existing, nicht meine Logik). In
+Produktion (genau eine Runtime) ist die Zuweisung korrekt — es ist rein Test-Isolation.
+**Fix:** mein Test sichert `server.SESSION_TOKEN` in `setUp` und stellt es in `tearDown`
+wieder her. Kein Produktionscode geaendert, kein Test gelockert.
+
+**Mutationsnachweis (ausgefuehrt).** Vier Mutationen, alle **ROT**:
+
+| Mutation | Ergebnis |
+|---|---|
+| Zensus: `local-write` weggelassen | **ROT** |
+| `execute` umgeht `persist_launcher` (direkter Bypass) | **ROT** |
+| Route dispatcht **nicht** ueber den Coordinator | **ROT** |
+| Provenance `derived` statt `operator` | **ROT** |
+
+**Regression.** Suite **1018** grün (vorher 1011, +7). Smoke **Exit 0**. Fixture
+`a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` — bytegleich.
+
+**Commit.** Slice 7 war `bdee9db`; die SHA dieses Slices traegt der Folge-Slice nach.
+
+**Rueckrollweg.** Commit reverten: die Route ruft wieder `_persist_launcher` direkt; die
+Runtime-Persist-Methode, die `meta`-Erweiterung und der Vertrag entfallen. Der Alt-Pfad war
+die ganze Zeit unveraendert erreichbar.
+
+**Offene Restrisiken.** `launcher.profile.delete` bleibt ungeschuetzt (Amendment 1 §A1.4) —
+erst ein serverseitig nachweisbarer Preview-/Grant-Vertrag (Phase 10) schliesst sie.
