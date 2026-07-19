@@ -215,7 +215,8 @@ class UserInputLeakTests(unittest.TestCase):
     def test_raw_user_text_never_logged(self):
         seen: list[str] = []
 
-        async def fake_process(session_id, text, ws, mutate_launcher=None):
+        async def fake_process(session_id, text, ws, mutate_launcher=None,
+                               capabilities=None):
             seen.append(text)
 
         # KEIN Patch privater Serverfunktionen mehr: der explizit gesetzte Test-Sink

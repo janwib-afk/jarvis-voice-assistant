@@ -48,10 +48,16 @@ from ._coordinator import (  # noqa: F401
     Cancelled,
     Coordinator,
 )
+from ._pilots import (  # noqa: F401
+    CapabilityDeps,
+    build_registry,
+    pilot_contracts,
+)
 
 __all__ = [
     "ACTIVE_RULES", "DATED_RULES", "Rule", "decide",
     "AttemptContext", "Cancelled", "Coordinator",
+    "CapabilityDeps", "build_registry", "pilot_contracts",
     "AUDIT_FIELDS",
     "CapabilityContract", "CapabilityRequest", "CapabilityView",
     "DataClass", "Decision", "EffectClass", "Evidence", "Health",

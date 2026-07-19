@@ -130,7 +130,8 @@ async def websocket_endpoint(ws: WebSocket):
     # (RFC-0005-Transportgrenze, Praezisierung 8).
     async def _run_turn(ctx, text, correlation_id, sink):
         await assistant_core.process_message(
-            ctx, text, sink, mutate_launcher=_launcher_hook(rt))
+            ctx, text, sink, mutate_launcher=_launcher_hook(rt),
+            capabilities=rt.capabilities)
 
     session = rt.conversation_manager.open(channel, run_turn=_run_turn)
 

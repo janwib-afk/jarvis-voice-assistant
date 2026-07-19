@@ -311,3 +311,78 @@ die zwei `obslog`-Katalogeintraege zuruecknehmen. Weiterhin **kein Produktionsau
 Arbeit in diesem Pfad koennte den Abbruch verzoegern, und ein eigener Ausgang wuerde ihn
 mit der kooperativen Stornierung verwechseln. Das ist eine bewusste, hier benannte
 Beobachtungsluecke — kein Versehen.
+
+---
+
+## Slice 4 — Runtime Ownership und Injection
+
+**Ziel.** Die Runtime besitzt Registry, Regeln und **genau einen** Coordinator; die
+Konstruktion bleibt import- und I/O-frei. Ein runtime-gebundener Capability-Hook wird
+ueber `server/_run_turn` in `assistant_core` injiziert — ohne Rueckreferenz von
+`assistant_core` auf `server` oder eine globale Runtime.
+
+**Oeffentlicher Seam.** `capability.Coordinator` als `Runtime.capabilities`;
+`capability.build_registry`/`CapabilityDeps`/`pilot_contracts`; die um `capabilities`
+erweiterte Signatur von `assistant_core.process_message`/`run_action_and_respond`.
+
+**Ausgangsverhalten.** Der Coordinator existierte (Slice 3), war aber nirgends verdrahtet.
+`assistant_core.process_message` kannte keinen Capability-Pfad; die Runtime besass keinen
+Kernel.
+
+**RED (tatsaechlich beobachtet).** `Ran 11 tests ... FAILED (failures=4, errors=3)` mit
+`AttributeError: 'Runtime' object has no attribute 'capabilities'`.
+
+**GREEN (minimal).**
+* `capability/_pilots.py` — `CapabilityDeps` (frozen; **kein Service Locator**: eine
+  konkrete Objektreferenz auf die Runtime, kein globaler String-Lookup) und
+  `build_registry`/`pilot_contracts`. In dieser Phase ist die Pilot-Liste leer; sie
+  waechst Slice fuer Slice (5/7/8/9).
+* `runtime.py` — genau ein `self.capabilities = capability.Coordinator(...)`, I/O-frei
+  konstruiert, Dedupe-Scope an den `session_token` gebunden (§19).
+* `assistant_core.py` — `process_message`/`run_action_and_respond` nehmen ein optionales
+  `capabilities` an und reichen es durch; **kein** `import server`, **kein** Modul-Global
+  `runtime`.
+* `server.py` — `_run_turn` injiziert `capabilities=rt.capabilities` (Injektionspunkt wie
+  beim bestehenden `_launcher_hook(rt)`).
+
+**Zwischenbefund (eigener vacuous Test, systematisch geklaert).** Der Mutationslauf zeigte
+den ersten `dedupe_scope`-Test als **grün trotz Mutation** — er baute eigene
+Coordinatoren, statt `rt.capabilities` zu pruefen, und sagte damit nichts ueber die
+Runtime-Bindung aus. Korrigiert: der Test speist jetzt ueber den oeffentlichen Builder
+`pilot_contracts` einen Probe-Vertrag ein und vergleicht die Keys der **tatsaechlich vom
+Runtime gebauten** Coordinatoren zweier Runtimes mit verschiedenen Tokens.
+
+**Zwischenbefund (Regression in Alt-Test-Doubles, korrekt behoben).** Die volle Suite
+brach mit 5 Failures + 1 Error: fuenf implementation-coupled Alt-Test-Doubles
+(`test_confirm_flow` `fake_run`, `test_ws` `slow_process`/`proc` ×4, `test_logging_privacy`
+`fake_process`) spiegelten die um `capabilities` erweiterte Signatur nicht und warfen
+`TypeError: unexpected keyword argument 'capabilities'`. Ein Test-Double **muss** die reale
+Schnittstelle nachbilden — die Signaturen wurden um `capabilities=None` ergaenzt. **Kein**
+Verhalten wurde gelockert, kein Test uebersprungen; die Doubles pruefen weiterhin genau
+dasselbe.
+
+**Mutationsnachweis (ausgefuehrt).** Drei Verdrahtungsmutationen, je ein Testlauf, Dateien
+danach byte-identisch:
+
+| Mutation | Ergebnis |
+|---|---|
+| Hook nicht an `run_action_and_respond` durchgereicht | **ROT** |
+| `_run_turn` injiziert `capabilities=None` statt `rt.capabilities` | **ROT** |
+| Dedupe-Scope nicht an `session_token` gebunden | **ROT** (nach Testkorrektur) |
+
+**Regression.** Suite **964** grün (vorher 953, +11). Smoke **Exit 0** (Produktionscode
+beruehrt → Smoke gehoert dazu). Fixture `a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` —
+bytegleich.
+
+**Commit.** Slice 3 war `76d812f`; die SHA dieses Slices traegt der Folge-Slice nach.
+
+**Rueckrollweg.** Commit reverten: `capability/_pilots.py` entfaellt, die drei
+Produktionsdateien (`runtime`/`assistant_core`/`server`) kehren auf die vorherige Signatur
+zurueck, die Test-Doubles ebenfalls. Der `capabilities`-Parameter ist optional
+(Default `None`) — der Rueckbau kann keinen bestehenden Aufrufer brechen.
+
+**Offene Restrisiken.** Der Hook ist verdrahtet, aber in dieser Phase **dormant**: die
+leere Pilot-Registry bedeutet, dass `run_action_and_respond` das `capabilities`-Objekt
+noch nicht nutzt. Der erste tatsaechliche Dispatch kommt mit Slice 5 (`web.search`). Bis
+dahin ist die Verdrahtung belegt, aber ohne Wirkung auf einen Produktionspfad — genau die
+Grenze, die dieser Slice zieht.

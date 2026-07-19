@@ -1,0 +1,44 @@
+"""Pilot-Registry und Abhaengigkeiten (RFC-0007 Amendment 1, Pilotphase).
+
+Diese Datei versammelt die **vier** Pilot-Vertraege der Pilotphase und baut daraus
+die runtime-eigene Registry. In der Pilotphase waechst die Liste Slice fuer Slice:
+Slice 5 (`web.search`), 7 (`memory.forget`), 8 (`launcher.profile.rename`),
+9 (`context.refresh`). Die verbleibenden 20 Actions und neun REST-Routen folgen erst
+in Prompt 20 (Amendment 1 §A1.1).
+
+Import-frei von I/O: ``build_registry`` konstruiert nur Vertraege (kein Netz, keine
+Datei, keine Uhr).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ._contract import Registry
+
+
+@dataclass(frozen=True)
+class CapabilityDeps:
+    """Explizite Abhaengigkeiten der Pilot-Executor.
+
+    **Kein Service Locator** (§7): eine konkrete Objektreferenz auf die Runtime, kein
+    globaler String-Lookup. Der Executor eines Piloten liest daraus genau, was er
+    braucht — der ``target_guard`` kommt in Slice 6 hinzu, die Runtime traegt
+    ``http``/``configuration`` fuer die spaeteren Piloten.
+    """
+    runtime: object = None
+    target_guard: object = None
+
+
+def pilot_contracts(deps: CapabilityDeps) -> list:
+    """Die Pilot-Vertraege dieser Phase. Waechst Slice fuer Slice (5/7/8/9)."""
+    contracts: list = []
+    # Slice 5: web.search  — hier ergaenzt, wenn der Pilot verdrahtet wird.
+    # Slice 7: memory.forget
+    # Slice 8: launcher.profile.rename
+    # Slice 9: context.refresh
+    return contracts
+
+
+def build_registry(deps: CapabilityDeps | None = None) -> Registry:
+    """Baut die eingefrorene Pilot-Registry (I/O-frei)."""
+    return Registry(pilot_contracts(deps or CapabilityDeps()))

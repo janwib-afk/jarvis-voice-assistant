@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 import anthropic
 import httpx
 
+import capability
 import config_loader
 import configuration as configuration_mod
 import conversation
@@ -69,6 +70,18 @@ class Runtime:
         # Conversation-Zustand (RFC-0006 D4): genau EIN runtime-eigener Manager,
         # der alle Sessions besitzt. Konstruktion ist I/O-frei (Import-Sicherheit).
         self.conversation_manager = conversation.ConversationManager()
+        # Capability-/Policy-Kernel (RFC-0007 §7): genau EIN runtime-eigener
+        # Coordinator ueber der eingefrorenen Pilot-Registry und den aktiven Regeln.
+        # Konstruktion ist I/O-frei; der Dedupe-Scope ist an diese App gebunden
+        # (§19). Kein Modul-Global, kein Service Locator — deps ist eine konkrete
+        # Objektreferenz auf diese Runtime (§7).
+        _cap_deps = capability.CapabilityDeps(runtime=self)
+        self.capabilities = capability.Coordinator(
+            capability.build_registry(_cap_deps),
+            capability.ACTIVE_RULES,
+            dedupe_scope=session_token,
+            deps=_cap_deps,
+        )
         # intern
         self._wired = False
         self._refresh_task: "asyncio.Task | None" = None

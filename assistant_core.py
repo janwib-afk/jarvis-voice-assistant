@@ -309,8 +309,13 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
 
 
 async def run_action_and_respond(ctx, action: actions.Action, sink,
-                                 mutate_launcher=None):
-    """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events)."""
+                                 mutate_launcher=None, capabilities=None):
+    """Aktion ausführen, Ergebnis zusammenfassen und sprechen (inkl. Historie-Events).
+
+    ``capabilities``: der runtime-eigene Coordinator (RFC-0007 §17). In der Pilotphase
+    dispatchen die migrierten Pfade (Slices 5/7) hierueber; nicht migrierte Actions
+    laufen unveraendert ueber ``execute_action``.
+    """
     obslog.event("action.started", action=action.type)
 
     # Quick voice feedback for SCREEN so user knows Jarvis is working
@@ -378,11 +383,16 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
     await send_spoken_response(sink, summary, display_text)
 
 
-async def process_message(ctx, user_text: str, sink, mutate_launcher=None):
+async def process_message(ctx, user_text: str, sink, mutate_launcher=None,
+                          capabilities=None):
     """Process message and send responses via WebSocket.
 
     ``mutate_launcher``: semantischer Launcher-Hook der KONKRETEN App-Runtime,
     vom WS-Endpoint injiziert (RFC-0003) — keine Runtime-/server-Abhaengigkeit hier.
+    ``capabilities``: der runtime-eigene Capability-Coordinator (RFC-0007 §17),
+    identisch vom WS-Endpoint injiziert. In der Pilotphase reichen wir ihn nur an die
+    Ausfuehrung durch; die Piloten (Slices 5/7) dispatchen migrierte Pfade darueber.
+    ``assistant_core`` haelt keine Rueckreferenz auf ``server`` oder eine globale Runtime.
     """
     # Wartet eine riskante Aktion auf Bestätigung? Ja => ausführen, Nein => verwerfen,
     # alles andere => Aktion verfällt und die Nachricht wird normal verarbeitet.
@@ -394,7 +404,8 @@ async def process_message(ctx, user_text: str, sink, mutate_launcher=None):
         if verdict is not None:
             ctx.remember("user", user_text)
             if verdict:
-                await run_action_and_respond(ctx, pending, sink, mutate_launcher)
+                await run_action_and_respond(ctx, pending, sink, mutate_launcher,
+                                             capabilities=capabilities)
             else:
                 msg = f"Verstanden, {USER_ADDRESS} — ich lasse es bleiben."
                 ctx.remember("assistant", msg)
@@ -443,4 +454,5 @@ async def process_message(ctx, user_text: str, sink, mutate_launcher=None):
             ctx.remember("assistant", frage)
             await send_spoken_response(sink, frage)
             return
-        await run_action_and_respond(ctx, action, sink, mutate_launcher)
+        await run_action_and_respond(ctx, action, sink, mutate_launcher,
+                                     capabilities=capabilities)
