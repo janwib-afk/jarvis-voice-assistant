@@ -83,8 +83,9 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
   `health`, `response`, `action` (start/done/error), `error`, `stop`.
 - **Security-Invarianten:** SI-4 (lokal), Origin-Policy + Token-Gate; `null`-Origin
   nur mit gültigem Token (pywebview); Stopp bricht Wirkung ab (SI-7-nah).
-- **Reale eigene Infrastruktur:** WS-Endpunkt, Worker/Queue, Cancellation,
-  `pending_confirm`-Aufräumen.
+- **Reale eigene Infrastruktur:** WS-Endpunkt als dünner Adapter, Session-Queue,
+  Cancellation und das Verfallen der offenen Rückfrage — seit RFC-0006 alles im Besitz
+  der `ConversationSession`, nicht mehr im Endpunkt.
 - **Kontrollierte externe Grenze:** für **Stop-/Transport-Mechanik** wird
   `assistant_core.process_message` durch einen kontrollierten langlaufenden Stub
   ersetzt (nötig für deterministisches Cancel-Timing — keine echten Provider);
@@ -97,7 +98,7 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
   Fälle + Health-Frame), `::StopFlowTests` (Stop/Disconnect/Queue/Pending),
   `::FrameShapeTests` (send_error/send_action_event).
 - **Bestehende Testschuld:** `StopFlowTests` patcht die interne Funktion
-  `process_message` und setzt `pending_confirm` global (Zeile 275). Vertretbar als
+  `process_message`. Vertretbar als
   Transport-Double (deterministisches Cancel braucht eine steuerbare
   langlaufende Task), bleibt aber als Legacy-Schuld markiert; die Frame-Verträge
   der Happy-Path werden künftig über SEAM-CONVERSATION real abgedeckt.
@@ -141,13 +142,14 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
   Actions), SI-7 (MEMORY_FORGET erst nach mündlichem Ja), Secrets nie in Frames
   (SI-5).
 - **Reale eigene Infrastruktur:** `process_message`, `run_action_and_respond`,
-  `execute_action`, `pending_confirm`, Verlauf, Frame-Erzeugung.
+  `execute_action`, die offene Rückfrage im Session-Zustand, Verlauf, Frame-Erzeugung.
 - **Kontrollierte externe Grenze:** `assistant_core.ai` (Anthropic),
   `assistant_core.synthesize_speech` (ElevenLabs), plus je nach Aktion
   `browser_tools`/`screen_capture`/`clipboard_tools`. **Keine** internen Funktionen
   patchen.
-- **Verbotene interne Prüfungen:** kein Setzen/Lesen von `conversations`/
-  `pending_confirm`; kein Patchen von `send_spoken_response`/
+- **Verbotene interne Prüfungen:** kein Zugriff auf Session-Interna (Tasks, Locks,
+  Queue-Objekte) — nur `snapshot()` und beobachtbare Frames; kein Patchen von
+  `send_spoken_response`/
   `run_action_and_respond`/`process_message`; keine Call-Count-Assertions.
 - **Testebene:** Integration (End-to-End innerhalb des Prozesses, ohne echte
   Provider).
@@ -156,9 +158,10 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
   (Confirm-Flow, aber implementation-coupled).
 - **Bestehende Testschuld (Ziel dieser Seam, sie zu ersetzen):**
   - `test_confirm_flow.py` patcht `send_spoken_response` + `run_action_and_respond`
-    (interne Fns) und setzt `conversations`/`pending_confirm` global.
-  - `test_integration_research.py` ruft `process_message` direkt auf und setzt
-    `conversations` global (Provider korrekt als Grenze ersetzt).
+    (interne Fns); die früher gesetzten Modul-Globals sind mit RFC-0006 entfallen und
+    durch `wire_testing.turn_context()` ersetzt.
+  - `test_integration_research.py` ruft `process_message` direkt auf (Provider korrekt
+    als Grenze ersetzt); der Verlauf kommt seit RFC-0006 aus `wire_testing.turn_context()`.
   - `test_inbox.py` ruft `_finish_research` (privat) direkt auf und setzt
     `conversations` für den SESSION_SUMMARY-Pfad.
   Ersatz: neue Frame-Verträge über den echten WS-Dialog. **Alte Tests bleiben in
@@ -373,10 +376,10 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
 
 | Test | Gepatchter privater Zustand | Ersetzende bestätigte Seam | Entfernen frühestens |
 |---|---|---|---|
-| `test_confirm_flow.py` | `conversations`/`pending_confirm` gesetzt; `send_spoken_response`/`run_action_and_respond` gepatcht | SEAM-CONVERSATION (Confirm-Dialog über WS) | wenn Seam gleichwertig deckt + Suite grün |
-| `test_integration_research.py` | `conversations` gesetzt; direkter `process_message`-Aufruf (Provider als Grenze korrekt) | SEAM-CONVERSATION (RESEARCH über WS) | wenn Seam gleichwertig deckt + Suite grün |
-| `test_inbox.py` (Teil) | `conversations` gesetzt; `_finish_research` (privat) direkt | SEAM-CONVERSATION / SEAM-MEMORY | wenn Seam gleichwertig deckt + Suite grün |
-| `test_ws.py::StopFlowTests` | `process_message` gepatcht; `pending_confirm` gesetzt | SEAM-WS (Transport-Double vertretbar) — bleibt vorerst | nur falls steuerbare Cancel-Alternative entsteht |
+| `test_confirm_flow.py` | `send_spoken_response`/`run_action_and_respond` gepatcht (Modul-Globals mit RFC-0006 entfallen) | SEAM-CONVERSATION (Confirm-Dialog über WS) | wenn Seam gleichwertig deckt + Suite grün |
+| `test_integration_research.py` | direkter `process_message`-Aufruf (Provider als Grenze korrekt) | SEAM-CONVERSATION (RESEARCH über WS) | wenn Seam gleichwertig deckt + Suite grün |
+| `test_inbox.py` (Teil) | `_finish_research` (privat) direkt | SEAM-CONVERSATION / SEAM-MEMORY | wenn Seam gleichwertig deckt + Suite grün |
+| `test_ws.py::StopFlowTests` | `process_message` gepatcht | SEAM-WS (Transport-Double vertretbar) — bleibt vorerst | nur falls steuerbare Cancel-Alternative entsteht |
 
 > Regel: In Prompt 6 wird **kein** bestehender Test gelöscht. Entfernt werden darf
 > ein alter Test erst, wenn die öffentliche Seam existiert, gleichwertige oder

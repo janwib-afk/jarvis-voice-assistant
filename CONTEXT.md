@@ -17,17 +17,21 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
 - **Abgrenzung:** Nicht die WS-Verbindung selbst (Transport) und nicht die
   prozessweiten Kontextdaten (Wetter/Tasks/Vault gelten für alle Sessions). Die
   **Conversation Session ID** ist nicht der Auth-Token.
-- **Quellen:** `assistant_core.conversations` (dict `session_id → list`), `end_session`
-  (`assistant_core.py`); die `session_id` ist seit RFC-0005 eine **opake UUID pro Verbindung**
-  (`channel.session_id`, `server.py`) — **nicht mehr** `str(id(ws))`.
+- **Quellen:** seit RFC-0006 (Phase 4J) besitzt die **Runtime** den
+  `ConversationManager` (`runtime.py`), der Manager besitzt die Sessions, und eine
+  `ConversationSession` besitzt Verlauf, offene Rückfrage, Queue, aktiven Turn und
+  Cancellation (`conversation/_session.py`). Die früheren Modul-Globals
+  `assistant_core.conversations`/`end_session` gibt es **nicht mehr**. Die `session_id` ist
+  seit RFC-0005 eine **opake UUID pro Verbindung** (`channel.session_id`) — nicht `str(id(ws))`.
 
 ### Message
 - **Bedeutung:** Ein einzelner Gesprächsbeitrag `{"role", "content"}` im Verlauf.
 - **Verantwortung:** Kontext für den nächsten LLM-Aufruf liefern.
 - **Abgrenzung:** Nicht das WS-Frame (Transportformat), nicht die gesprochene
   Antwort (TTS-Audio).
-- **Quellen:** `assistant_core._remember` (`assistant_core.py:85`), `MAX_HISTORY = 60`
-  (nur die letzten 16 gehen an den LLM, `assistant_core.py:678`).
+- **Quellen:** `TurnContext.remember`/`recent` mit `MAX_HISTORY = 60` und
+  `LLM_HISTORY = 16` (`conversation/_session.py`) — der Verlauf gehört seit RFC-0006 der
+  Session, nicht mehr einem Modul-Global in `assistant_core`.
 
 ### Action
 - **Bedeutung:** Eine vom LLM ausgelöste Fähigkeit, als `[ACTION:TYP] payload`
@@ -53,8 +57,10 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
   (aktuell nur `MEMORY_FORGET`, `risk="confirm"`).
 - **Verantwortung:** Destruktive Wirkung erst nach ausdrücklichem „Ja" ausführen.
 - **Abgrenzung:** Nicht Stop/Cancel (bricht ab), nicht die Token-Autorisierung (REST).
-- **Quellen:** `actions.is_confirmation`, `CONFIRM_ACTIONS`, `pending_confirm`
-  (`assistant_core.py:63`, `660`, `707`).
+- **Quellen:** `actions.is_confirmation`, `actions.CONFIRM_ACTIONS`. Die offene Rückfrage
+  liegt seit RFC-0006 im Session-Zustand (`suspended`, `conversation/_core.py`) und wird
+  beim Turn-Start als `ctx.pending` **konsumiert** (`conversation/_session.py`); das frühere
+  Modul-Global `assistant_core.pending_confirm` gibt es nicht mehr.
 
 ### App Registry
 - **Bedeutung:** Die Allowlist startbarer Apps aus `config.apps`.

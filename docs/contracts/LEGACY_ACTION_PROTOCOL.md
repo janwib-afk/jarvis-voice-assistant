@@ -81,10 +81,12 @@ Payload: `req` = Pflicht, `opt` = optional, `none` = wird verworfen.
 
 ## Risk / Bestätigung
 
-- `MEMORY_FORGET` hat `risk="confirm"` → `CONFIRM_ACTIONS`. `process_message` legt
-  die Aktion in `pending_confirm` und stellt eine mündliche Rückfrage; erst die
-  nächste Nachricht (`is_confirmation` → Ja/Nein) führt aus oder verwirft
-  (`assistant_core.py:707`). Verneinung gewinnt bei Mehrdeutigkeit.
+- `MEMORY_FORGET` hat `risk="confirm"` → `CONFIRM_ACTIONS`. Die Verarbeitung meldet die
+  Rückfrage über `ctx.request_confirmation(action)` an den Session-Zustand und stellt eine
+  mündliche Rückfrage; erst die nächste Nachricht (`is_confirmation` → Ja/Nein) führt aus
+  oder verwirft. Seit RFC-0006 hält die offene Rückfrage der Session-Kern (`suspended`) und
+  gibt sie beim Turn-Start als `ctx.pending` **konsumiert** weiter — das frühere Modul-Global
+  `assistant_core.pending_confirm` gibt es nicht mehr. Verneinung gewinnt bei Mehrdeutigkeit.
 - Weitere riskante Aktionen bekommen einfach `risk="confirm"` in der Registry und
   sind damit automatisch abgesichert.
 
