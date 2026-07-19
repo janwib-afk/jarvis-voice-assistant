@@ -334,8 +334,12 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
             # Migrierter Pilot-Pfad (RFC-0007): der Coordinator ist der EINZIGE
             # Timeout-Owner (Amendment 1 §A1.6 F1) — daher hier KEIN wait_for.
             # CancelledError reicht der Coordinator unveraendert durch.
+            # Beide Pfade bekommen DENSELBEN request-scoped Kontext: der migrierte
+            # Pfad liest daraus die schmalen Invocation-Bindings (Amendment 2 §A2.4),
+            # der Legacy-Pfad benutzt ihn unveraendert wie bisher.
             action_result = await capability.run_migrated(
-                capabilities, action, ctx, confirmed=confirmed)
+                capabilities, action, _action_context(ctx, mutate_launcher),
+                confirmed=confirmed)
         else:
             # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
             action_result = await asyncio.wait_for(

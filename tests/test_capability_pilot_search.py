@@ -74,10 +74,12 @@ class LegacyAdapterTests(unittest.TestCase):
 
         real_attempt = cap.Coordinator.attempt
 
-        async def _spy(self, request, evidence=None):
+        async def _spy(self, request, evidence=None, **kw):
+            # ``**kw`` spiegelt die erweiterte Coordinator-Signatur (meta/bindings,
+            # Amendment 2 §A2.4) — das geprueffte Verhalten bleibt unveraendert.
             seen["provenance"] = request.provenance
             seen["capability"] = request.capability
-            return await real_attempt(self, request, evidence)
+            return await real_attempt(self, request, evidence, **kw)
 
         with mock.patch("browser_tools.search_and_read", _search), \
                 mock.patch.object(cap.Coordinator, "attempt", _spy):

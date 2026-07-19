@@ -14,14 +14,18 @@ und leicht bleibt.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ._contract import (
     CapabilityContract,
     CapabilityRequest,
     DataClass,
     EffectClass,
     Evidence,
+    Field,
     Health,
     InputSchema,
+    InvocationBindings,
     OutcomeStatus,
     OutputSchema,
     Preview,
@@ -31,15 +35,47 @@ from ._contract import (
     Verify,
 )
 
-#: ActionSpec.type -> stabiler Capability-Name der migrierten Piloten.
+#: ActionSpec.type -> stabiler Capability-Name (Amendment 2 §A2.2).
+#: Mehrere Actions duerfen denselben semantischen Vertrag benutzen — es werden
+#: ausdruecklich **nicht** 22 verschiedene Namen erzwungen.
 MIGRATED_ACTIONS: dict[str, str] = {
     "SEARCH": "web.search",
     "MEMORY_FORGET": "memory.forget",
+    "PROFILE_STATUS": "launcher.profile.status",
+    "SESSION_SUMMARY": "conversation.summary",
 }
 
 
 def is_migrated(action_type: str) -> bool:
     return action_type in MIGRATED_ACTIONS
+
+
+@dataclass(frozen=True)
+class _Delegated:
+    """Fuehrt den bestehenden ``ActionSpec``-Executor **hinter** dem Vertrag aus.
+
+    Die Fachlogik wird nicht kopiert: eine zweite Kopie waere eine zweite Wahrheit,
+    die auseinanderlaufen kann. Neu ist ausschliesslich, dass Policy, Timeout,
+    Wirkungsdeklaration und Ergebnisprojektion jetzt davor liegen — das Rohergebnis
+    bleibt byte-identisch (Amendment 2 §A2.1, Slice 12).
+
+    ``field`` benennt das Eingabefeld, das der Legacy-Executor als String erwartet;
+    ``None`` heisst: dieser Pfad hat keine Eingabe.
+    """
+    action_type: str
+    field: str | None = None
+
+    async def __call__(self, payload, ctx):
+        import actions
+        text = await actions.spec_for(self.action_type).execute(
+            payload.get(self.field, "") if self.field else "",
+            actions.ActionContext(
+                ai=ctx.bindings.ai,
+                history=ctx.bindings.history,
+                mutate_launcher=ctx.bindings.mutate_launcher,
+            ),
+        )
+        return {"text": text}
 
 
 async def _exec_web_search(payload, ctx):
@@ -177,12 +213,86 @@ def context_refresh_contract(deps=None) -> CapabilityContract:
     )
 
 
+def launcher_profile_status_contract(deps=None) -> CapabilityContract:
+    """``PROFILE_STATUS`` — rein lokaler Launcher-Lesepfad (Slice 1 Tracer).
+
+    ``network-read`` steht hier, weil ``speaks_result=True`` das Ergebnis direkt
+    ueber ElevenLabs-TTS spricht: ein deklarierter Folgeeffekt, kein Primaereffekt
+    (Amendment 2 §A2.5 — "sechs Launcher-Actions sprechen das Ergebnis direkt").
+    """
+    return CapabilityContract(
+        name="launcher.profile.status", version=1, title="Profil-Status",
+        inputs=InputSchema(fields=(Field("profile_query", str, required=False),)),
+        output=OutputSchema(fields=(Field("text", str),)),
+        effects=(EffectClass.READ_LOCAL, EffectClass.NETWORK_READ),
+        reads=(DataClass.LOCAL,), writes=(),
+        scopes=(Scope.CONFIG_LAUNCHER, Scope.APPS),
+        timeout_s=15,  # identisch zu ActionSpec("PROFILE_STATUS").timeout
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture={"profile_query": ""},
+        execute=_Delegated("PROFILE_STATUS", "profile_query"),
+    )
+
+
+def conversation_summary_contract(deps=None) -> CapabilityContract:
+    """``SESSION_SUMMARY`` — braucht den unveraenderlichen History-Snapshot (Tracer).
+
+    Der Verlauf ist ``personal``: er enthaelt alles, was der Nutzer in der Sitzung
+    gesagt hat. Damit ist der Vertrag ``governed``, nicht ``trivial``.
+    """
+    return CapabilityContract(
+        name="conversation.summary", version=1, title="Sitzungsfazit",
+        inputs=InputSchema(fields=()),
+        output=OutputSchema(fields=(Field("text", str),)),
+        # network-read: Summary-LLM (summary_task) + TTS (Amendment 2 §A2.5).
+        effects=(EffectClass.NETWORK_READ, EffectClass.READ_LOCAL),
+        reads=(DataClass.PERSONAL,), writes=(),
+        scopes=(Scope.CONVERSATION,),
+        timeout_s=60,
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture={},
+        execute=_Delegated("SESSION_SUMMARY"),
+    )
+
+
+#: Eingabeform je Action. Fehlt ein Eintrag, gilt die Pilotform ``{"query": payload}``.
+_PAYLOAD_BUILDERS = {
+    "PROFILE_STATUS": lambda a: {"profile_query": a.payload or ""},
+    "SESSION_SUMMARY": lambda a: {},
+}
+
+
+def _payload_for(action) -> dict:
+    build = _PAYLOAD_BUILDERS.get(action.type)
+    return build(action) if build else {"query": action.payload}
+
+
 #: Sprechbare Fehlerform je migrierter Capability, falls das Outcome nicht ``ok`` ist —
 #: bewahrt das beobachtbare Verhalten des jeweiligen Alt-Pfades.
 _FALLBACK_TEXT = {
     "web.search": "Suche fehlgeschlagen: nicht ausführbar.",
     "memory.forget": "Das konnte ich nicht vergessen.",
+    "launcher.profile.status": "Den Profil-Status konnte ich nicht abrufen.",
+    "conversation.summary": "Die Sitzung konnte ich nicht zusammenfassen.",
 }
+
+
+def _bindings(ctx) -> InvocationBindings:
+    """Die schmalen Ports aus dem request-scoped ``ActionContext`` (Amendment 2 §A2.4).
+
+    Ausschliesslich die vier deklarierten Ports werden uebernommen — die Runtime,
+    die Session und der Server bleiben aussen vor.
+    """
+    return InvocationBindings(
+        ai=getattr(ctx, "ai", None),
+        history=getattr(ctx, "history", ()),
+        mutate_launcher=getattr(ctx, "mutate_launcher", None),
+        feedback=getattr(ctx, "feedback", None),
+    )
 
 
 async def run_migrated(coordinator, action, ctx, confirmed: bool = False) -> str:
@@ -199,13 +309,13 @@ async def run_migrated(coordinator, action, ctx, confirmed: bool = False) -> str
     (§16, Amendment 1 §A1.5).
     """
     name = MIGRATED_ACTIONS[action.type]
-    request = CapabilityRequest(name, Provenance.DERIVED, {"query": action.payload})
+    request = CapabilityRequest(name, Provenance.DERIVED, _payload_for(action))
     # target_allowed=True spiegelt die FESTEN Provider-/Suchmaschinen-Hosts (Anthropic,
     # DuckDuckGo) — nicht nutzergesteuert. SSRF auf jede tatsaechliche Navigation
     # erzwingt der Transport-Guard (Slice 6). ``confirmed`` kommt ausschliesslich aus
     # dem gesprochenen „Ja" (Operator), nie aus Modellinhalt.
     evidence = Evidence(target_allowed=True, confirmed=confirmed)
-    outcome = await coordinator.attempt(request, evidence)
+    outcome = await coordinator.attempt(request, evidence, bindings=_bindings(ctx))
     if outcome.status is OutcomeStatus.OK:
         return outcome.value["text"]
     if outcome.status is OutcomeStatus.TIMEOUT and name == "web.search":

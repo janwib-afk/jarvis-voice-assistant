@@ -37,6 +37,9 @@ def pilot_contracts(deps: CapabilityDeps) -> list:
         _legacy.memory_forget_contract(deps),            # Slice 7
         _legacy.launcher_profile_rename_contract(deps),  # Slice 8
         _legacy.context_refresh_contract(deps),          # Slice 9
+        # ── Phase 5C (Prompt 20) ────────────────────────────────────────────
+        _legacy.launcher_profile_status_contract(deps),   # 5C Slice 1
+        _legacy.conversation_summary_contract(deps),      # 5C Slice 1
     ]
     return contracts
 

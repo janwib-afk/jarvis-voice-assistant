@@ -33,6 +33,7 @@ from ._contract import (
     CapabilityContract,
     CapabilityRequest,
     Evidence,
+    InvocationBindings,
     Outcome,
     OutcomeStatus,
     Preview,
@@ -60,6 +61,10 @@ class AttemptContext:
     REST-Requests fuer einen nachgelagerten Broadcast). Sie ist **kein** Capability-
     Eingabefeld: sie geht NICHT in Validierung oder Idempotency Key ein (§18/§19 —
     ``correlation_id`` ist keine Job-ID, ``event_id`` kein Idempotency Key).
+
+    ``bindings`` traegt die request-spezifischen schmalen Ports (Amendment 2 §A2.4).
+    Sie sind aus demselben Grund wie ``meta`` **kein** Eingabefeld — und zusaetzlich
+    nie Teil von Policy-Entscheidung, Preview-Hash oder Audit.
     """
     capability: str
     version: int
@@ -67,6 +72,7 @@ class AttemptContext:
     preview_hash: str | None
     deps: Any = None
     meta: Mapping[str, Any] | None = None
+    bindings: InvocationBindings = InvocationBindings()
 
 
 def _canonical(payload: Mapping[str, Any]) -> str:
@@ -115,8 +121,10 @@ class Coordinator:
 
     async def attempt(self, request: CapabilityRequest,
                       evidence: Evidence | None = None, *,
-                      meta: Mapping[str, Any] | None = None) -> Outcome:
+                      meta: Mapping[str, Any] | None = None,
+                      bindings: InvocationBindings | None = None) -> Outcome:
         evidence = evidence or Evidence()
+        bindings = bindings or InvocationBindings()
 
         # 1) validate — ein Adapter, der Unsinn schickt, bekommt kein Outcome (§11).
         contract = self._registry.get(request.capability)
@@ -145,6 +153,7 @@ class Coordinator:
             capability=contract.name, version=contract.version,
             idempotency_key=self.idempotency_key(request),
             preview_hash=preview_hash, deps=self._deps, meta=meta,
+            bindings=bindings,
         )
         started = self._clock()
         try:
@@ -188,11 +197,17 @@ class Coordinator:
 
     @staticmethod
     def _verified(contract: CapabilityContract, result):
-        """Beobachtbare Evidenz gegen das deklarierte Ergebnisschema."""
+        """Beobachtbare Evidenz gegen das deklarierte Ergebnisschema.
+
+        Optionale Ergebnisfelder duerfen fehlen, ohne ``ok`` zu ``partial``
+        herabzustufen — nur zugesagte Felder sind Evidenz (Amendment 2 §A2.4).
+        """
+        names = contract.output.names
         if not isinstance(result, Mapping):
-            return {}, tuple(contract.output.fields)
-        missing = tuple(f for f in contract.output.fields if f not in result)
-        return {f: result[f] for f in contract.output.fields if f in result}, missing
+            return {}, tuple(f.name for f in contract.output.fields if f.required)
+        missing = tuple(f.name for f in contract.output.fields
+                        if f.required and f.name not in result)
+        return {n: result[n] for n in names if n in result}, missing
 
     def _finish(self, contract, status, value, *, denials=frozenset(),
                 requirements=frozenset(), error_type=None, pending=(),
