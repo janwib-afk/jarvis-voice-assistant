@@ -39,6 +39,11 @@
 - Kein Test wird gelöscht, übersprungen oder gelockert, um Grün zu erhalten.
 - Nur explizit benannte Dateien werden gestaged — nie `git add .`.
 
+> **Konvention zur Commit-SHA.** Die SHA eines Slices steht erst **nach** seinem Commit
+> fest. Sie wird deshalb jeweils im **Folge-Slice** nachgetragen; die SHA des letzten
+> Slices trägt der Abschluss-Slice nach. Es wird nicht amendet — die Slice-Historie bleibt
+> unangetastet rückrollbar.
+
 ---
 
 ## Slice 0 — Amendment, Baseline und Ledger
@@ -65,7 +70,7 @@ Statuskopf verweist darauf (Muster von RFC-0006 Amendment 1). Dieses Ledger ange
 
 **Regression.** Suite 870 grün, Smoke Exit 0, Fixture bytegleich — siehe Baseline oben.
 
-**Commit.** `d20eebc` — `docs(rfc-0007): record amendment 1 and phase 5b ledger`
+**Commit.** `c09bbe9` — `docs(rfc-0007): record amendment 1 and phase 5b ledger`
 
 **Rückrollweg.** Commit reverten. Da nur Dokumentation entsteht, hat ein Rollback keine
 Laufzeitwirkung.
@@ -74,3 +79,71 @@ Laufzeitwirkung.
 gelassenen** Punkte sind: `launcher.profile.delete` (keine serverseitig belegbare
 Bestätigung möglich, Amendment 1 §A1.4), DNS-Rebinding ohne IP-Pinning (§A1.3) und die
 20 Actions plus neun REST-Routen, die erst Prompt 20 migriert (§A1.1).
+
+---
+
+## Slice 1 — Reiner Capability Contract
+
+**Ziel.** Den Capability Core anlegen: geschlossene Taxonomie, unveraenderlicher Vertrag,
+abgeleiteter `tier()`, fail-closed Registry und ein passives `inspect()`. Kein Aufrufer,
+keine Wirkung auf die Produktion.
+
+**Oeffentlicher Seam.** `SEAM-CAPABILITY` — `capability.CapabilityContract`,
+`capability.Registry` (`get`/`names`/`inspect`), `InputSchema`/`OutputSchema` sowie die
+Enums. Geprueft wird ausschliesslich ueber diese Oberflaeche; kein Zugriff auf private
+Helfer, keine Call-Count-Assertions.
+
+**Ausgangsverhalten.** Es gab keinen Capability-Vertrag. Die gesamte Autorisierungslogik
+war `ActionSpec.risk` mit zwei Werten; die fuenf Datenklassen, sieben Wirkungsklassen,
+Scopes und Presence existierten nur in Sicherheitsdokumenten (RFC-0007 §2.2).
+
+**RED (tatsaechlich beobachtet).**
+`ModuleNotFoundError: No module named 'capability'` — `tests/test_capability_contract.py`
+Zeile 14, beim ersten Lauf von `python -m unittest tests.test_capability_contract`.
+
+**GREEN (minimal).** `capability/__init__.py` (kleine Oberflaeche) und
+`capability/_contract.py`. Zwei Konstruktionsentscheidungen tragen die Sicherheitslage:
+
+* `effects`/`reads`/`writes` **ohne Defaults** — Weglassen ist `TypeError` (D2).
+* `tier()` **abgeleitet**, kein Feld — `tier=` als Argument ist `TypeError`.
+
+Zusaetzlich strukturell abgesichert: `secret` ist als Datenklasse eines Vertrags nicht
+darstellbar (SI-5); die Audit-Felder sind gegen eine geschlossene Allowlist gebunden, so
+dass Inhalte, URLs und Preview-Hashes **nicht nennbar** sind; `effects` darf nicht leer
+sein; unbekannte Eingabefelder werden abgelehnt statt mitgeschleppt.
+
+**Zwischenbefund (eigener Testfehler, systematisch geklaert).** Der erste
+Reinheitstest nutzte `importlib.reload`. Das erzeugte eine **zweite** `EffectClass` im
+Prozess, worauf jeder spaetere `isinstance`-Vergleich fehlschlug — 24 Fehler, deren
+Ursache im Test lag, nicht in der Implementierung. Fehlermeldung gelesen, Ursache
+(Modul-Identitaetsspaltung durch Reload) belegt, Gegenmittel: der Reinheitsnachweis
+laeuft jetzt im **Subprozess** mit Fallen auf `open`/`socket`/`getaddrinfo`/`Popen`. Das
+ist zugleich der staerkere Nachweis, weil er den allerersten Import erfasst.
+
+**Mutationsnachweis (nicht behauptet, ausgefuehrt).** Sieben gezielte Mutationen an
+`_contract.py`, je ein voller Testlauf, Datei danach byte-identisch wiederhergestellt:
+
+| Mutation | Ergebnis |
+|---|---|
+| Secret-Verbot entfernt | **ROT** |
+| `tier()` behauptet immer `TRIVIAL` | **ROT** |
+| Duplicate-Name erlaubt | **ROT** |
+| Audit-Allowlist entfernt | **ROT** |
+| Unknown liefert Fallback statt Fehler | **ROT** |
+| leere `effects` erlaubt | **ROT** |
+| unbekannte Eingabefelder durchgelassen | **ROT** |
+
+Damit ist der Wirkungs-Zensus nachweislich **nicht vacuous**: eine Herabstufung von
+`destructive` erscheint als roter Test im Diff, nicht als stille Feldaenderung (§23).
+
+**Regression.** Suite **903** grün (vorher 870, +33). Fixture
+`a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` — bytegleich.
+
+**Commit.** siehe Folge-Slice (Konvention oben).
+
+**Rueckrollweg.** Paket `capability/` und die Testdatei entfernen. Es existiert **kein
+Produktionsaufrufer**; ein Rollback hat null Laufzeitwirkung.
+
+**Offene Restrisiken.** Der Wirkungs-Zensus prueft in diesem Slice die **Mechanik** an
+einer synthetischen Registry — die vier echten Piloten tragen ihren Zensuseintrag in
+ihrem jeweiligen Slice bei (5/7/8/9), damit jeder Slice seinen eigenen Nachweis fuehrt.
