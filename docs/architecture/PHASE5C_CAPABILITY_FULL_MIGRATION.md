@@ -503,3 +503,42 @@ jetzt nur noch Code — Dokumentation ist kein Bypass.
 
 **Restrisiko.** Ohne Coordinator (`capabilities is None`, nur in Tests konstruierbar)
 findet kein Refresh statt. Produktiv reicht `_run_turn` immer `rt.capabilities` durch.
+
+---
+
+## Slice 11 — Route-Audit und Delete-Ausnahme
+
+**Ziel und Seam.** Ein deterministischer Audit, der jede neue unregistrierte mutierende
+Route rot macht. Seam: `server.MUTATING_ROUTE_CAPABILITIES` gegen die **tatsächlich**
+registrierten FastAPI-Routen.
+
+**Methodischer Hinweis.** Dieser Slice hat kein Verhaltens-ROT: der Audit beschrieb von
+Anfang an korrekt, was ist. Für einen **Wächter** ist das erwartbar — sein Wert liegt
+nicht darin, dass er grün startet, sondern darin, dass er bei einer Verletzung rot wird.
+Der Beleg ist deshalb ausschließlich mutationsgetrieben.
+
+**Der Audit erhebt aus dem Code, nicht aus einer Zweitliste.** `_actual_mutating_routes()`
+liest `server.app.routes` und filtert POST/PUT/PATCH/DELETE. Verglichen wird gegen das
+Register — Abweichung in **beide** Richtungen ist ein Fehler.
+
+**Geprüft:** genau **10** mutierende Routen · genau **9** capability-gesteuert · genau
+**1** dokumentierte Ausnahme, namentlich `DELETE /launcher/profiles/{profile_id}` · jeder
+genannte Vertrag ist registriert · jeder gesteuerte Handler erreicht den Coordinator
+tatsächlich (Quelltext) · der Delete-Pfad trägt **keine** Schein-Confirmation
+(`confirmed=True`/`Confirmation`/`grant`) · und persistiert weiterhin über den Single
+Writer · das Register ist unveränderlich · 22/22 Actions auf 21 Namen.
+
+**Mutationen.** M46 neue mutierende Route ohne Registereintrag · M47 Registereintrag
+entfernt · M48 Register zeigt auf unbekannten Vertrag · M49 Delete-Ausnahme wegdefiniert ·
+M50 Handler umgeht den Coordinator wieder · M51 Schein-Confirmation im Delete-Pfad —
+**alle sechs ROT**.
+
+**Die Ausnahme, ehrlich begründet.** `launcher.profile.delete` bleibt offen, weil der
+Zwei-Klick-Dialog **browserlokal** ist und serverseitig nicht überprüft werden kann. Es
+gibt keine Preview-/Grant-Laufzeit, die eine echte Bestätigung belegen könnte. Die Route
+wird deshalb ausdrücklich **nicht** mit einer Schein-Confirmation versehen — das wäre
+Sicherheitstheater. Ziel: **Phase 10**.
+
+**Regression.** 1217 Tests OK.
+
+**Rollback.** `git revert` — Register und Audit entfallen, die Routen bleiben migriert.

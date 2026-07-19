@@ -16,6 +16,8 @@ import json
 import os
 import re
 import secrets
+from types import MappingProxyType
+from typing import Mapping
 
 import anthropic
 import httpx
@@ -664,6 +666,35 @@ async def launcher_list_apps(request: Request):
         return JSONResponse({"ok": False, "errors": ["Nicht autorisiert."]}, status_code=403)
     return {"ok": True, "active_profile": app_launcher.ACTIVE_PROFILE,
             "apps": app_launcher.list_apps()}
+
+
+#: Audit-Register aller MUTIERENDEN REST-Routen (Phase 5C Slice 11).
+#:
+#: Schluessel ist ``(Methode, Pfad)``, Wert der Capability-Vertrag, ueber den die
+#: Route laeuft — oder ``None`` fuer eine **datierte, begruendete** Ausnahme.
+#: Eine neue mutierende Route, die hier fehlt, macht den Audit-Test rot; damit
+#: kann kein Wirkungspfad still am Coordinator vorbei entstehen.
+MUTATING_ROUTE_CAPABILITIES: Mapping[tuple[str, str], str | None] = MappingProxyType({
+    ("POST", "/settings"): "settings.update",
+    ("POST", "/music/selection"): "music.selection.set",
+    ("POST", "/commands/app/open"): "launcher.app.open",
+    ("POST", "/launcher/apps/{app_id}/toggle"): "launcher.app.autostart.set",
+    ("POST", "/launcher/apps/{app_id}/placement"): "launcher.app.placement.set",
+    ("POST", "/launcher/profiles"): "launcher.profile.create",
+    ("POST", "/launcher/profiles/{profile_id}/activate"): "launcher.profile.activate",
+    ("POST", "/launcher/profiles/{profile_id}/duplicate"): "launcher.profile.duplicate",
+    ("POST", "/launcher/profiles/{profile_id}/rename"): "launcher.profile.rename",
+    # ── Die EINZIGE Ausnahme (RFC-0007 Amendment 2 §A2.1) ───────────────────
+    # ``launcher.profile.delete`` bleibt bis Phase 10 offen: der Zwei-Klick-Dialog
+    # ist browserlokal und serverseitig NICHT ueberpruefbar. Es gibt bisher keine
+    # Preview-/Grant-Laufzeit, die eine echte Bestaetigung belegen koennte. Die
+    # Route wird ausdruecklich NICHT mit einer Schein-Confirmation versehen.
+    ("DELETE", "/launcher/profiles/{profile_id}"): None,
+})
+
+#: Die datierte Ausnahme, einzeln benannt — damit ein Test sie NAMENTLICH pruefen
+#: kann statt nur zu zaehlen.
+DELETE_EXCEPTION = ("DELETE", "/launcher/profiles/{profile_id}")
 
 
 async def _launcher_capability(request, name: str, payload: dict):
