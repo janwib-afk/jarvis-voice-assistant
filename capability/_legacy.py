@@ -15,6 +15,8 @@ und leicht bleibt.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Mapping
 
 from ._contract import (
     CapabilityContract,
@@ -38,12 +40,15 @@ from ._contract import (
 #: ActionSpec.type -> stabiler Capability-Name (Amendment 2 §A2.2).
 #: Mehrere Actions duerfen denselben semantischen Vertrag benutzen — es werden
 #: ausdruecklich **nicht** 22 verschiedene Namen erzwungen.
-MIGRATED_ACTIONS: dict[str, str] = {
+#: **Unveraenderlich**: die Zuordnung ist eine Sicherheitsentscheidung. Waere sie
+#: zur Laufzeit biegbar, koennte ein Pfad still an seinem Vertrag vorbeigefuehrt
+#: werden (Amendment 2 §A2.7).
+MIGRATED_ACTIONS: Mapping[str, str] = MappingProxyType({
     "SEARCH": "web.search",
     "MEMORY_FORGET": "memory.forget",
     "PROFILE_STATUS": "launcher.profile.status",
     "SESSION_SUMMARY": "conversation.summary",
-}
+})
 
 
 def is_migrated(action_type: str) -> bool:
@@ -280,6 +285,13 @@ _FALLBACK_TEXT = {
     "conversation.summary": "Die Sitzung konnte ich nicht zusammenfassen.",
 }
 
+#: Letzte Zuflucht: jeder Ausgang hat einen sprechbaren Text — nie ein leerer String.
+_GENERIC_FALLBACK = "Das konnte ich nicht ausführen."
+
+
+def _fallback_text(name: str) -> str:
+    return _FALLBACK_TEXT.get(name) or _GENERIC_FALLBACK
+
 
 def _bindings(ctx) -> InvocationBindings:
     """Die schmalen Ports aus dem request-scoped ``ActionContext`` (Amendment 2 §A2.4).
@@ -295,7 +307,31 @@ def _bindings(ctx) -> InvocationBindings:
     )
 
 
-async def run_migrated(coordinator, action, ctx, confirmed: bool = False) -> str:
+@dataclass(frozen=True)
+class LegacyResult:
+    """Interne typisierte Projektion eines ``Outcome`` (Amendment 2 §A2.7).
+
+    **Kein Wire-Format**: sie verlaesst den Prozess nie. Ihr einziger Zweck ist,
+    dem Legacy-Adapter zu sagen, ob ein Erfolg vorliegt — vorher trug der
+    migrierte Pfad nur einen String, und ein ``denied`` sah am Draht aus wie ein
+    gelungenes ``done``.
+    """
+    text: str
+    status: OutcomeStatus
+    error_type: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.status is OutcomeStatus.OK
+
+    @property
+    def degraded(self) -> bool:
+        """``partial`` — ausdruecklich degradiert, nie uneingeschraenkter Erfolg."""
+        return self.status is OutcomeStatus.PARTIAL
+
+
+async def run_migrated(coordinator, action, ctx,
+                       confirmed: bool = False) -> LegacyResult:
     """Eine migrierte Action ueber den Coordinator fuehren; ``Outcome`` -> roher String.
 
     Provenance ist **derived**: ein ``[ACTION:…]`` stammt aus der LLM-Antwort — zwischen
@@ -317,8 +353,15 @@ async def run_migrated(coordinator, action, ctx, confirmed: bool = False) -> str
     evidence = Evidence(target_allowed=True, confirmed=confirmed)
     outcome = await coordinator.attempt(request, evidence, bindings=_bindings(ctx))
     if outcome.status is OutcomeStatus.OK:
-        return outcome.value["text"]
+        return LegacyResult(outcome.value["text"], outcome.status)
+    if outcome.status is OutcomeStatus.PARTIAL and outcome.value:
+        # Degradiert: das Teilergebnis ist echt, aber es ist kein voller Erfolg.
+        text = outcome.value.get("text") or _fallback_text(name)
+        return LegacyResult(text, outcome.status)
     if outcome.status is OutcomeStatus.TIMEOUT and name == "web.search":
-        return "Suche fehlgeschlagen: Zeitüberschreitung."
-    # denied/needs/failed/partial/timeout: sprechbare Fehlerform des Alt-Pfades.
-    return _FALLBACK_TEXT.get(name, "Das konnte ich nicht ausführen.")
+        return LegacyResult("Suche fehlgeschlagen: Zeitüberschreitung.",
+                            outcome.status)
+    # denied/needs/failed/partial/timeout/cancelled: sprechbare Fehlerform des
+    # Alt-Pfades — der Text bleibt erhalten, nur der falsche Erfolg faellt weg.
+    return LegacyResult(_fallback_text(name), outcome.status,
+                        error_type=outcome.error_type)

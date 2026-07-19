@@ -64,7 +64,7 @@ class LegacyAdapterTests(unittest.TestCase):
             coord = _coord()
             action = _Action("SEARCH", "wetter hamburg")
             migrated = asyncio.run(cap.run_migrated(coord, action, None))
-        self.assertEqual(migrated, legacy)
+        self.assertEqual(migrated.text, legacy)
 
     def test_adapter_uses_derived_provenance(self):
         seen = {}
@@ -93,7 +93,7 @@ class LegacyAdapterTests(unittest.TestCase):
 
         with mock.patch("browser_tools.search_and_read", _search):
             out = asyncio.run(cap.run_migrated(_coord(), _Action("SEARCH", "x"), None))
-        self.assertIn("fehlgeschlagen", out)
+        self.assertIn("fehlgeschlagen", out.text)
 
 
 class OrchestrationIntegrationTests(unittest.TestCase):

@@ -185,9 +185,10 @@ class ProfileStatusTracerTests(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, payload: str) -> str:
         coord = cap.Coordinator(cap.build_registry(cap.CapabilityDeps()))
-        return await cap.run_migrated(
+        result = await cap.run_migrated(
             coord, actions.Action("PROFILE_STATUS", payload),
             actions.ActionContext())
+        return result.text
 
 
 class SessionSummaryTracerTests(unittest.IsolatedAsyncioTestCase):
@@ -242,9 +243,10 @@ class SessionSummaryTracerTests(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, history) -> str:
         coord = cap.Coordinator(cap.build_registry(cap.CapabilityDeps()))
-        return await cap.run_migrated(
+        result = await cap.run_migrated(
             coord, actions.Action("SESSION_SUMMARY", ""),
             actions.ActionContext(history=history))
+        return result.text
 
 
 if __name__ == "__main__":

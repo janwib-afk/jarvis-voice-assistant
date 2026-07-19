@@ -76,3 +76,105 @@ Slice.
 Laufzeit unberührt.
 
 **Restrisiko.** Keines — reine Dokumentation.
+
+---
+
+## Slice 1 — Vertragstypen und erster Binding-Tracer
+
+**Ziel und Seam.** `InputSchema`/`OutputSchema` rückwärtskompatibel zu echten Typverträgen
+vertiefen, die drei belegten Scopes ergänzen und den schmalen unveränderlichen
+Invocation-Binding-Seam einführen — belegt durch **zwei** vertikale Tracer statt durch ein
+spekulatives Framework. Öffentlicher Seam: `capability.*`.
+
+**Ausgangsverhalten.** `InputSchema.fields` war ein `tuple[str, ...]`; jedes Feld war
+untypisiert und pflichtig. Request-spezifische Abhängigkeiten (LLM-Client, History,
+Launcher-Mutation) erreichten die Piloten gar nicht — die vier Prompt-19-Piloten brauchten
+keine.
+
+**Erstes beobachtetes ROT.** 23 von 24 Tests scheiterten
+(`AttributeError: module 'capability' has no attribute 'Field'`, fehlende `Scope`-Werte,
+fehlende `InvocationBindings`, fehlende Mappings). Der **eine** grüne Test war genau
+`test_plain_string_field_stays_untyped_and_required` — die Rückwärtskompatibilität galt
+also schon vor der Änderung, wie beabsichtigt.
+
+**Minimales GRÜN.**
+* `Field(name, type=None, required=True)` mit reiner `check()`-Funktion; `str`-Einträge
+  werden weiterhin als untypisierte Pflichtfelder gelesen.
+* `bool` wird nie für ein `int`-Feld akzeptiert, obwohl Python das strukturell erlaubt.
+* Fehlermeldungen sortiert → deterministisch.
+* `Scope.CONFIG_SETTINGS`, `Scope.CONFIG_MUSIC`, `Scope.CONVERSATION`.
+* `InvocationBindings` mit **genau vier** Ports (`ai`, `history`, `mutate_launcher`,
+  `feedback`); durchgereicht als `Coordinator.attempt(..., bindings=…)` →
+  `AttemptContext.bindings`. **Nicht** in Request, Payload, `meta`, Idempotency-Hash,
+  Policy oder Audit.
+* `_Delegated` führt den bestehenden `ActionSpec`-Executor **hinter** dem Vertrag aus —
+  keine kopierte Fachlogik, also keine zweite Wahrheit.
+* `PROFILE_STATUS` → `launcher.profile.status`, `SESSION_SUMMARY` → `conversation.summary`.
+
+**Wirkungsbefund.** Beide Verträge deklarieren die TTS- bzw. Summary-LLM-Folgeeffekte als
+`network-read`. `conversation.summary` liest `personal` (der Sitzungsverlauf) und ist damit
+`governed`, nicht `trivial`.
+
+**Mutationen.** M1 bool-Schutz, M2 Typprüfung, M3 Mapping, M4 Bindings, M5 optional→required,
+M6 Summary-`NETWORK_READ`, M7 `reads personal→local`, M8 Status-TTS-Effekt.
+**M6 blieb zunächst grün** und deckte eine echte Lücke auf: die Wirkungsdeklaration war
+ungeschützt. Nach Ergänzung der Effekt-Zusagen sind **alle acht ROT**.
+
+**Regression.** 1050 Tests OK (Baseline 1024). Ein Test-Double (`_spy` in
+`test_capability_pilot_search`) spiegelt die erweiterte Coordinator-Signatur — keine
+Verhaltenslockerung.
+
+**Commit.** `e8cd881`. **Rollback:** `git revert e8cd881` — die vier Prompt-19-Piloten
+laufen unverändert weiter, weil die Pilotform (`str`-Felder) nie ungültig wurde.
+
+**Restrisiko.** Der `feedback`-Port ist deklariert, aber bis Slice 6 ungenutzt.
+
+---
+
+## Slice 2 — Outcome- und Adapter-Härtung
+
+**Ziel und Seam.** Vor der Massenmigration festlegen, was ein **Nicht-Erfolg** beobachtbar
+auslöst. Seam: die Frames, die `run_action_and_respond` emittiert, plus die Folgeeffekte
+(Summary-LLM, TTS).
+
+**Ausgangsverhalten — ein belegter Defekt.** Der migrierte Pfad projizierte **jedes**
+Outcome auf einen blossen String und sendete danach **unbedingt** `done`. Eine abgelehnte
+oder fehlgeschlagene Wirkung sah am Draht aus wie eine gelungene. Schlimmer: der
+`memory.forget`-Fallbacktext („Das konnte ich nicht vergessen.") enthält kein
+„fehlgeschlagen" — er lief deshalb in den **Summary-LLM**, also in einen echten
+Netzaufruf nach einer Ablehnung.
+
+**Erstes beobachtetes ROT.** 21 Fehler/Errors, darunter ausdrücklich
+`test_summary_llm_does_not_run_after_denied` — der vorhergesagte Defekt ist belegt.
+Grün blieben `test_ok_still_emits_done`, `test_summary_llm_runs_on_success`, die
+Cancellation- und die Timeout-Ownership-Prüfung: dieses Verhalten war bereits korrekt.
+
+**Minimales GRÜN.**
+* `LegacyResult(text, status, error_type)` mit `ok`/`degraded` — eine **interne**
+  typisierte Projektion, **kein** Wire-Format, sie verlässt den Prozess nie.
+* `_report_capability_denial` projiziert Nicht-Erfolge auf den **bestehenden**
+  Fehlerpfad: `action.failed`-Log, `error`-Frame, strukturierter Client-Fehler — exakt
+  die Form des Exception-Zweigs.
+* `denied` unterdrückt `done` **und** den gesamten Erfolgs-Nachlauf (Summary, Quellen,
+  Autosave); gesprochen wird die bestehende Fehlerform.
+* `MIGRATED_ACTIONS` ist jetzt ein `MappingProxyType` — die Zuordnung ist eine
+  Sicherheitsentscheidung und zur Laufzeit nicht mehr biegbar.
+
+**Outcome-Matrix (belegt).** `OK` → `done` + Summary · `DENIED`/`NEEDS`/`TIMEOUT`/`FAILED`
+→ `error`, nie `done`, kein Summary · `PARTIAL` → degradiert, kein uneingeschränktes
+`done` · `CancelledError` → unverändert weitergereicht.
+
+**Mutationen.** M9 `MappingProxyType`→`dict`, M10 `ok` immer `True`, M11 `done` trotz
+Nicht-Erfolg, M12 Erfolgs-Nachlauf nach Nicht-Erfolg, M13 Nicht-Erfolg verschluckt —
+**alle fünf ROT**.
+
+**Regression.** 1069 Tests OK. Sechs Zusicherungen in Prompt-19-Tests lesen jetzt
+`.text` statt des nackten Strings: das ist die **beabsichtigte** Vertragsänderung aus
+§A2.7, keine Lockerung — die geprüfte Aussage ist unverändert.
+
+**Rollback.** `git revert` dieses Commits stellt die String-Rückgabe wieder her; die
+Slice-1-Tracer laufen weiter, verlieren aber die Nicht-Erfolgs-Projektion.
+
+**Restrisiko.** Der Legacy-Exception-Pfad ruft weiterhin den Summary-LLM mit
+`"Fehler: …"` auf — unverändertes Altverhalten, das erst mit dem Wegfall des Fallbacks
+in Slice 12 vollständig verschwindet.

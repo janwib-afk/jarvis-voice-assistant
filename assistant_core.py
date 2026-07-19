@@ -309,6 +309,23 @@ async def _finish_research(summary: str, action_result: str) -> str | None:
     return f"{summary}\n\n{quellen_block}"
 
 
+async def _report_capability_denial(sink, spec, action, projection) -> None:
+    """Nicht-Erfolg einer Capability auf den BESTEHENDEN Fehlerpfad projizieren.
+
+    Gleiche Form wie der Exception-Zweig: ``action.failed``-Log, ``error``-Frame
+    und strukturierter Client-Fehler. Es entsteht kein neues Wire-Feld und keine
+    neue Protokollversion — nur der bisher faelschlich gesendete ``done`` bleibt
+    aus (Amendment 2 §A2.7).
+    """
+    component = "browser" if spec.is_browser else "action"
+    detail = projection.error_type or projection.status.value
+    obslog.event("action.failed", action=action.type,
+                 error_type=detail, component=component)
+    await send_action_event(sink, "error", action.type, detail)
+    await send_error(sink, component,
+                     f"Aktion '{spec.label}' fehlgeschlagen.", detail)
+
+
 async def run_action_and_respond(ctx, action: actions.Action, sink,
                                  mutate_launcher=None, capabilities=None,
                                  confirmed=False):
@@ -329,23 +346,32 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
 
     spec = actions.spec_for(action.type)
     await send_action_event(sink, "start", action.type, (action.payload or "")[:80])
+    # Ein Nicht-Erfolg der Capability ist KEINE Exception — er darf aber auch nie
+    # den Erfolgs-Nachlauf ausloesen (Amendment 2 §A2.5/§A2.7).
+    denied = False
     try:
         if capabilities is not None and capability.is_migrated(action.type):
-            # Migrierter Pilot-Pfad (RFC-0007): der Coordinator ist der EINZIGE
+            # Migrierter Pfad (RFC-0007): der Coordinator ist der EINZIGE
             # Timeout-Owner (Amendment 1 §A1.6 F1) — daher hier KEIN wait_for.
             # CancelledError reicht der Coordinator unveraendert durch.
             # Beide Pfade bekommen DENSELBEN request-scoped Kontext: der migrierte
             # Pfad liest daraus die schmalen Invocation-Bindings (Amendment 2 §A2.4),
             # der Legacy-Pfad benutzt ihn unveraendert wie bisher.
-            action_result = await capability.run_migrated(
+            projection = await capability.run_migrated(
                 capabilities, action, _action_context(ctx, mutate_launcher),
                 confirmed=confirmed)
+            action_result = projection.text
+            denied = not projection.ok
+            if denied:
+                await _report_capability_denial(sink, spec, action, projection)
         else:
             # Gesamt-Cap: ein haengender Browser blockiert die WS-Loop nie laenger.
             action_result = await asyncio.wait_for(
                 execute_action(action, ctx, mutate_launcher), timeout=spec.timeout)
-        obslog.event("action.finished", action=action.type, result_len=len(action_result))
-        await send_action_event(sink, "done", action.type)
+        if not denied:
+            obslog.event("action.finished", action=action.type,
+                         result_len=len(action_result))
+            await send_action_event(sink, "done", action.type)
     except asyncio.CancelledError:
         # Nutzer hat "Stopp" gesagt: Historie markieren, Abbruch weiterreichen.
         obslog.event("action.cancelled", action=action.type)
@@ -358,6 +384,15 @@ async def run_action_and_respond(ctx, action: actions.Action, sink,
         await send_action_event(sink, "error", action.type, type(e).__name__)
         await send_error(sink, component, f"Aktion '{spec.label}' fehlgeschlagen.", type(e).__name__)
         action_result = f"Fehler: {e}"
+
+    if denied:
+        # Kein Erfolgs-Nachlauf: weder Summary-LLM noch Quellen noch Autosave.
+        # Gesprochen wird die bestehende Fehlerform — nur der falsche ``done``
+        # und der Erfolgspfad dahinter entfallen (Amendment 2 §A2.5).
+        msg = f"Das hat leider nicht funktioniert, {USER_ADDRESS}."
+        ctx.remember("assistant", msg)
+        await send_spoken_response(sink, msg)
+        return
 
     if action.type == "OPEN":
         # Just opened browser, nothing to summarize
