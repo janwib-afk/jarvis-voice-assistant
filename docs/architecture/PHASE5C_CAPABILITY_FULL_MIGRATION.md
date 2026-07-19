@@ -592,3 +592,36 @@ M54 Property immer `low` — **alle drei ROT**.
 
 **Rollback.** `git revert` — gespeichertes `risk` und Fallback kehren zurück; die
 Signaturverschärfung müsste mit zurückgenommen werden.
+
+---
+
+## Slice 13 — Dokumentation, CI-Audit und Abschluss
+
+**Geändert.**
+* `tests/test_phase5c_audit.py` — **neu**: ein deterministischer Gesamtnachweis der sieben
+  Zusagen aus Amendment 2 an einer Stelle, damit ein Rückschritt nicht in einem
+  thematischen Modul untergeht.
+* `.github/workflows/pr.yml` — **Gate 8**: der Audit läuft im Fast-Gate zusätzlich
+  **einzeln** und benannt (`-v`), nicht nur mitgeschleift in der Gesamtsuite.
+* `docs/architecture/RFC-0007-…` — §A2.11 Umsetzungsstand je Zusage.
+* `docs/system/CURRENT_STATE.md` — Phase-5C-Stand plus die ausdrückliche Liste dessen, was
+  **nicht** abgeschlossen ist.
+* `docs/system/CAPABILITY_MATRIX.md` — Wirkungsinventar **aus der laufenden Registry
+  erzeugt**, nicht handgepflegt.
+* `docs/security/RISK_REGISTER.md` — TM-001 auf „flächendeckend durchsetzbar, **nicht
+  gelöst**", TM-002 unverändert `high` ohne IP-Pinning.
+* `docs/quality/TEST_SEAMS.md` — drei neue Seams (`SEAM-INVOCATION-BINDINGS`,
+  `SEAM-LEGACY-PROJECTION`, `SEAM-ROUTE-AUDIT`) mit grüner Evidenz.
+
+**Der Audit prüft (jeweils gegen Produktionscode, nie Tabelle gegen sich selbst):**
+22/22 Mappings · 21 eindeutige Namen · alle Verträge registrierbar und mit erklärter
+Wirkung · 9/10 Routen gesteuert · Profile-Delete als einzige Ausnahme · kein gespeichertes
+`risk` · kein `execute_action` im Turn-Pfad · `capabilities` erforderlich · kein rohes
+`goto` in `browser_tools` · genau **ein** rohes `goto`, nämlich in `guarded_goto` selbst ·
+kein `follow_redirects=True` · Presence-/Preview-Regeln weiterhin inaktiv · keine
+Grant-Laufzeit (`AWAITING_AUTHORIZATION` existiert nicht).
+
+**Regression.** 1245 Tests OK.
+
+**Restrisiko.** Der Audit prüft Callsites teils per Quelltext. Das ist bewusst grob: es
+fängt das versehentliche Wiedereinführen zuverlässig, ersetzt aber kein Typsystem.

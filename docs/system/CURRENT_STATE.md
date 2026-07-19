@@ -694,3 +694,27 @@ wurde durch diesen Prompt verändert (außer der Neuanlage dieser Datei).
 
 *Ende der Baseline. Nächste Aktion (Checkpoint) erst nach ausdrücklicher Bestätigung
 des Nutzers.*
+
+## Phase 5C — Vollmigration der durchsetzbaren Pfade (Prompt 20, 2026-07-19)
+
+**Stand:** `PHASE 5C FÜR ALLE DERZEIT DURCHSETZBAREN PFADE VOLLSTÄNDIG`.
+
+| Größe | Vorher (Prompt 19) | Jetzt |
+|---|---|---|
+| Capability-gesteuerte Voice-Actions | 2 / 22 | **22 / 22** (auf 21 Verträgen) |
+| Capability-gesteuerte mutierende REST-Routen | 1 / 10 | **9 / 10** |
+| Gespeichertes `ActionSpec.risk` | vorhanden | **entfernt** (abgeleitet aus `destructive`) |
+| Produktiver `execute_action`-Fallback | vorhanden | **entfernt** |
+| Direkter `activate`-Refresh-Bypass | vorhanden | **entfernt** |
+| Registrierte Capability-Verträge | 4 | **27** |
+
+**Ausdrücklich NICHT abgeschlossen.** `DELETE /launcher/profiles/{id}` bleibt die einzige
+ungeschützte mutierende Route — der Zwei-Klick-Dialog ist browserlokal und serverseitig
+nicht überprüfbar; es gibt keine Preview-/Grant-Laufzeit (Phase 10). TM-001 ist
+flächendeckend **durchsetzbar**, aber nicht gelöst. TM-002 bleibt ohne IP-Pinning nur
+teilweise mitigiert, DNS-Rebinding ist offen (Phase 9). Presence- und Preview-Regeln
+bleiben datiert und inaktiv. Die nativen D3-Ausnahmen liegen weiterhin außerhalb des
+Kernels; es ist **kein neuer nativer Bypass** entstanden. Die SDK-internen
+Anthropic-Retries (`max_retries=2`) bestehen unverändert fort — es wurde **keine** zweite
+Retry-Schicht ergänzt (Grenze für Phase 6).
+

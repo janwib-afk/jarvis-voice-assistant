@@ -1205,3 +1205,29 @@ Presence-/Preview-Regeln bleiben **datiert und inaktiv** · native D3-Ausnahmen 
 des Scopes und **es entsteht kein neuer nativer Bypass** · **TM-001 auch nach Vollmigration nicht
 vollständig gelöst** · **TM-002 ohne IP-Pinning nur teilweise mitigiert** · **`profile.delete`
 bleibt offen bis Phase 10.**
+
+---
+
+## A2.11 Umsetzungsstand nach Prompt 20 (2026-07-19)
+
+Amendment 2 ist **vollständig umgesetzt**. Belegt durch `tests/test_phase5c_audit.py`
+(eigenes Fast-Gate) und das Ledger `PHASE5C_CAPABILITY_FULL_MIGRATION.md`.
+
+| Zusage | Stand |
+|---|---|
+| §A2.1 Ehrlicher Scope | 22/22 Actions, 9/10 Routen, `activate`-Bypass geschlossen |
+| §A2.2 Kanonische Action-Zuordnung | erfüllt — 22 Actions auf **21** Verträgen |
+| §A2.3 Kanonische REST-Zuordnung | erfüllt — Voice und REST teilen die Verträge |
+| §A2.4 Typisierte Verträge + Bindings | erfüllt — `Field`, drei neue Scopes, vier Ports |
+| §A2.5 Vollständige Wirkungsdeklaration | erfüllt — aus dem Code erhoben, SCREEN-Ansage hinter die Freigabe |
+| §A2.6 Safe-Target/SSRF | erfüllt — feste vs. abgeleitete Evidenz, fail-closed ohne Guard |
+| §A2.7 Outcome/Timeout | erfüllt — kein falsches `done`, Coordinator einziger Timeout-Owner |
+| §A2.8 Context-Refresh | erfüllt — ein Vertrag für alle drei Auslöser |
+| §A2.9 `risk`-Ablösung | erfüllt — abgeleitet, Mutationsbeweis vorhanden |
+
+**Unverändert offen** (§A2.10): `launcher.profile.delete` bis zur Phase-10-Grant-Laufzeit ·
+TM-001 flächendeckend durchsetzbar, **nicht gelöst** · TM-002 ohne IP-Pinning nur teilweise
+mitigiert · **DNS-Rebinding** offen · Presence-/Preview-Regeln datiert und inaktiv · native
+D3-Ausnahmen außerhalb des Scopes, **kein neuer nativer Bypass** · SDK-interne
+Provider-Retries bestehen fort, **keine** zweite Retry-Schicht.
+
