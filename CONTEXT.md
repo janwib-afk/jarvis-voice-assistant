@@ -44,17 +44,22 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
   ist seit RFC-0001 nur noch ein Thin Dispatcher (Kontext bauen + Lookup).
 
 ### ActionSpec
-- **Bedeutung:** Metadaten eines Action-Typs (Label, Payload-Regel, Risk, Timeout,
-  Summary-Prompt, is_url/is_browser/speaks_result).
-- **Verantwortung:** Parsing, Timeout-Cap, Risk-/Browser-Klassifikation, Summary.
-- **Abgrenzung:** Beschreibt den Typ, führt ihn nicht aus (Ausführung liegt in
-  `execute_action`).
+- **Bedeutung:** Metadaten eines Action-Typs (Label, Payload-Regel, Timeout,
+  Summary-Prompt, is_url/is_browser/speaks_result). `risk` ist **kein gespeichertes
+  Feld mehr** (Phase 5C): es ist eine **abgeleitete** read-only Property, deren Wert
+  ausschließlich aus dem `destructive`-Effekt des kanonischen Capability-Vertrags
+  stammt — es gibt keine zweite Risikotabelle.
+- **Verantwortung:** Parsing, Timeout-Cap, Browser-Klassifikation, Summary. Die
+  Ausführung läuft seit Phase 5C ausschließlich **hinter** den Capability-Adaptern;
+  einen produktiven `execute_action`-Fallback gibt es nicht mehr.
+- **Abgrenzung:** Beschreibt den Typ, führt ihn nicht direkt aus (Dispatch über den
+  Coordinator; `ActionSpec.execute` läuft nur noch hinter `_Delegated`).
 - **Quellen:** `actions.ActionSpec` + `actions.REGISTRY` (`actions.py:47`),
   abgeleitete Sets `SPEAK_RESULT_ACTIONS`/`CONFIRM_ACTIONS`/`BROWSER_ACTIONS`.
 
 ### Confirmation
-- **Bedeutung:** Mündliche Ja/Nein-Rückfrage vor einer riskanten Action
-  (aktuell nur `MEMORY_FORGET`, `risk="confirm"`).
+- **Bedeutung:** Mündliche Ja/Nein-Rückfrage vor einer destruktiven Action
+  (aktuell nur `MEMORY_FORGET` — abgeleitet aus dem `destructive`-Effekt).
 - **Verantwortung:** Destruktive Wirkung erst nach ausdrücklichem „Ja" ausführen.
 - **Abgrenzung:** Nicht Stop/Cancel (bricht ab), nicht die Token-Autorisierung (REST).
 - **Quellen:** `actions.is_confirmation`, `actions.CONFIRM_ACTIONS`. Die offene Rückfrage
@@ -188,9 +193,6 @@ lebt im Architekturbericht und in `$codebase-design`, nicht hier.
 Diese Begriffe stammen aus dem Masterplan und sind **im aktuellen Code nicht
 vorhanden**. Nicht mit dem Ist-Stand vermischen.
 
-- **Capability** und **Policy** — mit [RFC-0007](docs/architecture/RFC-0007-capability-policy-kernel.md)
-  akzeptiert; die Begriffe stehen im eigenen Abschnitt weiter unten. Im Code heute nur
-  `Action`/`ActionSpec` mit zweiwertigem `risk`.
 - **Job / Workflow** — geplante dauerhafte, wiederaufnehmbare Abläufe mit SQLite
   (Phase 6). Heute laufen Nachrichten nur als flüchtige asyncio-Tasks.
 - **Outbox / Saga** — geplante Crash-Sicherheit für externe Wirkungen (Phase 6).
@@ -254,13 +256,15 @@ im RFC — dieses Glossar führt nur Jarvis-eigene Begriffe.
 - **Abgrenzung:** **Kein** `asyncio.Task`, **keine** Obsidian-Aufgabe, **kein** Browser Task.
   Existiert heute nicht; ein Conversation-Stop ist kein Job-Cancel.
 
-## Capability- und Policy-Begriffe (RFC-0007 akzeptiert — Umsetzung ab Prompt 19)
+## Capability- und Policy-Begriffe (RFC-0007 — IMPLEMENTIERT, Phase 5C/Amendment 2)
 
 Diese Begriffe sind mit [RFC-0007](docs/architecture/RFC-0007-capability-policy-kernel.md)
-**akzeptiert**, aber **noch nicht implementiert**. In der Laufzeit gibt es heute weder
-Datenklassen noch Wirkungsklassen noch Scopes noch Presence — die gesamte
-Autorisierungslogik ist `ActionSpec.risk` mit den zwei Werten `low` und `confirm`. Nicht mit
-dem Ist-Stand vermischen. Allgemeines Vokabular (Adapter, Interface, Lifecycle) steht
+**umgesetzt**: die Capability-Runtime existiert in [`capability/`](capability/) (Contract,
+Policy Kernel, Coordinator, SSRF-TargetGuard). Datenklassen, Wirkungsklassen, Scopes und
+Presence sind in der Laufzeit vorhanden. **Alle 22 Voice-Actions** und **9 von 10**
+mutierenden REST-Routen laufen darüber; das früher gespeicherte `ActionSpec.risk` ist durch
+eine aus dem `destructive`-Effekt **abgeleitete** Property ersetzt. Presence-/Preview-Regeln
+sind **datiert und noch inaktiv**. Allgemeines Vokabular (Adapter, Interface, Lifecycle) steht
 bewusst **nicht** hier, sondern im RFC.
 
 ### Capability

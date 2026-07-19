@@ -127,6 +127,6 @@ bereits beim Aufruf wirft (ein einfaches `with urlopen(...)` bindet dann nie).
 open(...) as _f:` umgestellt — reine Ressourcenhygiene, keine Verhaltensänderung.
 
 **Grüne Evidenz.** `test_weather_resource.py` 5/5; `test_action_deep_module.py` 64/64
-unter `-W error::ResourceWarning`; volle Suite 1253 OK.
+unter `-W error::ResourceWarning`; volle Suite 1260 OK.
 
 **Rollback.** `git revert`.

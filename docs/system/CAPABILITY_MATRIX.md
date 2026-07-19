@@ -1,9 +1,16 @@
-# Jarvis – Capability Matrix (Phase 0)
+# Jarvis – Capability Matrix
 
-> Bestandsaufnahme **aller aktuell vorhandenen** Fähigkeiten. Stand **2026-07-13**.
-> Beschreibt den Ist-Zustand — der formale Capability-Vertrag (Schema, Preview,
-> Autorisierung, Verify, Audit) entsteht erst in Phase 4/5. Datenklassen/Wirkungsklassen
-> sind hier eine **vorläufige** Einordnung nach der Masterplan-Taxonomie (formal in Phase 2).
+> **AKTUELLER STAND (Phase 5C, 2026-07-19):** Der formale Capability-Vertrag ist
+> **umgesetzt**. Die maßgebliche, **aus der laufenden Registry erzeugte** Wirkungstabelle
+> aller 22 Actions steht im Abschnitt *„Phase 5C — Wirkungsinventar aller 22 Actions"* am
+> Ende dieser Datei. Alle 22 Voice-Actions und 9/10 mutierenden REST-Routen laufen über den
+> Coordinator; das gespeicherte `ActionSpec.risk` ist entfernt (abgeleitet aus
+> `destructive`). Der folgende Block ist die **historische Phase-0-Bestandsaufnahme** und
+> beschreibt NICHT mehr den aktuellen Vertragsstand.
+>
+> **Historisch (Phase 0, Stand 2026-07-13):** Bestandsaufnahme **aller damals vorhandenen**
+> Fähigkeiten. Der formale Capability-Vertrag entstand erst in Phase 5. Datenklassen/
+> Wirkungsklassen waren hier eine **vorläufige** Einordnung nach der Masterplan-Taxonomie.
 
 ## Legende
 

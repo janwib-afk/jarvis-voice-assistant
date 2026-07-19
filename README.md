@@ -174,9 +174,13 @@ Clap twice → VS Code opens, Obsidian opens, Chrome opens with Jarvis. All wind
 
 ```
 jarvis-voice-assistant/
-├── server.py              # FastAPI layer — routes, WebSocket, settings + dashboard/command API
-├── assistant_core.py      # The brain — system prompt, LLM calls, actions
-├── actions.py             # Action registry + parsing + safety policies
+├── server.py              # FastAPI layer — routes, WebSocket, settings + dashboard/command API (dispatches effectful paths through rt.capabilities)
+├── runtime.py             # Composition root (RFC-0002) — Runtime owns config/clients/state + the one capability coordinator
+├── assistant_core.py      # The brain — system prompt (build_system_prompt), LLM calls, action orchestration
+├── capability/            # Capability/Policy kernel (RFC-0007) — contract, policy, coordinator, SSRF guard; all 22 voice actions + 9/10 mutating REST routes run through it
+├── conversation/          # ConversationSession/TurnContext (RFC-0006) — turn/queue/cancel ownership
+├── wire_protocol/         # Typed, versioned wire contracts (RFC-0005) — legacy + v1 codecs
+├── actions.py             # Action registry + parsing + safety policies (risk is a derived property, not stored)
 ├── app_launcher.py        # Allowlist app launcher (voice + UI use the same registry)
 ├── tts.py                 # ElevenLabs text-to-speech
 ├── memory.py              # Obsidian inbox/vault + long-term memory file

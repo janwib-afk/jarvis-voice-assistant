@@ -621,7 +621,7 @@ Wirkung · 9/10 Routen gesteuert · Profile-Delete als einzige Ausnahme · kein 
 kein `follow_redirects=True` · Presence-/Preview-Regeln weiterhin inaktiv · keine
 Grant-Laufzeit (`AWAITING_AUTHORIZATION` existiert nicht).
 
-**Regression.** 1245 Tests OK.
+**Regression.** 1248 Tests OK.
 
 **Restrisiko.** Der Audit prüft Callsites teils per Quelltext. Das ist bewusst grob: es
 fängt das versehentliche Wiedereinführen zuverlässig, ersetzt aber kein Typsystem.
@@ -658,4 +658,24 @@ blinden Audit ausdrücklich.
 **Mutation.** M56 (nicht-robuste Traversierung) ist **ROT**.
 
 **Verifiziert gegen beide Versionsstände:** unter fastapi 0.139.2/starlette 1.3.1 findet
-die Traversierung die Routen, unter 0.136.3/1.1.0 bleiben lokal 1245 Tests grün.
+die Traversierung die Routen, unter 0.136.3/1.1.0 bleiben lokal 1248 Tests grün.
+
+---
+
+## Merge- und Abschlussdaten (Prompt 20)
+
+| | |
+|---|---|
+| **PR** | #14 (regulärer Merge-Commit, kein Squash) |
+| **Finaler PR-Head** | `a0c53b146701703522502c468afdacd790b350b8` |
+| **Merge-Commit** | `ad6b71284c2171153214ae0e6b8175452bd8dc4f` (zwei Eltern: `96bcc6e6…` + `a0c53b14…`) |
+| **Erhaltene Slice-/Fix-Commits** | **15** (kein Squash) |
+| **Post-Merge-Lauf** | `29700819425` (`workflow_dispatch`, headSha `ad6b71284c…`) |
+| **Fast gates** | Job `88229459479` — success |
+| **Browser gates** | Job `88229459469` — success |
+| **Suite beim Merge** | **1248** Tests |
+
+Nachfolgende Wartung: siehe `docs/maintenance/PROMPT20A_AUDIO_AND_HYGIENE.md` (Audio-
+Recovery, Test-Environment-Isolation, Wetter-Response). Der 20-Prompt-Durchgang ist damit
+abgeschlossen; der ursprüngliche Masterplan (Phasen 6–13) ist **nicht** vollständig
+implementiert und bleibt zukünftiger Scope.

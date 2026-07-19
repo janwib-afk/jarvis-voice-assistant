@@ -6,7 +6,7 @@ Dieses Workspace ist **Jarvis** — ein persoenlicher KI-Assistent mit Sprachste
 
 ## Fuer Claude Code: Setup-Modus
 
-Wenn der Nutzer nach dem Setup fragt oder "Richte Jarvis ein" sagt, folge den Anweisungen in `SETUP.md`. Frage den Nutzer nach seinem Namen, seiner Taetigkeit, und wie er angesprochen werden moechte — diese Infos gehoeren in `config.json` (`user_name`, `user_role`, `user_address`). Der Systemprompt in `server.py` liest sie automatisch aus der Config; im Code muss nichts ersetzt werden. Spaeter sind sie auch im Jarvis-UI aenderbar: Kontrollzentrum → Einstellungen.
+Wenn der Nutzer nach dem Setup fragt oder "Richte Jarvis ein" sagt, folge den Anweisungen in `SETUP.md`. Frage den Nutzer nach seinem Namen, seiner Taetigkeit, und wie er angesprochen werden moechte — diese Infos gehoeren in `config.json` (`user_name`, `user_role`, `user_address`). Der Systemprompt in `assistant_core.py` (`build_system_prompt`) liest sie automatisch aus der Config; im Code muss nichts ersetzt werden. Spaeter sind sie auch im Jarvis-UI aenderbar: Kontrollzentrum → Einstellungen.
 
 **WICHTIG — Pruefe und installiere zuerst alle Voraussetzungen:**
 
@@ -33,8 +33,19 @@ Erst NACHDEM alle Voraussetzungen installiert sind, fahre mit dem Setup in `SETU
 ├── config.json            # Persoenliche Config (gitignored)
 ├── config.example.json    # Template mit Platzhaltern
 ├── requirements.txt       # Python Dependencies
-├── server.py              # FastAPI: Routen, WS-Endpoint (Origin/Token, Stopp-Handling), Settings-/Dashboard-/Command-API
-├── assistant_core.py      # Gespraechsfluss: System-Prompt, LLM-Calls, Verlauf, Action-Orchestrierung
+├── server.py              # FastAPI: Routen, WS-Endpoint (Origin/Token, Stopp-Handling), Settings-/Dashboard-/Command-API — dispatcht alle wirkenden Pfade ueber rt.capabilities
+├── runtime.py             # Composition Root (RFC-0002): Runtime besitzt Config/Clients/State,
+│                         #   create_app(runtime), Lifespan aopen/aclose; haelt den einen
+│                         #   Capability-Coordinator und den TargetGuard
+├── assistant_core.py      # Gespraechsfluss: System-Prompt (build_system_prompt), LLM-Calls, Verlauf, Action-Orchestrierung
+├── capability/            # Capability-/Policy-Kernel als deep module (RFC-0007 + Amendment 2):
+│                         #   Contract (Taxonomie/Vertraege) · Policy (reiner decide) · Coordinator
+│                         #   (validate→…→verify) · SSRF-TargetGuard · Legacy-Adapter ([ACTION:…]→Capability).
+│                         #   ALLE 22 Voice-Actions + 9/10 mutierende REST-Routen laufen hierueber
+├── conversation/          # ConversationSession/TurnContext (RFC-0006): Turn-/Queue-/Cancel-Besitz,
+│                         #   reiner Transitionskern; loest die Session-Globals ab
+├── wire_protocol/         # Typisierte, versionierte Wire-Contracts (RFC-0005): Legacy- + V1-Codec,
+│                         #   ConversationChannel/EventSink; kein Wire-Dict im App-Code
 ├── configuration.py       # Configuration als deep module (RFC-0003): Runtime-eigener
 │                         #   Single Writer — snapshot()/settings_view()/mutate(intent),
 │                         #   schema_version v1 + Migration, atomarer Austausch, Rollback

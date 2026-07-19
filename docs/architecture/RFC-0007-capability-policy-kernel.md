@@ -1,10 +1,13 @@
 # RFC-0007 — Capability- und Policy-Kernel
 
-- **Status:** Accepted for incremental implementation (2026-07-19) — **inkl.
-  [Amendment 1](#amendment-1--pilotphase-wirkungsinventar-ssrf-durchsetzung-und-lifecycle-grenzen)**
-- **Phase:** 5A (Architektur) — Umsetzung frühestens Prompt 19
+- **Status:** **IMPLEMENTIERT** (2026-07-19) — Pilot (Prompt 19) **und** Vollmigration der
+  durchsetzbaren Pfade (Prompt 20) gemergt; inkl. **Amendment 1** (Pilot) und
+  **[Amendment 2](#rfc-0007-amendment-2--vollmigration-der-durchsetzbaren-pfade-phase-5c)**
+  (Phase 5C, §A2.11 = Umsetzungsstand). Alle 22 Voice-Actions + 9/10 mutierende REST-Routen
+  laufen über den Coordinator; gespeichertes `ActionSpec.risk` entfernt.
+- **Phase:** 5A (Architektur) → 5B (Pilot, Prompt 19) → **5C (Vollmigration, Prompt 20)**
 - **Datum:** 2026-07-19
-- **Basis:** `master 98244a08` (Post-Merge-Gate `29680320223`, Fast + Browser erfolgreich)
+- **Basis:** akzeptiert auf `master 98244a08`; Phase 5C gemergt in `master ad6b71284c…`
 - **Bindend vorgelagert:** SI-1 … SI-9 (`docs/security/SECURITY_REQUIREMENTS.md`),
   ADR-0004/0005, RFC-0001 … RFC-0006 einschließlich Amendments
 

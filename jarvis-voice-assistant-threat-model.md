@@ -3,6 +3,23 @@
 > Stand 2026-07-13, Commit `dd43a62`. Repository-gegründet; jede Architekturbehauptung
 > trägt einen Evidence Anchor (repo-relativer Pfad + Symbol). Analyse-/Doku-Artefakt —
 > **kein** Produktionscode geändert. Secrets werden nie ausgegeben (`[REDACTED]`).
+>
+> **Nachtrag 2026-07-19 (Code-Stand nach Phase 5C) — die folgende Analyse beschreibt den
+> Stand vom 2026-07-13; einige technische Kontrollen sind inzwischen implementiert, die
+> Risiken bleiben aber offen:**
+> - **SSRF (TM-002):** Es gibt jetzt einen **Host-Denylist-`TargetGuard`** (Loopback, RFC1918,
+>   Link-local, ULA, Metadata, Selbstzugriff `127.0.0.1:8340`) und **`follow_redirects=False`**
+>   mit pro-Hop geprüfter Redirect-Kette plus Nachprüfung der verbundenen IP
+>   (`capability/_ssrf.py`, `browser_tools.py`). Die unten stehenden Aussagen „kein Host-Filter"
+>   und „`follow_redirects=True`" sind damit **überholt**. **TM-002 bleibt dennoch `high`:**
+>   ohne IP-Pinning ist **DNS-Rebinding** weiterhin möglich (Phase 9). **Nicht behoben.**
+> - **Untrusted → Aktion (TM-001):** Alle 22 Actions laufen über den reinen Policy Kernel;
+>   `[ACTION:…]` ist immer `derived` und autorisiert nie eine `external-write`. Der frühere
+>   direkte `execute_action`-Fallback existiert **nicht mehr**. **TM-001 bleibt dennoch `high`:**
+>   flächendeckend *durchsetzbar*, aber untrusted Inhalt erreicht das Modell unverändert.
+>   **Nicht gelöst.**
+> - Maßgeblich für den aktuellen Mitigationsstatus ist `docs/security/RISK_REGISTER.md`.
+>   Es werden **keine** neuen Sicherheitsversprechen gemacht.
 
 ## Executive summary
 
