@@ -422,3 +422,50 @@ alle drei ROT.
 Legacy-Parser wieder zerlegt. Das ist byte-identisch, weil `app_id` ein Slug und
 monitor/zone Allowlist-Konstanten sind — ein `|` in einer App-**ID** würde es brechen.
 Als Formwart notiert, nicht als offene Lücke.
+
+---
+
+## Slice 9 — Übrige sichere REST-Mutationen
+
+**Ziel und Seam.** `POST /settings`, `POST /music/selection`, `POST /launcher/profiles`,
+`POST /launcher/profiles/{id}/duplicate` über den Coordinator führen — unter Erhalt der
+empfindlichsten Verträge des Servers.
+
+**Erstes beobachtetes ROT.** 12 Fehler: Census (vier Verträge fehlten) und die drei
+Coordinator-Zusicherungen. Die Verhaltenszusicherungen (403/400/404/409/Body) waren
+bereits grün und blieben es.
+
+**Eine Strukturentscheidung mit Begründung.** `_live_apply` ist **Runtime-Zustand**, keine
+HTTP-Sache: es setzt Persona, Vault-Pfade, Launcher-Registry und Startwarnungen des
+laufenden Prozesses. Es ist deshalb nach `Runtime.apply_document` gewandert. Damit
+erreicht der Capability-Execute es **ohne einen fünften Binding-Port** — Amendment 2 §A2.4
+nennt genau vier, ein fünfter wäre nicht gedeckt gewesen. In `server.py` bleibt ein dünnes
+Kompat-Alias.
+
+**Domänenablehnungen sind Ergebnisse.** `ConfigConflict` und `ConfigError` verlassen den
+Executor als **Felder** (`conflict`, `error`), nicht als Exceptions. Nur so kann die Route
+weiterhin 409 von 500 von 400 unterscheiden, ohne den Coordinator zu umgehen — und nur so
+wird ein Konflikt nicht als `FAILED` verwischt.
+
+**Erhaltene Verträge (geprüft).** If-Match/Revision inkl. frischem *und* veraltetem Wert,
+`409 Conflict` mit `conflict: true`, `403`, `400` (ungültiges JSON, unbekannter Schlüssel,
+schlechter Dateiname, fehlendes Feld), `404`, `applied`/`revision`/`warnings` im Body,
+„Profil anlegen aktiviert **nicht**", Broadcast und Correlation.
+
+**Post-Commit-Semantik.** Ein eigener Test lässt `broadcast_health` werfen und belegt, dass
+der Commit trotzdem **200** liefert, `assistant_core.CITY` gesetzt bleibt **und** der neue
+Wert in der Datei steht: ein gültig persistierter Commit wird durch einen späteren
+Broadcast-/Refresh-Fehler **nie** zurückgerollt.
+
+**Scopes.** `settings.update` trägt `config.settings`, `music.selection.set`
+`config.music` — `config.launcher` wird nicht für fachfremde Daten missbraucht (geprüft).
+
+**Mutationen.** M40 Konflikt als Erfolg · M41 If-Match ignoriert · M42 `config.launcher`
+für Settings missbraucht · M43 Konflikt liefert 200 — **alle vier ROT**.
+
+**Regression.** 1195 Tests OK.
+
+**Rollback.** `git revert`; `Runtime.apply_document` bliebe dabei ungenutzt zurück und
+müsste mit zurückgenommen werden.
+
+**Restrisiko.** Keines über die bereits genannten hinaus.

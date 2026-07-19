@@ -672,6 +672,125 @@ def launcher_placement_set_contract(deps=None) -> CapabilityContract:
         execute=_DelegatedLauncherMutation("APP_PLACE", "placement"))
 
 
+# ── Uebrige sichere REST-Mutationen (Phase 5C Slice 9) ──────────────────────
+
+
+@dataclass(frozen=True)
+class _DelegatedConfigMutation:
+    """Eine Config-Mutation ueber den EINZIGEN Writer.
+
+    Domaenenablehnungen sind **Ergebnisse**, keine Exceptions (§11): Konflikt und
+    Validierungsfehler kommen als Felder zurueck, damit die Route weiterhin
+    409/400/500 unterscheiden kann, ohne dass der Coordinator umgangen wird.
+
+    Das Live-Apply laeuft ueber ``Runtime.apply_document`` — kein zusaetzlicher
+    Binding-Port (Amendment 2 §A2.4 nennt genau vier).
+    """
+    kind: str
+
+    def _intent(self, payload):
+        import configuration
+        if self.kind == "settings":
+            return configuration.SetSettings(payload["updates"])
+        return configuration.SelectMusic(payload["file"])
+
+    async def __call__(self, payload, ctx):
+        import config_loader
+        import configuration
+        rt = ctx.deps.runtime
+        state = {"needs_refresh": False}
+
+        def _apply(document):
+            state["needs_refresh"] = rt.apply_document(document)
+
+        expected = payload.get("expected_revision") or None
+        try:
+            await rt.configuration.mutate(self._intent(payload),
+                                          expected_revision=expected, apply=_apply)
+        except configuration.ConfigConflict as e:
+            return {"ok": False, "conflict": True, "error": str(e),
+                    "needs_refresh": False, "revision": ""}
+        except config_loader.ConfigError as e:
+            return {"ok": False, "conflict": False, "error": str(e),
+                    "needs_refresh": False, "revision": ""}
+        return {"ok": True, "conflict": False, "error": "",
+                "needs_refresh": state["needs_refresh"],
+                "revision": rt.configuration.snapshot().revision}
+
+
+@dataclass(frozen=True)
+class _DelegatedProfileIntent:
+    """Profil anlegen/duplizieren — reine Weitergabe der semantischen Absicht."""
+    kind: str
+
+    async def __call__(self, payload, ctx):
+        import configuration
+        if self.kind == "create":
+            intent = configuration.CreateProfile(payload["profile_id"] or None,
+                                                 payload["name"])
+        else:
+            intent = configuration.DuplicateProfile(
+                payload["source_id"], payload["profile_id"] or None, payload["name"])
+        errors = await ctx.bindings.mutate_launcher(intent, "profile")
+        return {"text": "", "errors": tuple(errors)}
+
+
+def _config_contract(name, title, *, inputs, scope, execute) -> CapabilityContract:
+    return CapabilityContract(
+        name=name, version=1, title=title,
+        inputs=inputs,
+        output=OutputSchema(fields=(Field("text", str, required=False),
+                                    Field("errors", tuple, required=False),
+                                    Field("ok", bool, required=False),
+                                    Field("conflict", bool, required=False),
+                                    Field("error", str, required=False),
+                                    Field("needs_refresh", bool, required=False),
+                                    Field("revision", str, required=False))),
+        effects=(EffectClass.LOCAL_WRITE,),
+        reads=(DataClass.LOCAL,), writes=(DataClass.LOCAL,), scopes=(scope,),
+        timeout_s=15,
+        retry=Retry.NEVER, cancellable=False,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture={}, execute=execute,
+    )
+
+
+def settings_update_contract(deps=None) -> CapabilityContract:
+    return _config_contract(
+        "settings.update", "Einstellungen speichern",
+        inputs=InputSchema(fields=(Field("updates", dict),
+                                   Field("expected_revision", (str, type(None)),
+                                         required=False))),
+        scope=Scope.CONFIG_SETTINGS, execute=_DelegatedConfigMutation("settings"))
+
+
+def music_selection_contract(deps=None) -> CapabilityContract:
+    return _config_contract(
+        "music.selection.set", "Musikauswahl speichern",
+        inputs=InputSchema(fields=(Field("file", str),)),
+        scope=Scope.CONFIG_MUSIC, execute=_DelegatedConfigMutation("music"))
+
+
+def launcher_profile_create_contract(deps=None) -> CapabilityContract:
+    return _config_contract(
+        "launcher.profile.create", "Profil erstellen",
+        inputs=InputSchema(fields=(Field("profile_id", (str, type(None)),
+                                         required=False),
+                                   Field("name", str))),
+        scope=Scope.CONFIG_LAUNCHER, execute=_DelegatedProfileIntent("create"))
+
+
+def launcher_profile_duplicate_contract(deps=None) -> CapabilityContract:
+    return _config_contract(
+        "launcher.profile.duplicate", "Profil duplizieren",
+        inputs=InputSchema(fields=(Field("source_id", str),
+                                   Field("profile_id", (str, type(None)),
+                                         required=False),
+                                   Field("name", str))),
+        scope=Scope.CONFIG_LAUNCHER, execute=_DelegatedProfileIntent("duplicate"))
+
+
 #: Capabilities mit **festen**, im Code stehenden Provider-Zielen. Ihre Ziel-URL
 #: kommt nie aus Eingabe oder Modellinhalt; die SSRF-Pruefung der tatsaechlichen
 #: Navigation erledigt der Transport-Guard (Amendment 2 §A2.6).

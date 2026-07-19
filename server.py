@@ -341,24 +341,15 @@ async def broadcast_health(rt):
 
 
 def _live_apply(rt, merged: dict) -> bool:
-    """NOTWENDIGES Live-Apply (RFC-0003 D9): deterministisch, ohne Netz/Broadcast.
+    """Duennes Kompat-Alias auf ``Runtime.apply_document`` (Phase 5C Slice 9).
 
-    Laeuft INNERHALB der Transaktion — wirft es, stellt der Writer Datei und
-    Snapshot wieder her. Gibt zurueck, ob ein Post-Commit-Refresh noetig ist.
+    Das Live-Apply ist Runtime-Zustand, keine HTTP-Sache: es setzt Persona,
+    Vault-Pfade, Launcher-Registry und Startwarnungen des laufenden Prozesses.
+    Es liegt deshalb jetzt auf der Runtime, damit der Capability-Execute es ohne
+    einen zusaetzlichen Binding-Port erreicht (Amendment 2 §A2.4 nennt genau vier
+    Ports — ein fuenfter waere nicht gedeckt).
     """
-    needs_refresh = (
-        merged.get("city", assistant_core.CITY) != assistant_core.CITY
-        or merged.get("obsidian_inbox_path", memory.VAULT_PATH) != memory.VAULT_PATH
-        or merged.get("obsidian_inbox_folder", memory.INBOX_PATH) != memory.INBOX_PATH
-    )
-    assistant_core.configure(merged)
-    memory.configure(
-        vault_path=merged.get("obsidian_inbox_path", ""),
-        inbox_path=merged.get("obsidian_inbox_folder", ""),
-    )
-    app_launcher.configure(merged.get("apps", []), merged.get("launcher"))
-    rt.startup_warnings = config_loader.check_runtime_environment(merged)
-    return needs_refresh
+    return rt.apply_document(merged)
 
 
 async def _post_commit(rt, needs_refresh: bool) -> list[str]:
@@ -410,27 +401,32 @@ async def post_settings(request: Request):
     # If-Match ist OPTIONAL (Kompatibilitaet): fehlt er, wird gegen die frisch
     # gelesene Basis gearbeitet. Ist er vorhanden und ueberholt -> 409 (D6).
     expected = request.headers.get("if-match") or None
-    needs_refresh = False
-
-    def _apply(document):
-        nonlocal needs_refresh
-        needs_refresh = _live_apply(rt, document)
-
-    try:
-        await rt.configuration.mutate(
-            configuration.SetSettings(updates), expected_revision=expected, apply=_apply)
-    except configuration.ConfigConflict as e:
-        return JSONResponse({"ok": False, "errors": [str(e)], "conflict": True},
-                            status_code=409)
-    except config_loader.ConfigError as e:
+    # Ueber den Coordinator (RFC-0007 A2 §A2.3). Konflikt und Validierungsfehler
+    # sind Domaenen-ERGEBNISSE, keine Exceptions — die Route unterscheidet
+    # 409/500 daher aus Feldern statt aus Ausnahmen.
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(
+            "settings.update", capability.Provenance.OPERATOR,
+            {"updates": updates, "expected_revision": expected}),
+        capability.Evidence(),
+        meta={"correlation_id": _rest_correlation(request)})
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return JSONResponse({"ok": False, "errors": ["Speichern fehlgeschlagen."]},
+                            status_code=500)
+    result = outcome.value
+    if not result["ok"]:
+        if result["conflict"]:
+            return JSONResponse({"ok": False, "errors": [result["error"]],
+                                 "conflict": True}, status_code=409)
         # ConfigError-Meldungen nennen nur Schluesselnamen, nie Werte.
-        return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=500)
+        return JSONResponse({"ok": False, "errors": [result["error"]]},
+                            status_code=500)
 
-    degraded = await _post_commit(rt, needs_refresh)
+    degraded = await _post_commit(rt, result["needs_refresh"])
     obslog.event("settings.saved", changed=len(updates))
     body = {"ok": True, "applied": sorted(updates.keys()),
             "warnings": rt.startup_warnings,
-            "revision": rt.configuration.snapshot().revision}
+            "revision": result["revision"]}
     if degraded:
         body["degraded"] = degraded
     return body
@@ -514,20 +510,21 @@ async def music_selection(request: Request):
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
 
     rt = request.app.state.runtime
-    needs_refresh = False
-
-    def _apply(document):
-        nonlocal needs_refresh
-        needs_refresh = _live_apply(rt, document)
-
-    try:
-        await rt.configuration.mutate(configuration.SelectMusic(file), apply=_apply)
-    except config_loader.ConfigError as e:
+    outcome = await rt.capabilities.attempt(
+        capability.CapabilityRequest(
+            "music.selection.set", capability.Provenance.OPERATOR, {"file": file}),
+        capability.Evidence(),
+        meta={"correlation_id": _rest_correlation(request)})
+    if outcome.status is not capability.OutcomeStatus.OK:
+        return JSONResponse({"ok": False, "errors": ["Speichern fehlgeschlagen."]},
+                            status_code=500)
+    result = outcome.value
+    if not result["ok"]:
         # Ordner fehlt/Datei nicht gefunden -> wie bisher 400 (Nutzerfehler).
-        message = str(e)
+        message = result["error"]
         status = 400 if ("Musikordner" in message or "Datei nicht" in message) else 500
         return JSONResponse({"ok": False, "errors": [message]}, status_code=status)
-    await _post_commit(rt, needs_refresh)
+    await _post_commit(rt, result["needs_refresh"])
     # Alle verbundenen Clients nachziehen (Muster: launcher_changed) —
     # Musikliste und "Nächste Musik"-Status bleiben ueberall synchron.
     await rt.connections.broadcast(wp.MusicChanged(selected=file),
@@ -817,7 +814,9 @@ async def launcher_create_profile(request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
+    _value, err = await _launcher_capability(
+        request, "launcher.profile.create",
+        {"profile_id": body.get("id"), "name": name})
     if err is not None:
         return err
     obslog.event("profile.changed", kind="created", active=app_launcher.ACTIVE_PROFILE)
@@ -857,7 +856,9 @@ async def launcher_duplicate_profile(profile_id: str, request: Request):
     if intent.validate(request.app.state.runtime.configuration.snapshot().as_dict()):
         return JSONResponse({"ok": False, "errors": ["Profil-ID bereits vergeben oder ungültig."]},
                             status_code=400)
-    _merged, err = await _persist_launcher(request.app.state.runtime, intent, "profile", _rest_correlation(request))
+    _value, err = await _launcher_capability(
+        request, "launcher.profile.duplicate",
+        {"source_id": profile_id, "profile_id": body.get("id"), "name": name})
     if err is not None:
         return err
     obslog.event("profile.changed", kind="duplicated", active=app_launcher.ACTIVE_PROFILE)

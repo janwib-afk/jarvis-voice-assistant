@@ -101,6 +101,30 @@ class Runtime:
         """Vom Server (``create_app``) gesetzte Persist-Orchestrierung."""
         self._launcher_persist = fn
 
+    def apply_document(self, merged: dict) -> bool:
+        """NOTWENDIGES Live-Apply (RFC-0003 D9): deterministisch, ohne Netz/Broadcast.
+
+        Laeuft INNERHALB der Transaktion — wirft es, stellt der Writer Datei und
+        Snapshot wieder her. Gibt zurueck, ob ein Post-Commit-Refresh noetig ist.
+        """
+        import app_launcher
+        import assistant_core
+        import config_loader
+        import memory
+        needs_refresh = (
+            merged.get("city", assistant_core.CITY) != assistant_core.CITY
+            or merged.get("obsidian_inbox_path", memory.VAULT_PATH) != memory.VAULT_PATH
+            or merged.get("obsidian_inbox_folder", memory.INBOX_PATH) != memory.INBOX_PATH
+        )
+        assistant_core.configure(merged)
+        memory.configure(
+            vault_path=merged.get("obsidian_inbox_path", ""),
+            inbox_path=merged.get("obsidian_inbox_folder", ""),
+        )
+        app_launcher.configure(merged.get("apps", []), merged.get("launcher"))
+        self.startup_warnings = config_loader.check_runtime_environment(merged)
+        return needs_refresh
+
     async def persist_launcher(self, intent, kind: str, correlation_id=None) -> list[str]:
         """Semantische Launcher-Mutation ueber den EINZIGEN Writer (RFC-0003).
 

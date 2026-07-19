@@ -57,6 +57,10 @@ def pilot_contracts(deps: CapabilityDeps) -> list:
         _legacy.launcher_profile_activate_contract(deps), # 5C Slice 7
         _legacy.launcher_autostart_set_contract(deps),    # 5C Slice 7
         _legacy.launcher_placement_set_contract(deps),    # 5C Slice 7
+        _legacy.settings_update_contract(deps),           # 5C Slice 9
+        _legacy.music_selection_contract(deps),           # 5C Slice 9
+        _legacy.launcher_profile_create_contract(deps),   # 5C Slice 9
+        _legacy.launcher_profile_duplicate_contract(deps),# 5C Slice 9
     ]
     return contracts
 
