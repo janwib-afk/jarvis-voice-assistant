@@ -52,6 +52,10 @@ MIGRATED_ACTIONS: Mapping[str, str] = MappingProxyType({
     "OPEN": "web.open",
     "NEWS": "web.news",
     "RESEARCH": "web.research",
+    "INBOX_READ": "vault.inbox.read",
+    "MEMORY_READ": "memory.read",
+    "NOTES_RECENT": "vault.notes.recent",
+    "PROJECT_CONTEXT": "vault.project.context",
 })
 
 
@@ -334,6 +338,51 @@ def web_research_contract(deps=None) -> CapabilityContract:
         timeout_s=180, fixture={"query": "thema"})
 
 
+# ── Vault-/Memory-Lesepfade (Phase 5C Slice 4) ──────────────────────────────
+
+
+def _read_contract(name, title, action_type, *, field=None, scopes=(Scope.VAULT,),
+                   fixture=None) -> CapabilityContract:
+    """Ein persoenlicher Lesepfad.
+
+    ``read-sensitive`` fuer den Vault-/Memory-Zugriff und ``network-read``, weil
+    **alle vier** ein ``summary_task`` tragen: der gelesene persoenliche Inhalt
+    geht an das Summary-LLM und danach als TTS hinaus (Amendment 2 §A2.5).
+    ``reads=personal`` macht den Vertrag ``governed`` — nie ``trivial``.
+    """
+    return CapabilityContract(
+        name=name, version=1, title=title,
+        inputs=InputSchema(fields=(Field(field, str),) if field else ()),
+        output=OutputSchema(fields=(Field("text", str),)),
+        effects=(EffectClass.READ_SENSITIVE, EffectClass.NETWORK_READ),
+        reads=(DataClass.PERSONAL,), writes=(), scopes=scopes,
+        timeout_s=60,
+        retry=Retry.NEVER, cancellable=True,
+        preview=Preview.NONE, verify=Verify.SELF_REPORTED, health=Health.PASSIVE,
+        audit=("name", "version", "outcome", "duration_ms", "effects"),
+        fixture=fixture if fixture is not None else {},
+        execute=_Delegated(action_type, field),
+    )
+
+
+def vault_inbox_read_contract(deps=None) -> CapabilityContract:
+    return _read_contract("vault.inbox.read", "Inbox lesen", "INBOX_READ")
+
+
+def memory_read_contract(deps=None) -> CapabilityContract:
+    return _read_contract("memory.read", "Gedächtnis lesen", "MEMORY_READ")
+
+
+def vault_notes_recent_contract(deps=None) -> CapabilityContract:
+    return _read_contract("vault.notes.recent", "Letzte Notizen", "NOTES_RECENT")
+
+
+def vault_project_context_contract(deps=None) -> CapabilityContract:
+    return _read_contract("vault.project.context", "Projekt-Kontext",
+                          "PROJECT_CONTEXT", field="question",
+                          fixture={"question": "thema"})
+
+
 #: Capabilities mit **festen**, im Code stehenden Provider-Zielen. Ihre Ziel-URL
 #: kommt nie aus Eingabe oder Modellinhalt; die SSRF-Pruefung der tatsaechlichen
 #: Navigation erledigt der Transport-Guard (Amendment 2 §A2.6).
@@ -376,6 +425,10 @@ _PAYLOAD_BUILDERS = {
     "OPEN": lambda a: {"url": a.payload},
     "NEWS": lambda a: {},
     "RESEARCH": lambda a: {"query": a.payload},
+    "INBOX_READ": lambda a: {},
+    "MEMORY_READ": lambda a: {},
+    "NOTES_RECENT": lambda a: {},
+    "PROJECT_CONTEXT": lambda a: {"question": a.payload},
 }
 
 
@@ -395,6 +448,10 @@ _FALLBACK_TEXT = {
     "web.open": "Das konnte ich nicht öffnen.",
     "web.news": "News konnten nicht geladen werden.",
     "web.research": "Recherche fehlgeschlagen: nicht ausführbar.",
+    "vault.inbox.read": "Die Inbox konnte ich nicht lesen.",
+    "memory.read": "Das Gedächtnis konnte ich nicht lesen.",
+    "vault.notes.recent": "Die Notizen konnte ich nicht lesen.",
+    "vault.project.context": "Den Projekt-Kontext konnte ich nicht lesen.",
 }
 
 #: Letzte Zuflucht: jeder Ausgang hat einen sprechbaren Text — nie ein leerer String.

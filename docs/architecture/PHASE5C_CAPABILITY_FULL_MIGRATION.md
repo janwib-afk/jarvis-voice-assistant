@@ -232,3 +232,33 @@ zurück, alle übrigen Slices bleiben gültig.
 **Restrisiko.** DNS-Rebinding zwischen Evidenz und Navigation bleibt offen — abgefedert,
 aber nicht beseitigt durch die transportseitige Nachprüfung der verbundenen IP. IP-Pinning
 bleibt Phase 9.
+
+---
+
+## Slice 4 — Vault- und Memory-Lesepfade
+
+**Ziel und Seam.** `INBOX_READ`, `MEMORY_READ`, `NOTES_RECENT`, `PROJECT_CONTEXT`
+migrieren. Kontrollierte Grenze: `memory.*` (Dateisystem), ausschließlich synthetische
+Inhalte — kein echter Vault wird angefasst.
+
+**Erstes beobachtetes ROT.** 33 Fehler (`UnknownCapability`).
+
+**Minimales GRÜN.** Vier Verträge über `_read_contract`; alle deklarieren
+`read-sensitive` **und** `network-read`, weil alle vier ein `summary_task` tragen: der
+gelesene persönliche Inhalt geht an das Summary-LLM und danach als TTS hinaus.
+`reads=personal`, `writes=∅` → durchweg `governed`, nie `trivial`.
+
+**Datenschutz-Beleg.** Ein Audit-Spion prüft, dass der synthetische Vault-Inhalt weder
+im Ereignisnamen noch in den Feldern auftaucht — die geschlossene Allowlist aus RFC-0004
+macht das strukturell unmöglich. Zusätzlich ist belegt, dass keine eingecheckte Fixture
+einen Vault-Auszug enthält.
+
+**Mutationen.** M21 Lesepfade als harmlos deklariert · M22 Mapping verbogen ·
+M23 Timeout weicht vom `ActionSpec` ab — **alle drei ROT**.
+
+**Regression.** 1104 Tests OK.
+
+**Rollback.** `git revert`; die vier Actions fallen auf `execute_action` zurück.
+
+**Restrisiko.** TM-008 (Vault-/Memory-Injection in den Prompt) bleibt unberührt — die
+Migration klassifiziert die Wirkung, sie filtert den Inhalt nicht.
