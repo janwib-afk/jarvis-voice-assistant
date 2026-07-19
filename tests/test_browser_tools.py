@@ -12,6 +12,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import browser_tools
+import capability
 
 
 class FakePage:
@@ -149,10 +150,17 @@ class SearchLinksFallbackTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._orig_new_page = browser_tools._new_page_capped
         self._orig_fallback = browser_tools._search_links_fallback
+        # Permissiver SSRF-Guard: kein echtes DNS in Unit-Tests; jeder Host loest auf
+        # eine oeffentliche IP auf. Die Denylist selbst ist in test_capability_ssrf
+        # erschoepfend geprueft.
+        self._orig_guard = browser_tools._guard
+        browser_tools.configure_guard(
+            capability.TargetGuard(resolver=lambda h: ["93.184.216.34"]))
 
     def tearDown(self):
         browser_tools._new_page_capped = self._orig_new_page
         browser_tools._search_links_fallback = self._orig_fallback
+        browser_tools.configure_guard(self._orig_guard)
 
     async def test_fallback_used_when_browser_fails(self):
         async def broken_page():
@@ -190,8 +198,11 @@ class SearchLinksFallbackTests(unittest.IsolatedAsyncioTestCase):
         class FakePage:
             url = "about:blank"
 
-            async def goto(self, *a, **kw):
+            async def route(self, *a, **kw):
                 pass
+
+            async def goto(self, *a, **kw):
+                return None
 
             async def wait_for_timeout(self, ms):
                 pass
@@ -256,10 +267,14 @@ class VisitFallbackTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._orig_page = browser_tools._new_page_capped
         self._orig_fetch = browser_tools.fetch_page_text_fallback
+        self._orig_guard = browser_tools._guard
+        browser_tools.configure_guard(
+            capability.TargetGuard(resolver=lambda h: ["93.184.216.34"]))
 
     def tearDown(self):
         browser_tools._new_page_capped = self._orig_page
         browser_tools.fetch_page_text_fallback = self._orig_fetch
+        browser_tools.configure_guard(self._orig_guard)
 
     async def test_falls_back_when_no_browser(self):
         async def broken_page():
@@ -279,6 +294,9 @@ class VisitFallbackTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_falls_back_when_page_op_fails(self):
         class FakePage:
+            async def route(self, *a, **kw):
+                pass
+
             async def goto(self, *a, **kw):
                 raise RuntimeError("Navigation failed")
 
@@ -298,6 +316,9 @@ class VisitFallbackTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_original_error_when_fallback_also_fails(self):
         class FakePage:
+            async def route(self, *a, **kw):
+                pass
+
             async def goto(self, *a, **kw):
                 raise RuntimeError("Navigation kaputt")
 

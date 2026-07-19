@@ -75,7 +75,11 @@ class Runtime:
         # Konstruktion ist I/O-frei; der Dedupe-Scope ist an diese App gebunden
         # (§19). Kein Modul-Global, kein Service Locator — deps ist eine konkrete
         # Objektreferenz auf diese Runtime (§7).
-        _cap_deps = capability.CapabilityDeps(runtime=self)
+        # SSRF-TargetGuard (RFC-0007 §21): genau EIN Guard, den Coordinator-Deps und
+        # browser_tools teilen. Konstruktion ist I/O-frei (nur der Resolver wird
+        # gehalten); die Injektion in browser_tools passiert in wire().
+        self._target_guard = capability.TargetGuard()
+        _cap_deps = capability.CapabilityDeps(runtime=self, target_guard=self._target_guard)
         self.capabilities = capability.Coordinator(
             capability.build_registry(_cap_deps),
             capability.ACTIVE_RULES,
@@ -133,6 +137,7 @@ class Runtime:
             return
         import app_launcher
         import assistant_core
+        import browser_tools
         import memory
         cfg = self.config or {}
         memory.configure(
@@ -142,6 +147,8 @@ class Runtime:
         assistant_core.configure(cfg)
         assistant_core.init_clients(self.ai, self.http)
         app_launcher.configure(cfg.get("apps", []), cfg.get("launcher"))
+        # Denselben SSRF-Guard in die Browsersteuerung injizieren (RFC-0007 §21).
+        browser_tools.configure_guard(self._target_guard)
         self._wired = True
 
     async def aopen(self) -> None:

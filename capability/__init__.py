@@ -58,12 +58,22 @@ from ._legacy import (  # noqa: F401
     is_migrated,
     run_migrated,
 )
+from ._ssrf import (  # noqa: F401
+    SSRFBlocked,
+    TargetGuard,
+    Verdict,
+    guarded_goto,
+    httpx_guarded_get,
+    install_page_guard,
+)
 
 __all__ = [
     "ACTIVE_RULES", "DATED_RULES", "Rule", "decide",
     "AttemptContext", "Cancelled", "Coordinator",
     "CapabilityDeps", "build_registry", "pilot_contracts",
     "MIGRATED_ACTIONS", "is_migrated", "run_migrated",
+    "SSRFBlocked", "TargetGuard", "Verdict",
+    "guarded_goto", "httpx_guarded_get", "install_page_guard",
     "AUDIT_FIELDS",
     "CapabilityContract", "CapabilityRequest", "CapabilityView",
     "DataClass", "Decision", "EffectClass", "Evidence", "Health",

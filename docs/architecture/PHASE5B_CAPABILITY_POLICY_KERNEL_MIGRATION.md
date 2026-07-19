@@ -452,3 +452,100 @@ Datenmigration.
 den geklickten Ergebnis-Link. **Die SSRF-Durchsetzung auf jede tatsaechliche Navigation
 (Ergebnis-Klick, Redirect) ist Slice 6** und hier noch nicht vorhanden. Slice 5 behauptet
 **keine** TM-002-Mitigation.
+
+---
+
+## Slice 6 — SSRF TargetGuard und beide Transportfamilien
+
+**Ziel.** Ein gemeinsamer **reiner** `TargetGuard`, erzwungen durch **zwei**
+Produktionsadapter (httpx **und** Playwright), der die tatsaechlich aufgeloeste Adresse
+gegen eine Denylist prueft — vor jedem Request und jedem Redirect-/Navigations-Hop
+(D7, Amendment 1 §A1.3).
+
+**Oeffentlicher Seam.** `SSRF-Transport/TargetGuard` — `capability.TargetGuard`
+(`check_url`/`check_ip`/`ensure`), `capability.httpx_guarded_get`,
+`capability.install_page_guard`, `capability.guarded_goto`, `capability.SSRFBlocked`.
+Kontrollierte Grenze: **injizierter Resolver** + Transport-/Playwright-Doubles —
+**niemals echtes Internet**.
+
+**Playwright-Seam belegbar (kein Blocker).** Vorab geprueft: `Page.route`, `Page.goto`,
+`Response.server_addr`, `Route.abort`, `Route.continue_`, `Request.url` existieren alle
+in der installierten Playwright-Version. Damit ist der produktive Hauptpfad
+nachweisbar schuetzbar — die Abbruchbedingung `PROMPT 19 BLOCKIERT – PLAYWRIGHT-SSRF-SEAM
+NICHT BELEGBAR` trifft **nicht** zu.
+
+**Ausgangsverhalten.** `actions.normalize_url` prueft nur das Schema; der Host wurde nie
+geprueft. Beide httpx-Fallbacks nutzten `follow_redirects=True` ohne Revalidierung; jede
+`page.goto` navigierte ungeprueft. TM-002 war vollstaendig offen (RFC-0007 §2.5).
+
+**RED (tatsaechlich beobachtet).** `Ran 27 tests ... FAILED (errors=30)` mit
+`AttributeError: module 'capability' has no attribute 'TargetGuard'`.
+
+**GREEN (minimal).**
+* `capability/_ssrf.py` — reiner `TargetGuard` (nur der DNS-Resolver ist die eine
+  injizierte Grenze), die httpx-Redirect-Schleife und die Playwright-Adapter.
+* `browser_tools.py` — **jede** `page.goto` laeuft ueber `_guarded_goto`
+  (Route-Guard installieren + Vorab-Pruefung + verbundene-IP-Nachpruefung); beide
+  httpx-Fallbacks nutzen `follow_redirects=False` mit gepruefter Kette. Fail-closed:
+  ist kein Guard konfiguriert, wird ein strikter Default-Guard erzeugt.
+* `runtime.py` — genau **ein** Guard, den Coordinator-Deps und `browser_tools`
+  (`configure_guard`) teilen.
+
+**Denylist (§21), je Kategorie erlaubend UND verweigernd getestet.** Loopback (v4/v6),
+RFC1918, Link-local (v4/v6), IPv6-ULA, Cloud-Metadata, ipv4-mapped Loopback,
+Jarvis-Selbstzugriff `127.0.0.1:8340`. Dazu: Literal-IP, localhost, **gemischte
+DNS-Antworten** (ein privater Record verwirft das ganze Ziel), Userinfo, ungueltige
+Ports, fehlende Hosts, nicht-http-Schemata, erlaubte oeffentliche Ziele.
+
+**Verdrahtungsbeleg.** Zwei Tests fahren den **produktiven** browser_tools-Pfad
+(`_search_links_fallback`, `fetch_page_text_fallback`) mit einem Guard, dessen Resolver
+auf Loopback/privat zeigt — beide liefern leer/Fehler. Damit ist belegt, dass die
+Produktion den Guard wirklich aufruft, nicht nur der Guard fuer sich.
+
+**Mutationsnachweis (ausgefuehrt, 12 Mutationen).** Neun **ROT**, drei **GRUEN** —
+letztere **untersucht und als bewusste Redundanz belegt**, nicht als Testluecke:
+
+| Mutation | Ergebnis |
+|---|---|
+| privates Netz nicht mehr blockiert (**tragende Pruefung**) | **ROT** |
+| Userinfo nicht mehr abgelehnt | **ROT** |
+| Nur-http-Schema-Pruefung entfernt | **ROT** |
+| gemischte DNS-Antwort: nur erste IP geprueft | **ROT** |
+| httpx: Redirect-Hop nicht mehr geprueft | **ROT** |
+| httpx: Redirect-Kette unbegrenzt | **ROT** |
+| Playwright: verbundene IP nicht mehr geprueft | **ROT** |
+| Playwright: Route-Handler bricht `denied` nicht ab | **ROT** |
+| Playwright: keine Vorab-Navigationspruefung | **ROT** |
+| Loopback-Zweig entfernt | GRUEN — Redundanz |
+| Link-local-Zweig entfernt | GRUEN — Redundanz |
+| ipv4-mapped-Entpackung entfernt | GRUEN — Redundanz |
+
+**Warum die drei GRUEN korrekt sind (empirisch belegt).** In CPython 3.14 ist
+`ipaddress.is_private` ein **Catch-all**, das Loopback, Link-local und ipv4-mapped
+bereits einschliesst (`127.0.0.1`, `169.254.10.20`, `::ffff:127.0.0.1` sind alle
+`is_private=True`). Entfernt man **einen** spezifischen Zweig, bleibt das Ziel durch
+`is_private` weiter blockiert — das Verhalten (deny) aendert sich nicht. Die tragende
+Pruefung (`is_private`) ist mit dem RFC1918-Fall **scharf** getestet (Mutation ROT). Die
+expliziten Zweige sind **Defense-in-Depth**: sie machen die Absicht lesbar und halten den
+Schutz, falls sich die `ipaddress`-Semantik je aendert. (Praezedenz: RFC-0006 Szenario 14
+— redundante Guards ehrlich dokumentiert.)
+
+**Bereinigung.** Der urspruengliche `self_port`-Zweig war **unerreichbar** (der
+`is_loopback`-Zweig kehrt vorher zurueck) und wurde entfernt; der Selbstzugriff ist in
+der Loopback-Denial-Meldung ausdruecklich benannt.
+
+**Regression.** Suite **1002** grün (vorher 973, +29). SSRF-Block (48 Faelle) **5×
+flakefrei**. Smoke **Exit 0**. Fixture `a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` —
+bytegleich.
+
+**Commit.** Slice 5 war `8087d0c`; die SHA dieses Slices traegt der Folge-Slice nach.
+
+**Rueckrollweg.** Commit reverten: `browser_tools` kehrt auf `follow_redirects=True` und
+ungeprueftes `page.goto` zurueck; `capability/_ssrf.py` und die Runtime-Injektion
+entfallen. Kein Datenformat betroffen.
+
+**Offene Restrisiken (ehrlich).** **TM-002 ist nur teilweise mitigiert.** Die
+Pro-Verbindungs- und Pro-Hop-Pruefung erschwert SSRF erheblich, aber **ohne IP-Pinning**
+wird nicht behauptet, die tatsaechlich verbundene IP kryptografisch zu binden.
+**DNS-Rebinding bleibt Restrisiko** (D7/R7, Phase 9). Der Route-Handler und die
+`server_addr`-Nachpruefung verkleinern das Fenster, schliessen es aber nicht.
