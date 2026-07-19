@@ -37,8 +37,15 @@ from ._contract import (  # noqa: F401
     UnknownCapability,
     Verify,
 )
+from ._policy import (  # noqa: F401
+    ACTIVE_RULES,
+    DATED_RULES,
+    Rule,
+    decide,
+)
 
 __all__ = [
+    "ACTIVE_RULES", "DATED_RULES", "Rule", "decide",
     "AUDIT_FIELDS",
     "CapabilityContract", "CapabilityRequest", "CapabilityView",
     "DataClass", "Decision", "EffectClass", "Evidence", "Health",

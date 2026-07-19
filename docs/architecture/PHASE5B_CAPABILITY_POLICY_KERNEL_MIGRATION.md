@@ -147,3 +147,77 @@ Produktionsaufrufer**; ein Rollback hat null Laufzeitwirkung.
 **Offene Restrisiken.** Der Wirkungs-Zensus prueft in diesem Slice die **Mechanik** an
 einer synthetischen Registry — die vier echten Piloten tragen ihren Zensuseintrag in
 ihrem jeweiligen Slice bei (5/7/8/9), damit jeder Slice seinen eigenen Nachweis fuehrt.
+
+---
+
+## Slice 2 — Reiner Policy Kernel
+
+**Ziel.** Genau eine Stelle, an der die Frage "darf diese Wirkung jetzt, aus dieser
+Quelle, mit dieser Provenance und dieser Praesenz passieren?" beantwortet wird — rein,
+deterministisch, total und reihenfolgeunabhaengig.
+
+**Oeffentlicher Seam.** `SEAM-POLICY` — `capability.decide(contract, request, evidence,
+rules)`, `capability.ACTIVE_RULES`, `capability.DATED_RULES`. Keine Assertions auf
+Regel-Reihenfolge (die Komposition ist ausdruecklich reihenfolgeunabhaengig), keine
+Call-Counts auf `decide`.
+
+**Ausgangsverhalten.** Es gab keine Policy-Funktion. Autorisierung war ueber vier
+Produzenten verstreut: `risk="confirm"` (genau eine Action), Token-Pruefung, App-Allowlist
+und eine URL-Schema-Pruefung — SI-1 war damit nirgends zentral durchsetzbar.
+
+**RED (tatsaechlich beobachtet).** `Ran 24 tests ... FAILED (failures=1, errors=37)`:
+37 Fehler, weil `decide`/`ACTIVE_RULES` nicht existierten, plus **ein echter Mangel der
+Sandbox** — `TypeError: cannot set 'now' attribute of immutable type 'datetime.datetime'`
+(Python 3.14). Der Reinheitsnachweis ersetzt jetzt die **Klasse** am Modul, statt eine
+Methode zu patchen; damit deckt er `datetime.datetime.now()` tatsaechlich ab.
+
+**GREEN (minimal).** `capability/_policy.py`. Drei **aktive** Regeln (D6 — nur was
+erfuellbar ist):
+
+| Regel | Aussage | Erlaubnisfall | Ablehnungs-/needs-Fall |
+|---|---|---|---|
+| `provenance` | SI-1/SI-2: `external-write` aus `derived` **hart verweigert**, aus `operator` autorisierungspflichtig | `derived` + sicheres `network-read` laeuft | `derived` + `external-write` → **deny** |
+| `confirm-destructive` | SI-7: destruktiv nur nach echter Operator-Bestaetigung desselben Turns | `confirmed=True` → allow | `confirmed=False` → **needs** `CONFIRMATION` |
+| `safe-target` | D7: `network-read` nur auf zulaessiges Ziel | `target_allowed=True` → allow | `False` → **deny**, `None` → **needs** (fail-closed) |
+
+Fuenf weitere Regeln sind **benannt und datiert, aber nicht aktiv** (`presence-unlocked`,
+`preview-transfer`, `budget`, `grant`, `connector-principal`) — mit einem Test, der genau
+das festnagelt. `unknown` wird nirgends als "erlaubt" durchgewunken.
+
+**Bewusste Praezisierung.** Fuer `network-read` fuegt Provenance ausdruecklich **nichts**
+hinzu (Amendment 1 §A1.5 E4). Nach dem Buchstaben von §14 waere eine zusaetzliche
+Anforderung denkbar gewesen — sie haette aber **jede Sprachsuche bestaetigungspflichtig**
+gemacht und damit das beobachtbare Verhalten geaendert (§28.4). Ein Test haelt die
+Richtung fest: `derived` darf nie eine Anforderung **entfernen**, die `operator` hat.
+
+**Mutationsnachweis (ausgefuehrt).** Sieben Mutationen an `_policy.py`, je ein voller
+Testlauf, Datei danach byte-identisch wiederhergestellt:
+
+| Mutation | Ergebnis |
+|---|---|
+| `destructive` braucht keine Bestaetigung mehr | **ROT** |
+| unbekanntes Ziel wird fail-**open** durchgewunken | **ROT** |
+| blockiertes Ziel nur noch `needs` statt `deny` | **ROT** |
+| `derived` + `external-write` nur noch `needs` statt `deny` | **ROT** |
+| `deny` gewinnt nicht mehr ueber `needs` | **ROT** |
+| `needs` akkumuliert nicht (Abbruch nach erster Regel) | **ROT** |
+| Regelmenge geschrumpft (`safe-target` deaktiviert) | **ROT** |
+
+**Reinheitsnachweis.** Subprozess mit Fallen auf `open`, `socket`, `getaddrinfo`,
+`Popen`, `time.time`, `time.monotonic`, `time.perf_counter` und der ersetzten
+`datetime.datetime`-Klasse: Import **und** alle `decide`-Kombinationen laufen sauber
+durch (§28.1).
+
+**Regression.** Suite **927** grün (vorher 903, +24). Sicherheitskritischer Block
+(`test_capability_policy` + `test_capability_contract`, 57 Faelle) **5× flakefrei**.
+Fixture `a58ca03c0dc2a877b5bd3ce336faa0cc4456dafb` — bytegleich.
+
+**Commit.** Slice 1 war `e76ed4c`; die SHA dieses Slices traegt der Folge-Slice nach.
+
+**Rueckrollweg.** `capability/_policy.py` und die Testdatei entfernen, Exporte aus
+`__init__.py` zuruecknehmen. Weiterhin **kein Produktionsaufrufer** — null Laufzeitwirkung.
+
+**Offene Restrisiken.** `evidence.target_allowed` wird in diesem Slice vom Aufrufer
+gesetzt; der tatsaechliche `TargetGuard` entsteht erst in Slice 6. Bis dahin ist die
+`safe-target`-Regel korrekt, aber ohne Zulieferer — sie kann noch niemanden schuetzen.
+Das ist der Grund, warum Slice 6 der eigentliche Sicherheitsnachweis ist und nicht dieser.
