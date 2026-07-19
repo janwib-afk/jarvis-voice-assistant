@@ -23,6 +23,17 @@
 > dass die unten vorläufig eingeordneten Daten- und Wirkungsklassen in der **Laufzeit nicht
 > existieren**: `ActionSpec.risk` kennt nur `low` und `confirm`.
 
+> **Ergänzung 2026-07-19 (Phase 5B, Pilotphase implementiert).** Der Capability-/Policy-Kernel
+> existiert jetzt als tiefes Modul [`capability/`](../../capability/); die Daten-,
+> Wirkungsklassen, Scopes und Provenance sind damit **in der Laufzeit darstellbar** — aber
+> **nur für die vier migrierten Piloten**: `SEARCH`→`web.search`, `MEMORY_FORGET`→
+> `memory.forget`, die REST-Route `launcher.profile.rename` und das nutzerauslöserlose
+> `context.refresh`. Für diese vier gilt der Vertrag als Wahrheit; ihre Wirkungsklassen sind
+> per Wirkungs-Zensus festgenagelt. **Die übrigen 20 Actions und neun REST-Routen tragen
+> weiterhin nur `ActionSpec.risk`** und werden erst in Prompt 20 migriert. `SCREEN` und
+> `CLIPBOARD` bleiben bis dahin von `SEARCH` nicht unterscheidbar. Details:
+> [PHASE5B_CAPABILITY_POLICY_KERNEL_MIGRATION.md](../architecture/PHASE5B_CAPABILITY_POLICY_KERNEL_MIGRATION.md).
+
 ## 1. Action-Capabilities (`[ACTION:...]`, 22 Typen)
 
 > Seit RFC-0001 (Phase 4B, 2026-07-15) beschreibt und fuehrt sich jede Action selbst

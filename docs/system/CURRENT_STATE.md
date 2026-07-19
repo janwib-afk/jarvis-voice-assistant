@@ -4,6 +4,35 @@
 > eine sichere Baseline herstellen"). Dieser Bericht **beschreibt** nur; er setzt
 > keine neuen Funktionen um und ändert keinen produktiven Quellcode.
 
+> **Status 2026-07-19 (Phase 5B, RFC-0007 + Amendment 1 — PILOTPHASE IMPLEMENTIERT):**
+> Der Capability-/Policy-Kernel ist als **Pilot** umgesetzt
+> ([RFC-0007](../architecture/RFC-0007-capability-policy-kernel.md) inkl.
+> [Amendment 1](../architecture/RFC-0007-capability-policy-kernel.md#amendment-1--pilotphase-wirkungsinventar-ssrf-durchsetzung-und-lifecycle-grenzen);
+> Verlauf: [PHASE5B_CAPABILITY_POLICY_KERNEL_MIGRATION.md](../architecture/PHASE5B_CAPABILITY_POLICY_KERNEL_MIGRATION.md)).
+> Neues tiefes Modul [`capability/`](../../capability/): reiner **Capability Contract**
+> (geschlossene Taxonomie, unveränderliche Verträge, `effects`/`reads`/`writes` **ohne
+> Defaults**, abgeleiteter `tier()`, `secret` strukturell nicht darstellbar, fail-closed
+> Registry, passives `inspect()`), reiner **Policy Kernel** (`decide` — deterministisch,
+> total, reihenfolgeunabhängig; **drei aktive Regeln**: Provenance/SI-1, Confirm-destructive/
+> SI-7, Safe-Target/D7; fünf weitere **datiert, nicht aktiv**), runtime-eigener
+> **Coordinator** (`validate→preview→authorize→execute→verify`, geschlossenes
+> Ergebnismodell, `CancelledError` unverändert durchgereicht, deterministischer Idempotency
+> Key **ohne** Cache/Retry). **Vier Produktionspfade migriert:** `web.search` (Voice,
+> byte-identisch), `memory.forget` (bleibt Confirmation, nie Grant; Modellinhalt kann sich
+> nie selbst bestätigen), `launcher.profile.rename` (REST, Provenance `operator`,
+> Configuration bleibt einziger Writer), `context.refresh` (Startup + Settings-Save, kein
+> Nutzerauslöser). **SSRF-TargetGuard** durch **zwei** Produktionsadapter erzwungen (httpx
+> mit gepruefter Redirect-Kette **und** Playwright-Navigations-/Route-Guard + Nachprüfung
+> der verbundenen IP); Denylist: Loopback, RFC1918, Link-local, ULA, Metadata,
+> Selbstzugriff `127.0.0.1:8340`. **Ehrliche Grenzen:** **TM-001 nur teilweise bearbeitet**
+> (SI-1 zentral durchsetzbar, aber nur vier Pfade migriert); **TM-002 nur teilweise
+> mitigiert** (Pro-Verbindungs-/Pro-Hop-Prüfung ohne IP-Pinning — **DNS-Rebinding bleibt
+> Restrisiko**, Phase 9); **`launcher.profile.delete` bleibt offene destructive Lücke**
+> (kein serverseitig belegbarer Bestätigungsvertrag — Phase 10). **20 Actions und neun
+> REST-Routen bleiben unmigriert** (Prompt 20); das gespeicherte `ActionSpec.risk` fällt
+> erst dort. **Phase 5 ist mit diesem Prompt NICHT abgeschlossen.** Suite **1024** grün,
+> Smoke Exit 0, Fixture bytegleich; RFC-0005/RFC-0006 und Legacy unverändert.
+>
 > **Status 2026-07-19 (Phase 5A, RFC-0007 AKZEPTIERT — nur Architektur):** Für den
 > Capability- und Policy-Kernel wurde
 > [RFC-0007](../architecture/RFC-0007-capability-policy-kernel.md)

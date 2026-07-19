@@ -372,18 +372,28 @@ Legende „aktuelle Abdeckung": grob, verweist auf bestehende Tests (unten je Se
 
 ---
 
-## SEAM-CAPABILITY / SEAM-POLICY / SEAM-CAPABILITY-COORDINATION (RFC-0007, proposed)
+## SEAM-CAPABILITY / SEAM-POLICY / SEAM-CAPABILITY-COORDINATION (RFC-0007, approved)
 
-Mit [RFC-0007](../architecture/RFC-0007-capability-policy-kernel.md) akzeptiert, **noch
-nicht implementiert** — Umsetzung ab Prompt 19. Hier vorab festgehalten, damit Prompt 19
-nicht beiläufig neue Seams erfindet.
+Mit [RFC-0007](../architecture/RFC-0007-capability-policy-kernel.md) akzeptiert und in der
+**Pilotphase (Prompt 19, Phase 5B)** implementiert
+([Verlauf](../architecture/PHASE5B_CAPABILITY_POLICY_KERNEL_MIGRATION.md)). Status **von
+`proposed` auf `approved`** gewechselt — jetzt mit grüner Evidenz (Amendment 1 §A1.7 G4):
+das `capability`-Paket ist rein/import-sicher (Subprozess-Reinheitsnachweis), jede aktive
+Regel ist als Tabelle erlaubend **und** ablehnend getestet, der Wirkungs-Zensus ist
+mutationsgeprüft, und der SSRF-Guard wird durch zwei Produktionsadapter (httpx + Playwright)
+erzwungen.
 
 | Seam | Ebene | Was geprüft wird | Kontrollierte Grenze | Status |
 |---|---|---|---|---|
-| **SEAM-POLICY** | Contract (rein) | `decide` als **Tabellentest** über Vertrag × Anfrage × Evidenz; deny-by-default; jede aktive Regel mit Erlaubnis- und Ablehnungsfall | keine — rein, I/O-frei | proposed |
-| **SEAM-CAPABILITY** | Contract (rein) | Registry-Bau, Schemavalidierung, abgeleiteter `tier()`, **Wirkungs-Zensus** | keine — rein | proposed |
-| **SEAM-CAPABILITY-COORDINATION** | Integration | Lifecycle-Reihenfolge und Nicht-Überspringbarkeit, geschlossenes Ergebnismodell, Cancel-Durchreichung, Idempotency | Fake-Verträge (kein Provider) | proposed |
-| **SSRF-Transport** | Ports & Adapters | Denylist je Hop, Redirect-Revalidierung, Selbstzugriff auf `127.0.0.1:8340` blockiert | Test-Transport, **kein echtes Netz** | proposed |
+| **SEAM-POLICY** | Contract (rein) | `decide` als **Tabellentest** über Vertrag × Anfrage × Evidenz; deny-by-default; jede aktive Regel mit Erlaubnis- und Ablehnungsfall; Permutations- + Reinheitsnachweis (`test_capability_policy`) | keine — rein, I/O-frei | **approved** (Phase 5B) |
+| **SEAM-CAPABILITY** | Contract (rein) | Registry-Bau, Schemavalidierung, abgeleiteter `tier()`, **Wirkungs-Zensus** (`test_capability_contract`; Pilot-Zensus in `test_capability_pilot_*`) | keine — rein | **approved** (Phase 5B) |
+| **SEAM-CAPABILITY-COORDINATION** | Integration | Lifecycle-Reihenfolge und Nicht-Überspringbarkeit, geschlossenes Ergebnismodell, Cancel-Durchreichung, Idempotency (`test_capability_coordinator`) | Fake-Verträge (kein Provider) | **approved** (Phase 5B) |
+| **SSRF-Transport** | Ports & Adapters | Denylist je Hop, Redirect-Revalidierung, Selbstzugriff auf `127.0.0.1:8340` blockiert, verbundene IP nachgeprüft (`test_capability_ssrf`) | injizierter Resolver + Test-Transport/Playwright-Double, **kein echtes Netz** | **approved** (Phase 5B) |
+
+> **Pilotgrenze (Amendment 1 §A1.1).** Diese Seams decken die **vier migrierten Piloten**
+> (`web.search`, `memory.forget`, `launcher.profile.rename`, `context.refresh`). Die
+> verbleibenden **20** Actions und **neun** REST-Routen sind noch **nicht** migriert
+> (Prompt 20). Phase 5 ist mit Prompt 19 **nicht** abgeschlossen.
 
 **Verbotene interne Prüfungen:** kein Zugriff auf Registry-Interna, keine Assertions auf
 Regel-Reihenfolge (die Komposition ist ausdrücklich reihenfolgeunabhängig), keine

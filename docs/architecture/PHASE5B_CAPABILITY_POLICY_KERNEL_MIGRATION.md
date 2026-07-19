@@ -763,3 +763,46 @@ Registry-Eintrag entfallen. Kein Datenformat betroffen.
 (`web.search`, `memory.forget`, `launcher.profile.rename`, `context.refresh`); die
 verbleibenden **20** Actions und **neun** REST-Routen folgen erst in Prompt 20
 (Amendment 1 §A1.1). **Phase 5 ist mit diesem Prompt nicht abgeschlossen.**
+
+---
+
+## Slice 10 — Dokumentation, CI und Abschluss
+
+**Ziel.** Doku, CI und die ehrliche Bilanz der Pilotphase.
+
+**Geändert.**
+* `.github/workflows/pr.yml` — `capability` im **Gate 1 (Syntax/Import, `compileall`)**.
+  Die neuen Contract-/Policy-/Coordinator-/SSRF-Tests laufen im bestehenden
+  Full-Suite-Gate (`unittest discover`) — es sind Unit-/Integrationstests, keine
+  Browser-E2E.
+* `docs/quality/TEST_SEAMS.md` — `SEAM-CAPABILITY`, `SEAM-POLICY`,
+  `SEAM-CAPABILITY-COORDINATION`, `SSRF-Transport` **von `proposed` auf `approved`**
+  (jetzt mit grüner Evidenz, Amendment 1 §A1.7 G4), inkl. Pilotgrenze.
+* `docs/system/CURRENT_STATE.md` — Phase-5B-Statusblock (vier Piloten, drei aktive
+  Regeln, SSRF, ehrliche Grenzen).
+* `docs/system/CAPABILITY_MATRIX.md` — Hinweis, dass die Taxonomie jetzt für die vier
+  Piloten in der Laufzeit existiert, die 20 Actions/9 Routen aber weiter nur `risk` tragen.
+* `docs/security/RISK_REGISTER.md` — TM-001/TM-002 als **mitigation-in-progress
+  (teilweise)** — ausdrücklich **nicht** „mitigated"; DNS-Rebinding datiert.
+* `docs/architecture/RFC-0007-…` — Amendment 1 (Slice 0) und dieser Verlauf.
+
+**Ehrliche Bilanz (Pflicht, Amendment 1 §A1.1).**
+
+| Punkt | Stand nach Prompt 19 |
+|---|---|
+| Migrierte Produktionspfade | **4** — `web.search`, `memory.forget`, `launcher.profile.rename`, `context.refresh` |
+| Verbleibende Actions | **20** (unmigriert, weiter nur `ActionSpec.risk`) |
+| Verbleibende REST-Routen | **9** (unmigriert) |
+| `launcher.profile.delete` | **offen** — kein serverseitig belegbarer Bestätigungsvertrag (Phase 10) |
+| Gespeichertes `ActionSpec.risk` | **bleibt** — fällt erst bei 22/22 (Prompt 20, D10) |
+| TM-001 (Prompt-Injection) | **nur teilweise** — SI-1 zentral durchsetzbar, aber nur 4 Pfade |
+| TM-002 (SSRF) | **nur teilweise mitigiert** — Pro-Hop/Pro-Verbindung, **ohne IP-Pinning** |
+| DNS-Rebinding / IP-Pinning | **offenes Restrisiko** (Phase 9) |
+| Phase 5 | **NICHT abgeschlossen** (Rest in Prompt 20) |
+
+**Regression.** Volle lokale Gates am finalen Branch-Stand (siehe Abschlussbericht des
+Prompts). Keine Visual-Baseline aktualisiert; RFC-0005/RFC-0006 und Legacy byte-/
+shape-unverändert.
+
+**Commit.** Slice 9 war `3d46264`; die SHA dieses Slices und der finale Branch-Head
+stehen im Abschlussbericht.
